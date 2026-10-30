@@ -85,8 +85,56 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS staff_users (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role VARCHAR(20) NOT NULL CHECK (role IN ('ADMIN', 'COMERCIAL')),
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS staff_sessions (
+  token_hash CHAR(64) PRIMARY KEY,
+  staff_user_id BIGINT NOT NULL REFERENCES staff_users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS banners (
+  id BIGSERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  alt_text TEXT NOT NULL,
+  image_path TEXT,
+  image_data BYTEA,
+  image_mime VARCHAR(50),
+  target_url TEXT NOT NULL DEFAULT '#produtos',
+  position INTEGER NOT NULL DEFAULT 0,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK (image_path IS NOT NULL OR image_data IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS product_sync_runs (
+  id BIGSERIAL PRIMARY KEY,
+  started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  finished_at TIMESTAMP,
+  source_count INTEGER NOT NULL DEFAULT 0,
+  inserted_count INTEGER NOT NULL DEFAULT 0,
+  updated_count INTEGER NOT NULL DEFAULT 0,
+  deactivated_count INTEGER NOT NULL DEFAULT 0,
+  status VARCHAR(20) NOT NULL DEFAULT 'running',
+  details TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_products_active_category ON products(active, category);
 CREATE INDEX IF NOT EXISTS idx_sales_product_date ON sales(product_id, sold_at);
 CREATE INDEX IF NOT EXISTS idx_customers_document ON customers(document);
 CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
 CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions(customer_id);
+CREATE INDEX IF NOT EXISTS idx_orders_customer_date ON orders(customer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_staff_sessions_user ON staff_sessions(staff_user_id);
+CREATE INDEX IF NOT EXISTS idx_banners_active_position ON banners(active, position);

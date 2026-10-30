@@ -73,3 +73,22 @@ export const orderSchema = z.object({
     quantity: z.coerce.number().int().positive().max(999),
   })).min(1, 'O pedido precisa ter ao menos um item').max(200),
 })
+
+export const staffUserSchema = z.object({
+  name: z.string().trim().min(3, 'Informe o nome do usuário').max(120),
+  email: z.string().trim().email('E-mail inválido').max(180).transform((value) => value.toLowerCase()),
+  password: z.string().min(8, 'A senha precisa ter pelo menos 8 caracteres').max(72)
+    .regex(/[A-Z]/, 'Inclua uma letra maiúscula na senha')
+    .regex(/[a-z]/, 'Inclua uma letra minúscula na senha')
+    .regex(/\d/, 'Inclua um número na senha'),
+  role: z.enum(['ADMIN', 'COMERCIAL']),
+})
+
+export const bannerSchema = z.object({
+  title: z.string().trim().min(2, 'Informe o título').max(160),
+  altText: z.string().trim().min(3, 'Informe o texto alternativo').max(240),
+  targetUrl: z.string().trim().max(500).default('#produtos'),
+  position: z.coerce.number().int().min(0).max(1000),
+  active: z.boolean(),
+  imageDataUrl: z.string().optional().default(''),
+})

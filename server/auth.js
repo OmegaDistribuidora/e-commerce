@@ -47,3 +47,13 @@ export function clearSessionCookie() {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
   return `omega_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${secure}`
 }
+
+export function staffSessionCookie(token, expiresAt) {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
+  return `omega_staff=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Expires=${expiresAt.toUTCString()}${secure}`
+}
+
+export function clearStaffSessionCookie() {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
+  return `omega_staff=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${secure}`
+}

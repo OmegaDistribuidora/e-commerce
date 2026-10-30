@@ -7,8 +7,10 @@ import {
   UtensilsCrossed, X,
 } from 'lucide-react'
 import AccountPage from './AccountPage'
+import OrdersPage from './OrdersPage'
+import StaffPortal from './StaffPortal'
 import { money } from './data'
-import type { CartItem, Category, Customer, Product } from './types'
+import type { Banner, CartItem, Category, Customer, Product } from './types'
 import { formatDocument } from './validation'
 
 const categories: { name: Category; icon: typeof Sparkles }[] = [
@@ -19,9 +21,9 @@ const categories: { name: Category; icon: typeof Sparkles }[] = [
   { name: 'Alimentos', icon: UtensilsCrossed },
 ]
 
-const slides = [
-  { src: '/assets/banner-omega.png', alt: 'Tudo que o seu negócio precisa, em um só lugar' },
-  { src: '/assets/banner-bombril.png', alt: 'Linha Bombril: mais limpeza para o seu dia a dia' },
+const fallbackSlides: Banner[] = [
+  { id: 1, title: 'Institucional Ômega', imageUrl: '/assets/banner-omega.png', altText: 'Tudo que o seu negócio precisa, em um só lugar', targetUrl: '#produtos', position: 1, active: true },
+  { id: 2, title: 'Linha Bombril', imageUrl: '/assets/banner-bombril.png', altText: 'Linha Bombril: mais limpeza para o seu dia a dia', targetUrl: '#produtos', position: 2, active: true },
 ]
 
 const partners = [
@@ -44,6 +46,8 @@ function readStoredCart(): CartItem[] {
 
 function App() {
   if (window.location.pathname === '/conta') return <AccountPage />
+  if (window.location.pathname === '/pedidos') return <OrdersPage />
+  if (window.location.pathname === '/gestao') return <StaffPortal />
   const supplierId = Number(new URLSearchParams(window.location.search).get('fornecedor'))
   return <StorePage initialSupplierId={Number.isFinite(supplierId) && supplierId > 0 ? supplierId : null} />
 }
@@ -67,6 +71,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
   const [sendingOrder, setSendingOrder] = useState(false)
   const [orderError, setOrderError] = useState('')
   const [orderNumber, setOrderNumber] = useState('')
+  const [slides, setSlides] = useState<Banner[]>(fallbackSlides)
   const [slide, setSlide] = useState(0)
   const [toast, setToast] = useState('')
   const productsRef = useRef<HTMLElement>(null)
@@ -104,9 +109,15 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
     if (authReady && !customer) setCart([])
   }, [authReady, customer])
   useEffect(() => {
+    fetch('/api/banners').then((response) => response.json()).then((data) => {
+      if (Array.isArray(data.banners) && data.banners.length) setSlides(data.banners)
+    }).catch(() => undefined)
+  }, [])
+  useEffect(() => {
     const timer = window.setInterval(() => setSlide((current) => (current + 1) % slides.length), 6500)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [slides.length])
+  useEffect(() => { if (slide >= slides.length) setSlide(0) }, [slide, slides.length])
   useEffect(() => {
     if (!toast) return
     const timer = window.setTimeout(() => setToast(''), 2400)
@@ -230,7 +241,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
           <button className="mobile-menu-btn icon-btn" aria-label="Abrir menu" onClick={() => setMenuOpen(true)}><Menu /></button>
           <a className="logo" href="#top" aria-label="Ômega Distribuidora — início"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /></a>
           <label className="search-box"><Search size={21} /><input value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(24) }} onFocus={() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} placeholder="Busque produtos, marcas ou código" aria-label="Buscar produtos" />{query && <button onClick={() => setQuery('')} aria-label="Limpar busca"><X size={18} /></button>}</label>
-          <a className="account-button" href="/conta"><CircleUserRound /><span><small>{customer ? 'Cliente identificado' : 'Área do cliente'}</small><strong>{customer ? `Bem-vindo(a), ${customer.tradeName || customer.legalName}` : 'Entrar ou cadastrar'}</strong></span></a>
+          <a className="account-button" href={customer ? '/pedidos' : '/conta'}><CircleUserRound /><span><small>{customer ? 'Meus pedidos' : 'Área do cliente'}</small><strong>{customer ? `Bem-vindo(a), ${customer.tradeName || customer.legalName}` : 'Entrar ou cadastrar'}</strong></span></a>
           {customer && <button className="logout-button" onClick={logout} aria-label="Sair da conta" title="Sair da conta"><LogOut size={19} /><span>Sair</span></button>}
           <button className="cart-button" onClick={() => setCartOpen(true)} aria-label={`Abrir carrinho com ${cartCount} caixas`}><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{cartCount ? `${cartCount} ${cartCount === 1 ? 'caixa' : 'caixas'}` : 'Está vazio'}</strong></span></button>
         </div>
@@ -238,7 +249,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
       </header>
 
       <main id="top">
-        <section className="hero" aria-label="Destaques"><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item) => <button key={item.src} className="hero-slide" onClick={() => productsRef.current?.scrollIntoView({ behavior: 'smooth' })}><img src={item.src} alt={item.alt} /></button>)}</div><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => setSlide((slide - 1 + slides.length) % slides.length)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => setSlide((slide + 1) % slides.length)}><ChevronRight /></button><div className="slider-dots">{slides.map((_, index) => <button key={index} className={index === slide ? 'active' : ''} onClick={() => setSlide(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></section>
+        <section className="hero" aria-label="Destaques"><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item) => <a key={item.id} className="hero-slide" href={item.targetUrl || '#produtos'}><img src={item.imageUrl} alt={item.altText} /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => setSlide((slide - 1 + slides.length) % slides.length)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => setSlide((slide + 1) % slides.length)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => setSlide(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section>
 
         <section className="container category-strip" aria-label="Categorias">{categories.map(({ name, icon: Icon }) => <button key={name} className={category === name && catalogMode === 'featured' ? 'active' : ''} onClick={() => { setCatalogMode('featured'); selectCategory(name) }}><span><Icon size={24} /></span>{name}</button>)}<button className={catalogMode === 'bestsellers' ? 'active' : ''} onClick={showBestSellers}><span><BadgePercent size={24} /></span>Mais vendidos</button></section>
 
@@ -263,7 +274,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
 
       {checkoutOpen && customer && <div className="overlay modal-overlay" onMouseDown={() => setCheckoutOpen(false)}><div className="checkout-modal" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">CONFIRMAR PEDIDO</span><h2>Identificação do cliente</h2></div><button className="icon-btn" onClick={() => setCheckoutOpen(false)}><X /></button></div><form onSubmit={submitOrder}><div className="checkout-customer"><CircleUserRound /><div><strong>{customer.tradeName || customer.legalName}</strong><span>{formatDocument(customer.document)} · {customer.email}</span></div><a href="/conta">Alterar</a></div><label>Plano de pagamento<select name="paymentPlan" defaultValue="avista" required><option value="avista">À vista</option><option value="7_dias">7 dias</option><option value="14_dias">14 dias</option><option value="28_dias">28 dias</option><option value="4_14_dias">4/14 dias</option><option value="14_28_dias">14/28 dias</option></select></label><label>Observações<textarea name="notes" placeholder="Informe preferências de entrega, contato ou condições." rows={3} /></label>{orderError && <span className="field-error">{orderError}</span>}<div className="checkout-total"><span>Total estimado</span><strong>{money.format(cartTotal)}</strong></div><button className="checkout-button" type="submit" disabled={sendingOrder}>{sendingOrder ? <LoaderCircle className="spin" /> : <>Enviar pedido <ArrowRight size={19} /></>}</button></form></div></div>}
 
-      {orderNumber && <div className="overlay modal-overlay"><div className="success-modal"><span><PackageCheck /></span><h2>Pedido recebido!</h2><p>Sua solicitação <strong>{orderNumber}</strong> foi registrada. Nossa equipe comercial entrará em contato para confirmar valores, frete e prazo.</p><button className="primary-button" onClick={() => setOrderNumber('')}>Continuar comprando</button></div></div>}
+      {orderNumber && <div className="overlay modal-overlay"><div className="success-modal"><span><PackageCheck /></span><h2>Pedido recebido!</h2><p>Sua solicitação <strong>{orderNumber}</strong> foi registrada. Nossa equipe comercial entrará em contato para confirmar valores, frete e prazo.</p><a className="primary-button" href="/pedidos">Ver meus pedidos</a><button className="secondary-button" onClick={() => setOrderNumber('')}>Continuar comprando</button></div></div>}
       {toast && <div className="toast"><PackageCheck size={19} />{toast}</div>}
     </div>
   )

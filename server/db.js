@@ -40,13 +40,46 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS network_unit_price NUMERIC(14,2)')
   await pool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS sales_channel VARCHAR(20) NOT NULL DEFAULT 'Varejo'")
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS password_hash TEXT')
+  await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP')
   await pool.query('UPDATE products SET retail_unit_price = unit_price WHERE retail_unit_price IS NULL')
   await pool.query('UPDATE products SET network_unit_price = unit_price WHERE network_unit_price IS NULL')
   await pool.query('DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP')
+  await pool.query('DELETE FROM staff_sessions WHERE expires_at <= CURRENT_TIMESTAMP')
+
+  await ensureDefaultBanners()
+  await ensureBootstrapAdmin()
 
   const countResult = await pool.query('SELECT COUNT(*)::int AS count FROM products')
   if (Number(countResult.rows[0].count) === 0) await seedDatabase()
   if (!process.env.DATABASE_URL) await ensureLocalCustomer()
+}
+
+async function ensureDefaultBanners() {
+  const result = await pool.query('SELECT COUNT(*)::int AS count FROM banners')
+  if (Number(result.rows[0].count) > 0) return
+  await pool.query(
+    `INSERT INTO banners (title, alt_text, image_path, target_url, position) VALUES
+      ('Institucional Ômega', 'Tudo que o seu negócio precisa, em um só lugar', '/assets/banner-omega.png', '#produtos', 1),
+      ('Linha Bombril', 'Linha Bombril: mais limpeza para o seu dia a dia', '/assets/banner-bombril.png', '#produtos', 2)`,
+  )
+}
+
+async function ensureBootstrapAdmin() {
+  const password = process.env.ADMIN_PASSWORD || (!process.env.DATABASE_URL ? 'Admin@2026' : '')
+  if (!password) {
+    console.warn('[auth] ADMIN_PASSWORD ausente: a conta administrativa inicial não foi criada.')
+    return
+  }
+  const email = String(process.env.ADMIN_EMAIL || 'admin@omegadistribuidora.com.br').trim().toLowerCase()
+  const name = String(process.env.ADMIN_NAME || 'Administrador Ômega').trim()
+  const existing = await pool.query('SELECT id FROM staff_users WHERE LOWER(email) = $1 LIMIT 1', [email])
+  if (existing.rows.length) return
+  await pool.query(
+    `INSERT INTO staff_users (name, email, password_hash, role)
+     VALUES ($1,$2,$3,'ADMIN')`,
+    [name, email, hashPassword(password)],
+  )
+  console.info(`[auth] conta administrativa inicial criada para ${email}.`)
 }
 
 async function seedDatabase() {

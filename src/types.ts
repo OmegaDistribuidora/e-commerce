@@ -36,3 +36,46 @@ export type Customer = {
   state?: string
   salesChannel: 'Varejo' | 'Redes'
 }
+
+export type StaffUser = {
+  id: number
+  name: string
+  email: string
+  role: 'ADMIN' | 'COMERCIAL'
+  active?: boolean
+  createdAt?: string
+}
+
+export type Banner = {
+  id: number
+  title: string
+  altText: string
+  imageUrl: string
+  targetUrl: string
+  position: number
+  active: boolean
+}
+
+export type OrderItem = {
+  id: number
+  productId: number
+  code: number
+  name: string
+  boxes: number
+  unitsPerBox: number
+  unitPrice: number
+  lineTotal: number
+}
+
+export type Order = {
+  id: number
+  number: string
+  status: string
+  paymentPlan: string
+  total: number
+  notes: string
+  createdAt: string
+  updatedAt: string
+  customer: Pick<Customer, 'id' | 'legalName' | 'tradeName' | 'document' | 'email' | 'phone'>
+  items: OrderItem[]
+}

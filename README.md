@@ -55,6 +55,20 @@ As imagens são associadas pelo código do produto em `public/assets/products`.
 
 O servidor Express aplica o schema, carrega o seed somente se a tabela de produtos estiver vazia e serve o frontend compilado. A autenticação usa senha derivada com `scrypt` e sessão em cookie HTTP-only. Na consulta de CPF/CNPJ para primeiro acesso, a base local é verificada primeiro; documentos ainda não sincronizados podem ser consultados no DW e copiados para a base da aplicação sem expor credenciais ao navegador.
 
+### Conta administrativa
+
+Defina no serviço do e-commerce:
+
+- `ADMIN_EMAIL` (opcional; padrão `admin@omegadistribuidora.com.br`)
+- `ADMIN_NAME` (opcional)
+- `ADMIN_PASSWORD` (obrigatória para criar o primeiro administrador)
+
+A conta inicial é criada apenas quando ainda não existe. Depois, o Administrador cria outros usuários Administradores ou Comerciais em `/gestao`. Administradores e Comerciais consultam pedidos e gerenciam banners; somente Administradores criam usuários internos.
+
+### Sincronização WinThor
+
+A DAG versionada em `airflow/dags/dag_ecommerce_produtos.py` atualiza produtos ativos e preços a cada 30 minutos. Consulte `airflow/README.md` para configurar as Connections `oracle_filial` e `postgres_ecommerce`.
+
 ## Estrutura principal
 
 - `src/`: interface React/TypeScript
