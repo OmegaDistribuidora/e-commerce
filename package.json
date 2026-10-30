@@ -1,0 +1,37 @@
+{
+  "name": "omega-distribuidora-ecommerce",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n API,WEB -c blue,magenta \"node --watch server/index.js\" \"vite --host 0.0.0.0\"",
+    "dev:web": "vite --host 0.0.0.0",
+    "dev:api": "node --watch server/index.js",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "start": "node server/index.js",
+    "seed:refresh": "python scripts/export-reference-data.py"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "lucide-react": "latest",
+    "pg": "^8.23.0",
+    "pg-mem": "^3.0.14",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "latest",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "concurrently": "^10.0.5",
+    "playwright-core": "^1.63.0",
+    "typescript": "latest"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

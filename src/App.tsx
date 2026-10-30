@@ -1,0 +1,298 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  ArrowRight, BadgePercent, Box, ChevronDown, ChevronLeft, ChevronRight,
+  CircleUserRound, Headphones, Heart, ImageOff, LoaderCircle, LockKeyhole,
+  LogOut, MapPin, Menu, Minus, PackageCheck, Plus, Search, ShieldCheck,
+  ShoppingCart, SlidersHorizontal, Sparkles, Store, Trash2, Truck,
+  UtensilsCrossed, X,
+} from 'lucide-react'
+import AccountPage from './AccountPage'
+import { money } from './data'
+import type { CartItem, Category, Customer, Product } from './types'
+import { formatDocument } from './validation'
+
+const categories: { name: Category; icon: typeof Sparkles }[] = [
+  { name: 'Todos', icon: Store },
+  { name: 'Limpeza', icon: Sparkles },
+  { name: 'Higiene', icon: ShieldCheck },
+  { name: 'Utilidades', icon: Box },
+  { name: 'Alimentos', icon: UtensilsCrossed },
+]
+
+const slides = [
+  { src: '/assets/banner-omega.png', alt: 'Tudo que o seu negócio precisa, em um só lugar' },
+  { src: '/assets/banner-bombril.png', alt: 'Linha Bombril: mais limpeza para o seu dia a dia' },
+]
+
+const partners = [
+  { supplierId: 117, name: 'Bombril', logo: '/assets/brands/bombril-117.webp' },
+  { supplierId: 967, name: 'Maratá', logo: '/assets/brands/marata-967.webp' },
+  { supplierId: 3609, name: 'Mili', logo: '/assets/brands/mili-3609.jpg' },
+  { supplierId: 1481, name: 'Realeza', logo: '/assets/brands/realeza-1481.png' },
+  { supplierId: 5569, name: 'Gallo', logo: '/assets/brands/gallo-5569.webp' },
+  { supplierId: 1968, name: 'JDE / Café Puro', logo: '/assets/brands/jde-1968.webp' },
+]
+
+const whatsappUrl = `https://wa.me/558592020207?text=${encodeURIComponent('Olá! Venho do e-Commerce da Ômega Distribuidora e preciso de atendimento!')}`
+
+function readStoredCart(): CartItem[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem('omega-cart') ?? '[]')
+    return Array.isArray(stored) ? stored.filter((item) => Number.isFinite(item.unitPrice)) : []
+  } catch { return [] }
+}
+
+function App() {
+  if (window.location.pathname === '/conta') return <AccountPage />
+  const supplierId = Number(new URLSearchParams(window.location.search).get('fornecedor'))
+  return <StorePage initialSupplierId={Number.isFinite(supplierId) && supplierId > 0 ? supplierId : null} />
+}
+
+function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) {
+  const [products, setProducts] = useState<Product[]>([])
+  const [loadingProducts, setLoadingProducts] = useState(true)
+  const [productsError, setProductsError] = useState('')
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState<Category>('Todos')
+  const [supplierFilter, setSupplierFilter] = useState(initialSupplierId ? String(initialSupplierId) : '')
+  const [departmentFilter, setDepartmentFilter] = useState('')
+  const [catalogMode, setCatalogMode] = useState<'featured' | 'bestsellers'>('featured')
+  const [visibleCount, setVisibleCount] = useState(24)
+  const [cart, setCart] = useState<CartItem[]>([])
+  const [customer, setCustomer] = useState<Customer | null>(null)
+  const [authReady, setAuthReady] = useState(false)
+  const [cartOpen, setCartOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const [sendingOrder, setSendingOrder] = useState(false)
+  const [orderError, setOrderError] = useState('')
+  const [orderNumber, setOrderNumber] = useState('')
+  const [slide, setSlide] = useState(0)
+  const [toast, setToast] = useState('')
+  const productsRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(async (response) => response.ok ? response.json() : null)
+      .then((data) => {
+        setCustomer(data?.customer ?? null)
+        setCart(data?.customer ? readStoredCart() : [])
+      })
+      .catch(() => setCustomer(null))
+      .finally(() => setAuthReady(true))
+  }, [])
+
+  useEffect(() => {
+    if (!authReady) return
+    const controller = new AbortController()
+    setLoadingProducts(true)
+    fetch(`/api/products?limit=180&sort=${catalogMode}`, { signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.message)
+        setProducts(data.products)
+        setProductsError('')
+        setVisibleCount(24)
+      })
+      .catch((error) => { if (error.name !== 'AbortError') setProductsError('Não foi possível carregar o catálogo agora.') })
+      .finally(() => setLoadingProducts(false))
+    return () => controller.abort()
+  }, [authReady, catalogMode, customer?.id])
+
+  useEffect(() => { if (authReady) localStorage.setItem('omega-cart', JSON.stringify(cart)) }, [authReady, cart])
+  useEffect(() => {
+    if (authReady && !customer) setCart([])
+  }, [authReady, customer])
+  useEffect(() => {
+    const timer = window.setInterval(() => setSlide((current) => (current + 1) % slides.length), 6500)
+    return () => window.clearInterval(timer)
+  }, [])
+  useEffect(() => {
+    if (!toast) return
+    const timer = window.setTimeout(() => setToast(''), 2400)
+    return () => window.clearTimeout(timer)
+  }, [toast])
+
+  const filteredProducts = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase('pt-BR')
+    return products.filter((product) => {
+      const matchesCategory = category === 'Todos' || product.category === category
+      const matchesSupplier = !supplierFilter || String(product.supplierId) === supplierFilter
+      const matchesDepartment = !departmentFilter || product.department === departmentFilter
+      const matchesQuery = !normalized || `${product.name} ${product.brand} ${product.category} ${product.code}`.toLocaleLowerCase('pt-BR').includes(normalized)
+      return matchesCategory && matchesSupplier && matchesDepartment && matchesQuery
+    })
+  }, [category, departmentFilter, products, query, supplierFilter])
+
+  const supplierOptions = useMemo(() => [...new Map(products.map((product) => [product.supplierId, product.brand])).entries()].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR')), [products])
+  const departmentOptions = useMemo(() => [...new Set(products.map((product) => product.department).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')), [products])
+  const selectedSupplierName = supplierOptions.find(([id]) => String(id) === supplierFilter)?.[1]
+
+  const visibleProducts = filteredProducts.slice(0, visibleCount)
+  const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0)
+  const cartTotal = cart.reduce((sum, item) => sum + (item.unitPrice ?? 0) * item.unitsPerBox * item.quantity, 0)
+  const minimumOrder = 200
+  const minimumRemaining = Math.max(0, minimumOrder - cartTotal)
+  const minimumProgress = Math.min(100, (cartTotal / minimumOrder) * 100)
+
+  function addToCart(product: Product) {
+    if (!customer || product.unitPrice === null) {
+      window.location.href = '/conta'
+      return
+    }
+    setCart((current) => {
+      const existing = current.find((item) => item.id === product.id)
+      return existing
+        ? current.map((item) => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item)
+        : [...current, { ...product, quantity: product.minBoxes }]
+    })
+    setToast(`${product.name} adicionado ao carrinho`)
+  }
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined)
+    localStorage.removeItem('omega-cart')
+    setCart([])
+    setCustomer(null)
+    setMenuOpen(false)
+    setToast('Você saiu da sua conta')
+  }
+
+  function clearFilters() {
+    setQuery('')
+    setCategory('Todos')
+    setSupplierFilter('')
+    setDepartmentFilter('')
+    setCatalogMode('featured')
+    if (window.location.search) window.history.replaceState({}, '', '/')
+  }
+
+  function changeQuantity(id: number, delta: number) {
+    setCart((current) => current.map((item) => item.id === id ? { ...item, quantity: Math.max(item.minBoxes, item.quantity + delta) } : item))
+  }
+
+  function removeFromCart(id: number) {
+    setCart((current) => current.filter((item) => item.id !== id))
+  }
+
+  function selectCategory(next: Category) {
+    setCategory(next)
+    setMenuOpen(false)
+    setVisibleCount(24)
+    window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }
+
+  function showBestSellers() {
+    setCatalogMode('bestsellers')
+    setCategory('Todos')
+    setMenuOpen(false)
+    window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }
+
+  function beginCheckout() {
+    if (!customer) {
+      window.location.href = '/conta?return=checkout'
+      return
+    }
+    setCartOpen(false)
+    setCheckoutOpen(true)
+  }
+
+  async function submitOrder(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!customer) return
+    setSendingOrder(true)
+    setOrderError('')
+    const form = new FormData(event.currentTarget)
+    try {
+      const response = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerId: customer.id, paymentPlan: form.get('paymentPlan'), notes: form.get('notes'), items: cart.map((item) => ({ productId: item.id, quantity: item.quantity })) }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.message)
+      setOrderNumber(data.order.number)
+      setCart([])
+      setCheckoutOpen(false)
+    } catch (error) {
+      setOrderError(error instanceof Error ? error.message : 'Não foi possível enviar o pedido.')
+    } finally {
+      setSendingOrder(false)
+    }
+  }
+
+  return (
+    <div className="app-shell">
+      <div className="topbar"><div className="container topbar-inner"><p>{customer ? <>Bem-vindo(a), <strong>{customer.tradeName || customer.legalName}</strong></> : <>Tudo o que você precisa, <strong>sempre por perto.</strong></>}</p><div className="topbar-links"><span><MapPin size={15} /> Entregamos em todo o Ceará</span><a href={whatsappUrl} target="_blank" rel="noreferrer">Central de ajuda</a></div></div></div>
+      <header className="site-header">
+        <div className="container header-main">
+          <button className="mobile-menu-btn icon-btn" aria-label="Abrir menu" onClick={() => setMenuOpen(true)}><Menu /></button>
+          <a className="logo" href="#top" aria-label="Ômega Distribuidora — início"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /></a>
+          <label className="search-box"><Search size={21} /><input value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(24) }} onFocus={() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} placeholder="Busque produtos, marcas ou código" aria-label="Buscar produtos" />{query && <button onClick={() => setQuery('')} aria-label="Limpar busca"><X size={18} /></button>}</label>
+          <a className="account-button" href="/conta"><CircleUserRound /><span><small>{customer ? 'Cliente identificado' : 'Área do cliente'}</small><strong>{customer ? `Bem-vindo(a), ${customer.tradeName || customer.legalName}` : 'Entrar ou cadastrar'}</strong></span></a>
+          {customer && <button className="logout-button" onClick={logout} aria-label="Sair da conta" title="Sair da conta"><LogOut size={19} /><span>Sair</span></button>}
+          <button className="cart-button" onClick={() => setCartOpen(true)} aria-label={`Abrir carrinho com ${cartCount} caixas`}><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{cartCount ? `${cartCount} ${cartCount === 1 ? 'caixa' : 'caixas'}` : 'Está vazio'}</strong></span></button>
+        </div>
+        <nav className="main-nav" aria-label="Navegação principal"><div className="container nav-inner"><button className="categories-button" onClick={() => setMenuOpen(true)}><Menu size={19} /> Todas as categorias <ChevronDown size={17} /></button><a href="#produtos" onClick={() => setCatalogMode('featured')}>Destaques</a><a href="#produtos" onClick={showBestSellers}>Mais vendidos</a><a href="#produtos">Ofertas</a><a href="#marcas">Marcas</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a></div></nav>
+      </header>
+
+      <main id="top">
+        <section className="hero" aria-label="Destaques"><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item) => <button key={item.src} className="hero-slide" onClick={() => productsRef.current?.scrollIntoView({ behavior: 'smooth' })}><img src={item.src} alt={item.alt} /></button>)}</div><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => setSlide((slide - 1 + slides.length) % slides.length)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => setSlide((slide + 1) % slides.length)}><ChevronRight /></button><div className="slider-dots">{slides.map((_, index) => <button key={index} className={index === slide ? 'active' : ''} onClick={() => setSlide(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></section>
+
+        <section className="container category-strip" aria-label="Categorias">{categories.map(({ name, icon: Icon }) => <button key={name} className={category === name && catalogMode === 'featured' ? 'active' : ''} onClick={() => { setCatalogMode('featured'); selectCategory(name) }}><span><Icon size={24} /></span>{name}</button>)}<button className={catalogMode === 'bestsellers' ? 'active' : ''} onClick={showBestSellers}><span><BadgePercent size={24} /></span>Mais vendidos</button></section>
+
+        <section className="container products-section" id="produtos" ref={productsRef}>
+          <div className="section-heading"><div><span className="eyebrow">CATÁLOGO REAL · PRODUTOS ATIVOS</span><h1>{selectedSupplierName ? `Produtos ${selectedSupplierName}` : query ? `Resultados para “${query}”` : catalogMode === 'bestsellers' ? 'Mais vendidos nos últimos 7 dias' : category === 'Todos' ? 'Produtos em destaque' : category}</h1></div><span className="result-count">{filteredProducts.length} {filteredProducts.length === 1 ? 'produto' : 'produtos'}</span></div>
+          <div className="catalog-filters"><span className="filter-title"><SlidersHorizontal size={18} /> Filtrar catálogo</span><label>Fornecedor<select value={supplierFilter} onChange={(event) => { setSupplierFilter(event.target.value); setVisibleCount(24) }}><option value="">Todos os fornecedores</option>{supplierOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Categoria<select value={category} onChange={(event) => { setCategory(event.target.value as Category); setVisibleCount(24) }}>{categories.map(({ name }) => <option value={name} key={name}>{name}</option>)}</select></label><label>Departamento<select value={departmentFilter} onChange={(event) => { setDepartmentFilter(event.target.value); setVisibleCount(24) }}><option value="">Todos os departamentos</option>{departmentOptions.map((department) => <option value={department} key={department}>{department}</option>)}</select></label><button onClick={clearFilters}>Limpar filtros</button></div>
+          {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : visibleProducts.length > 0 ? <><div className="product-grid">{visibleProducts.map((product, index) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? index + 1 : undefined} addToCart={addToCart} authenticated={Boolean(customer)} />)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 24)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={clearFilters}>Limpar filtros</button></div>}
+        </section>
+
+        <section className="container benefits" id="atendimento"><article><span><Truck /></span><div><strong>Entrega programada</strong><p>Agilidade e segurança no seu abastecimento</p></div></article><article><span><ShieldCheck /></span><div><strong>Compra segura</strong><p>Seus dados e seu pedido protegidos</p></div></article><article><span><PackageCheck /></span><div><strong>Pedido por caixa</strong><p>Condições ideais para o seu negócio</p></div></article><a className="benefit-card" href={whatsappUrl} target="_blank" rel="noreferrer" aria-label="Falar com o atendimento da Ômega pelo WhatsApp"><span><Headphones /></span><div><strong>Atendimento próximo</strong><p>Fale agora com nossa equipe pelo WhatsApp</p></div></a></section>
+
+        <section className="brands-section" id="marcas"><div className="container"><div className="section-heading"><div><span className="eyebrow">BONS NEGÓCIOS COMEÇAM COM BOAS MARCAS</span><h2>Nossos parceiros</h2></div></div><div className="brands-grid">{partners.map((partner) => <a className="brand-card" href={`/?fornecedor=${partner.supplierId}#produtos`} key={partner.supplierId} aria-label={`Filtrar produtos de ${partner.name}`}><img src={partner.logo} alt={`Logo ${partner.name}`} loading="lazy" /></a>)}</div></div></section>
+      </main>
+
+      <footer><div className="container footer-grid"><div className="footer-brand"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /><p>Distribuindo mais do que produtos: parcerias de sucesso.</p></div><div><strong>Institucional</strong><a href="#top">Sobre a Ômega</a><a href="#marcas">Nossas marcas</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Fale conosco</a></div><div><strong>Atendimento</strong><span>Segunda a sexta, 8h às 17h</span><a href={whatsappUrl} target="_blank" rel="noreferrer">WhatsApp: (85) 9202-0207</a></div><div><strong>Compra protegida</strong><p className="security-copy"><LockKeyhole size={19} /> Ambiente seguro para seus pedidos.</p></div></div><div className="container footer-bottom"><span>© 2026 Ômega Distribuidora. Todos os direitos reservados.</span><span>Preços unitários sujeitos à confirmação comercial.</span></div></footer>
+
+      {customer && <button className={`minimum-order-widget ${minimumRemaining === 0 ? 'complete' : ''}`} onClick={() => setCartOpen(true)} aria-label={`Carrinho em ${money.format(cartTotal)} de um pedido mínimo de ${money.format(minimumOrder)}`}><span><ShoppingCart size={18} /> Pedido mínimo</span><strong>{money.format(cartTotal)} <small>/ {money.format(minimumOrder)}</small></strong><i><b style={{ width: `${minimumProgress}%` }} /></i><em>{minimumRemaining > 0 ? `Faltam ${money.format(minimumRemaining)}` : 'Mínimo atingido'}</em></button>}
+
+      {menuOpen && <div className="overlay" onMouseDown={() => setMenuOpen(false)}><aside className="side-panel menu-panel" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><h2>Categorias</h2><button className="icon-btn" onClick={() => setMenuOpen(false)}><X /></button></div>{categories.map(({ name, icon: Icon }) => <button key={name} className={category === name ? 'active' : ''} onClick={() => selectCategory(name)}><Icon size={21} />{name}<ChevronRight size={18} /></button>)}{customer && <button className="menu-logout" onClick={logout}><LogOut size={20} />Sair da conta</button>}</aside></div>}
+
+      {cartOpen && <div className="overlay" onMouseDown={() => setCartOpen(false)}><aside className="side-panel cart-panel" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">SEU PEDIDO</span><h2>Meu carrinho</h2></div><button className="icon-btn" onClick={() => setCartOpen(false)}><X /></button></div>{cart.length === 0 ? <div className="empty-cart"><span><ShoppingCart /></span><h3>Seu carrinho está vazio</h3><p>Explore o catálogo e adicione os produtos que seu negócio precisa.</p><button className="primary-button" onClick={() => setCartOpen(false)}>Explorar produtos</button></div> : <><div className="cart-items">{cart.map((item) => <div className="cart-item" key={item.id}><div className="cart-product-image">{item.image ? <img src={item.image} alt="" /> : <ImageOff />}</div><div className="cart-product-info"><strong>{item.name}</strong><small>Caixa com {item.unitsPerBox} {item.unitsPerBox === 1 ? 'unidade' : 'unidades'}</small><span>{money.format(item.unitPrice ?? 0)} / unidade</span><div className="quantity-control"><button onClick={() => changeQuantity(item.id, -1)} aria-label="Diminuir quantidade"><Minus size={15} /></button><b>{item.quantity}</b><button onClick={() => changeQuantity(item.id, 1)} aria-label="Aumentar quantidade"><Plus size={15} /></button><button className="remove-item" onClick={() => removeFromCart(item.id)} aria-label="Remover item"><Trash2 size={16} /></button></div></div></div>)}</div><div className="cart-summary"><div><span>Subtotal estimado</span><strong>{money.format(cartTotal)}</strong></div><div className={`cart-minimum ${minimumRemaining === 0 ? 'complete' : ''}`}><span>{minimumRemaining > 0 ? `Adicione mais ${money.format(minimumRemaining)} para atingir o mínimo.` : 'Pedido mínimo atingido.'}</span><i><b style={{ width: `${minimumProgress}%` }} /></i></div><p>Pedido para {customer?.tradeName || customer?.legalName}. Frete e condições comerciais serão confirmados pela equipe.</p><button className="checkout-button" onClick={beginCheckout} disabled={minimumRemaining > 0}>{minimumRemaining > 0 ? `Mínimo de ${money.format(minimumOrder)}` : 'Finalizar pedido'} <ArrowRight size={19} /></button><button className="keep-shopping" onClick={() => setCartOpen(false)}>Continuar comprando</button></div></>}</aside></div>}
+
+      {checkoutOpen && customer && <div className="overlay modal-overlay" onMouseDown={() => setCheckoutOpen(false)}><div className="checkout-modal" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">CONFIRMAR PEDIDO</span><h2>Identificação do cliente</h2></div><button className="icon-btn" onClick={() => setCheckoutOpen(false)}><X /></button></div><form onSubmit={submitOrder}><div className="checkout-customer"><CircleUserRound /><div><strong>{customer.tradeName || customer.legalName}</strong><span>{formatDocument(customer.document)} · {customer.email}</span></div><a href="/conta">Alterar</a></div><label>Plano de pagamento<select name="paymentPlan" defaultValue="avista" required><option value="avista">À vista</option><option value="7_dias">7 dias</option><option value="14_dias">14 dias</option><option value="28_dias">28 dias</option><option value="4_14_dias">4/14 dias</option><option value="14_28_dias">14/28 dias</option></select></label><label>Observações<textarea name="notes" placeholder="Informe preferências de entrega, contato ou condições." rows={3} /></label>{orderError && <span className="field-error">{orderError}</span>}<div className="checkout-total"><span>Total estimado</span><strong>{money.format(cartTotal)}</strong></div><button className="checkout-button" type="submit" disabled={sendingOrder}>{sendingOrder ? <LoaderCircle className="spin" /> : <>Enviar pedido <ArrowRight size={19} /></>}</button></form></div></div>}
+
+      {orderNumber && <div className="overlay modal-overlay"><div className="success-modal"><span><PackageCheck /></span><h2>Pedido recebido!</h2><p>Sua solicitação <strong>{orderNumber}</strong> foi registrada. Nossa equipe comercial entrará em contato para confirmar valores, frete e prazo.</p><button className="primary-button" onClick={() => setOrderNumber('')}>Continuar comprando</button></div></div>}
+      {toast && <div className="toast"><PackageCheck size={19} />{toast}</div>}
+    </div>
+  )
+}
+
+function ProductCard({ product, rank, addToCart, authenticated }: { product: Product; rank?: number; addToCart: (product: Product) => void; authenticated: boolean }) {
+  const [added, setAdded] = useState(false)
+  const boxPrice = (product.unitPrice ?? 0) * product.unitsPerBox
+  function add() {
+    addToCart(product)
+    setAdded(true)
+    window.setTimeout(() => setAdded(false), 1100)
+  }
+  return (
+    <article className="product-card">
+      <div className="product-image-wrap">
+        {rank && rank <= 10 && <span className="product-badge">#{rank} em vendas</span>}
+        <button className="favorite" aria-label="Favoritar"><Heart size={19} /></button>
+        {product.image ? <img src={product.image} alt={product.name} /> : <div className="no-product-image"><ImageOff /><span>Produto sem foto</span></div>}
+      </div>
+      <div className="product-content">
+        <span className="product-brand">{product.brand} · cód. {product.code}</span>
+        <h3>{product.name}</h3>
+        <div className="package-info"><Box size={16} /><span>Caixa com {product.unitsPerBox} {product.unitsPerBox === 1 ? 'unidade' : 'unidades'}</span><i>{product.package || product.masterPackage} · mín. {product.minBoxes} cx.</i></div>
+        {authenticated && product.unitPrice !== null && <div className="price-row unit-price-row"><div><strong>{money.format(product.unitPrice)}</strong><small>por unidade · {product.priceChannel}</small></div><span>{money.format(boxPrice)}<small>/caixa</small></span></div>}
+        <button className={`buy-button ${added ? 'added' : ''} ${!authenticated ? 'login-to-buy' : ''}`} onClick={add}>{!authenticated ? <><LockKeyhole size={17} />Entrar para ver preço</> : added ? <><PackageCheck size={18} />Adicionado!</> : <><ShoppingCart size={18} />Adicionar caixa</>}</button>
+      </div>
+    </article>
+  )
+}
+
+export default App
