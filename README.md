@@ -48,9 +48,10 @@ As imagens são associadas pelo código do produto em `public/assets/products`.
 ## Railway
 
 1. Crie um serviço PostgreSQL no projeto do Railway.
-2. Conecte a variável `DATABASE_URL` ao serviço da aplicação.
-3. Para consultar clientes diretamente no DW, configure `SOURCE_DATABASE_URL` e, se necessário, `SOURCE_SCHEMA=filial`.
-4. Publique o repositório; `railway.json` executará `npm run build` e `npm run start`.
+2. No serviço da aplicação, crie `DATABASE_URL` como referência a `${{Postgres.DATABASE_URL}}` (ajuste `Postgres` se o serviço tiver outro nome). Nunca use `localhost` nessa variável no Railway.
+3. Não configure `VITE_PORT`; o Railway injeta `PORT` automaticamente e o servidor já utiliza essa porta.
+4. Configure `SOURCE_DATABASE_URL` somente quando houver um banco-fonte com `filial.dcliente`. Essa variável não deve apontar para o PostgreSQL vazio da aplicação.
+5. Publique o repositório; `railway.json` executará `npm run build` e `npm run start`.
 
 O servidor Express aplica o schema, carrega o seed somente se a tabela de produtos estiver vazia e serve o frontend compilado. A autenticação usa senha derivada com `scrypt` e sessão em cookie HTTP-only. Na consulta de CPF/CNPJ para primeiro acesso, a base local é verificada primeiro; documentos ainda não sincronizados podem ser consultados no DW e copiados para a base da aplicação sem expor credenciais ao navegador.
 
