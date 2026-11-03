@@ -1,4 +1,4 @@
-export type Category = 'Todos' | 'Limpeza' | 'Higiene' | 'Utilidades' | 'Alimentos'
+export type Category = string
 
 export type Product = {
   id: number
@@ -7,6 +7,7 @@ export type Product = {
   name: string
   brand: string
   category: Exclude<Category, 'Todos'>
+  categories: string[]
   package: string
   masterPackage: string
   unitsPerBox: number
@@ -54,6 +55,32 @@ export type Banner = {
   targetUrl: string
   position: number
   active: boolean
+}
+
+export type CatalogCategory = {
+  id: number
+  name: string
+  position: number
+  active?: boolean
+  productCount?: number
+  productIds?: number[]
+}
+
+export type StaffCatalogProduct = {
+  id: number
+  code: number
+  supplierId: number
+  brand: string
+  name: string
+  package: string
+  unitsPerBox: number
+  image: string | null
+}
+
+export type CatalogSupplier = {
+  id: number
+  name: string
+  productCount: number
 }
 
 export type OrderItem = {

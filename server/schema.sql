@@ -130,6 +130,30 @@ CREATE TABLE IF NOT EXISTS product_sync_runs (
   details TEXT
 );
 
+CREATE TABLE IF NOT EXISTS catalog_categories (
+  id BIGSERIAL PRIMARY KEY,
+  name VARCHAR(80) NOT NULL UNIQUE,
+  position INTEGER NOT NULL DEFAULT 0,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by BIGINT REFERENCES staff_users(id) ON DELETE SET NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS product_categories (
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  category_id BIGINT NOT NULL REFERENCES catalog_categories(id) ON DELETE CASCADE,
+  assigned_by BIGINT REFERENCES staff_users(id) ON DELETE SET NULL,
+  assigned_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (product_id, category_id)
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key VARCHAR(100) PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_products_active_category ON products(active, category);
 CREATE INDEX IF NOT EXISTS idx_sales_product_date ON sales(product_id, sold_at);
 CREATE INDEX IF NOT EXISTS idx_customers_document ON customers(document);
@@ -138,3 +162,5 @@ CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions(customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer_date ON orders(customer_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_staff_sessions_user ON staff_sessions(staff_user_id);
 CREATE INDEX IF NOT EXISTS idx_banners_active_position ON banners(active, position);
+CREATE INDEX IF NOT EXISTS idx_product_categories_category ON product_categories(category_id, product_id);
+CREATE INDEX IF NOT EXISTS idx_product_categories_product ON product_categories(product_id, category_id);

@@ -51,7 +51,37 @@ export async function initializeDatabase() {
 
   const countResult = await pool.query('SELECT COUNT(*)::int AS count FROM products')
   if (Number(countResult.rows[0].count) === 0) await seedDatabase()
+  await ensureCatalogCategories()
   if (!process.env.DATABASE_URL) await ensureLocalCustomer()
+}
+
+async function ensureCatalogCategories() {
+  const migration = await pool.query("SELECT value FROM app_settings WHERE key='catalog_categories_v1_migrated' LIMIT 1")
+  if (migration.rows.length) return
+  const defaults = ['Limpeza', 'Higiene', 'Utilidades', 'Alimentos']
+  for (let index = 0; index < defaults.length; index += 1) {
+    await pool.query(
+      `INSERT INTO catalog_categories (name, position)
+       VALUES ($1,$2) ON CONFLICT (name) DO NOTHING`,
+      [defaults[index], index + 1],
+    )
+  }
+  const legacyMappings = await pool.query(
+    `SELECT p.id AS product_id, c.id AS category_id
+     FROM products p JOIN catalog_categories c ON LOWER(c.name) = LOWER(p.category)
+     WHERE p.category IS NOT NULL AND p.category <> ''`,
+  )
+  for (const mapping of legacyMappings.rows) {
+    await pool.query(
+      `INSERT INTO product_categories (product_id, category_id)
+       VALUES ($1,$2) ON CONFLICT (product_id, category_id) DO NOTHING`,
+      [mapping.product_id, mapping.category_id],
+    )
+  }
+  await pool.query(
+    `INSERT INTO app_settings (key,value) VALUES ('catalog_categories_v1_migrated','true')
+     ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_at=CURRENT_TIMESTAMP`,
+  )
 }
 
 async function ensureDefaultBanners() {

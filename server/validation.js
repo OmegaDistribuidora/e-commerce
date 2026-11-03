@@ -92,3 +92,34 @@ export const bannerSchema = z.object({
   active: z.boolean(),
   imageDataUrl: z.string().optional().default(''),
 })
+
+export const categorySchema = z.object({
+  name: z.string().trim().min(2, 'Informe o nome da categoria').max(80),
+  position: z.coerce.number().int().min(0).max(1000).optional().default(0),
+})
+
+export const categoryProductsSchema = z.object({
+  productIds: z.array(z.coerce.number().int().positive()).max(20000),
+})
+
+const syncProductSchema = z.object({
+  externalId: z.coerce.number().int().positive(),
+  supplierId: z.coerce.number().int().nonnegative().default(0),
+  brand: z.string().trim().max(200).default(''),
+  name: z.string().trim().min(1).max(300),
+  package: z.string().trim().max(100).default(''),
+  masterPackage: z.string().trim().max(100).default(''),
+  unitsPerBox: z.coerce.number().int().positive().max(100000).default(1),
+  minBoxes: z.coerce.number().int().positive().max(10000).default(1),
+  retailUnitPrice: z.coerce.number().nonnegative().max(999999999),
+  networkUnitPrice: z.coerce.number().nonnegative().max(999999999),
+  department: z.string().trim().max(200).default(''),
+  section: z.string().trim().max(200).default(''),
+  ean: z.string().trim().max(40).default(''),
+  priceDate: z.string().trim().max(30).nullable().optional(),
+})
+
+export const productSyncSchema = z.object({
+  source: z.literal('WinThor'),
+  products: z.array(syncProductSchema).min(1).max(20000),
+})
