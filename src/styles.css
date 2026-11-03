@@ -265,6 +265,11 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .login-field input { height: 100%; padding: 0; border: 0; box-shadow: none !important; }
 .form-notice { padding: 10px 12px; border-radius: 7px; background: #edf5ff; color: #315d91; font-size: 10px; line-height: 1.45; }
 .account-link-button { border: 0; background: transparent; color: var(--blue); font-size: 11px; font-weight: 800; padding: 5px; }
+.account-link-button:disabled { opacity: .55; cursor: not-allowed; }
+.account-forgot { justify-self: end; margin-top: -5px; }
+.otp-resend { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.account-card .otp-input { height: 58px; text-align: center; letter-spacing: .45em; padding-left: .45em; font-size: 25px; font-weight: 800; color: var(--navy); font-variant-numeric: tabular-nums; }
+.password-help { margin-top: -7px; color: #738397; font-size: 10px; }
 .field-error { display: block; color: #c73939; font-size: 10px; font-weight: 700; }
 .test-hint { color: #7c8999; padding: 9px 10px; border-radius: 6px; background: #f4f6f9; font-size: 9px; }
 .registration-form .form-row { grid-template-columns: 1fr 1fr; }

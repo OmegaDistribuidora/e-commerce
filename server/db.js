@@ -40,6 +40,10 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS network_unit_price NUMERIC(14,2)')
   await pool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS sales_channel VARCHAR(20) NOT NULL DEFAULT 'Varejo'")
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS password_hash TEXT')
+  await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS supabase_user_id UUID')
+  await pool.query('ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS supabase_user_id UUID')
+  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_supabase_user ON customers(supabase_user_id)')
+  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_supabase_user ON staff_users(supabase_user_id)')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS winthor_order_number BIGINT')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS winthor_status_code VARCHAR(20)')
@@ -53,6 +57,10 @@ export async function initializeDatabase() {
   await pool.query('UPDATE products SET network_unit_price = unit_price WHERE network_unit_price IS NULL')
   await pool.query('DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP')
   await pool.query('DELETE FROM staff_sessions WHERE expires_at <= CURRENT_TIMESTAMP')
+  if (process.env.SUPABASE_URL) {
+    await pool.query('UPDATE customers SET password_hash=NULL WHERE password_hash IS NOT NULL')
+    await pool.query('DELETE FROM sessions')
+  }
 
   await ensureDefaultBanners()
   await ensureBootstrapAdmin()

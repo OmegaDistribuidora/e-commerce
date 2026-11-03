@@ -1,14 +1,17 @@
 import 'dotenv/config'
 import express from 'express'
+import { rateLimit } from 'express-rate-limit'
 import { timingSafeEqual } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
-import { bannerSchema, categoryProductsSchema, categorySchema, customerSchema, digits, loginSchema, lookupSchema, orderSchema, productSyncSchema, staffOrderLinkSchema, staffUserSchema } from './validation.js'
+import { verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
+import { bannerSchema, categoryProductsSchema, categorySchema, customerProfileSchema, digits, loginSchema, lookupSchema, orderSchema, productSyncSchema, staffOrderLinkSchema, staffUserSchema } from './validation.js'
 
 const app = express()
+app.set('trust proxy', 1)
 const port = Number(process.env.PORT) || 3000
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const distDir = resolve(currentDir, '../dist')
@@ -27,6 +30,31 @@ app.use(express.json({ limit: '25mb' }))
 
 app.use(async (request, _response, next) => {
   try {
+    const authUser = await verifySupabaseAccessToken(request)
+    if (authUser) {
+      request.authUser = authUser
+      const [customerResult, staffResult] = await Promise.all([
+        pool.query(
+          `SELECT id, document, person_type, legal_name, trade_name, phone,
+                  email, city, state, sales_channel
+           FROM customers
+           WHERE supabase_user_id = $1 AND active = TRUE
+           LIMIT 1`,
+          [authUser.id],
+        ),
+        pool.query(
+          `SELECT id, name, email, role
+           FROM staff_users
+           WHERE supabase_user_id = $1 AND active = TRUE
+           LIMIT 1`,
+          [authUser.id],
+        ),
+      ])
+      request.customer = customerResult.rows[0] ?? null
+      request.staff = staffResult.rows[0] ?? null
+      return next()
+    }
+
     const token = getCookie(request, 'omega_session')
     if (!token) return next()
     const result = await pool.query(
@@ -41,12 +69,14 @@ app.use(async (request, _response, next) => {
     request.customer = result.rows[0] ?? null
     return next()
   } catch (error) {
-    return next(error)
+    request.authError = error
+    return next()
   }
 })
 
 app.use(async (request, _response, next) => {
   try {
+    if (request.staff || request.authUser) return next()
     const token = getCookie(request, 'omega_staff')
     if (!token) return next()
     const result = await pool.query(
@@ -84,15 +114,33 @@ function staffJson(staff) {
 }
 
 function requireStaff(request, response, next) {
+  if (request.authError) return response.status(401).json({ message: 'Sua sessão expirou. Entre novamente.' })
   if (!request.staff) return response.status(401).json({ message: 'Entre na área de gestão para continuar.' })
   return next()
 }
 
 function requireAdmin(request, response, next) {
+  if (request.authError) return response.status(401).json({ message: 'Sua sessão expirou. Entre novamente.' })
   if (!request.staff) return response.status(401).json({ message: 'Entre na área de gestão para continuar.' })
   if (request.staff.role !== 'ADMIN') return response.status(403).json({ message: 'Esta ação é exclusiva do administrador.' })
   return next()
 }
+
+const authLinkLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { message: 'Muitas tentativas de vinculação. Aguarde alguns minutos e tente novamente.' },
+})
+
+const publicLookupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { message: 'Muitas consultas. Aguarde alguns minutos e tente novamente.' },
+})
 
 function omegaApiConfig() {
   const url = String(process.env.OMEGA_API_URL || '').trim().replace(/\/$/, '')
@@ -244,8 +292,143 @@ function validIntegrationToken(request) {
   return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer)
 }
 
+app.post('/api/auth/link', authLinkLimiter, async (request, response, next) => {
+  if (request.authError) return response.status(401).json({ message: 'Sua sessão expirou. Entre novamente.' })
+  if (!request.authUser) return response.status(401).json({ message: 'Confirme seu e-mail antes de continuar.' })
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const existingStaff = await client.query(
+      `SELECT id, name, email, role, supabase_user_id
+       FROM staff_users
+       WHERE LOWER(email) = LOWER($1) AND active = TRUE
+       LIMIT 1 FOR UPDATE`,
+      [request.authUser.email],
+    )
+    if (existingStaff.rows.length) {
+      const staff = existingStaff.rows[0]
+      if (staff.supabase_user_id && staff.supabase_user_id !== request.authUser.id) {
+        await client.query('ROLLBACK')
+        return response.status(409).json({ message: 'Este usuário interno já está vinculado a outra conta.' })
+      }
+      await client.query('UPDATE staff_users SET supabase_user_id=$1 WHERE id=$2', [request.authUser.id, staff.id])
+      await client.query('COMMIT')
+      return response.json({ accountType: 'staff', user: staffJson(staff) })
+    }
+
+    const parsedProfile = customerProfileSchema.safeParse(request.body?.profile)
+    const profile = parsedProfile.success ? parsedProfile.data : null
+    if (request.body?.profile && !parsedProfile.success) {
+      await client.query('ROLLBACK')
+      return response.status(400).json({ message: parsedProfile.error.issues[0].message, issues: parsedProfile.error.issues })
+    }
+    if (profile && profile.email.toLowerCase() !== request.authUser.email) {
+      await client.query('ROLLBACK')
+      return response.status(400).json({ message: 'O e-mail confirmado precisa ser o mesmo informado no cadastro.' })
+    }
+
+    const metadataDocument = digits(request.authUser.userMetadata?.document)
+    if (profile && metadataDocument && profile.document !== metadataDocument) {
+      await client.query('ROLLBACK')
+      return response.status(400).json({ message: 'O CPF ou CNPJ não corresponde ao cadastro iniciado.' })
+    }
+    const document = profile?.document || ''
+    let customerResult = await client.query(
+      `SELECT id, document, person_type, legal_name, trade_name, phone, email, city, state,
+              sales_channel, supabase_user_id
+       FROM customers
+       WHERE supabase_user_id=$1
+          OR LOWER(email)=LOWER($2)
+          OR ($3<>'' AND document=$3)
+       ORDER BY CASE WHEN supabase_user_id=$1 THEN 0 ELSE 1 END
+       LIMIT 1 FOR UPDATE`,
+      [request.authUser.id, request.authUser.email, document],
+    )
+
+    if (!customerResult.rows.length && !profile) {
+      await client.query('ROLLBACK')
+      return response.status(409).json({
+        message: 'Complete a identificação do cliente para vincular esta conta.',
+        code: 'PROFILE_REQUIRED',
+      })
+    }
+
+    if (profile) {
+      const emailOwner = await client.query(
+        'SELECT id FROM customers WHERE LOWER(email)=LOWER($1) AND document<>$2 LIMIT 1',
+        [profile.email, profile.document],
+      )
+      if (emailOwner.rows.length) {
+        await client.query('ROLLBACK')
+        return response.status(409).json({ message: 'Este e-mail já está vinculado a outro cliente.' })
+      }
+
+      if (customerResult.rows.length) {
+        const existing = customerResult.rows[0]
+        if (existing.supabase_user_id && existing.supabase_user_id !== request.authUser.id) {
+          await client.query('ROLLBACK')
+          return response.status(409).json({ message: 'Este cliente já está vinculado a outra conta.' })
+        }
+        customerResult = await client.query(
+          `UPDATE customers SET
+             legal_name=$2, trade_name=$3, phone=$4, email=$5, supabase_user_id=$6,
+             password_hash=NULL, postal_code=$7, address_line=$8, address_number=$9,
+             address_complement=$10, neighborhood=$11, city=$12, state=$13,
+             updated_at=CURRENT_TIMESTAMP
+           WHERE id=$1
+           RETURNING id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel`,
+          [
+            existing.id, profile.legalName, profile.tradeName, profile.phone, profile.email,
+            request.authUser.id, profile.postalCode, profile.addressLine, profile.addressNumber,
+            profile.addressComplement, profile.neighborhood, profile.city, profile.state,
+          ],
+        )
+      } else {
+        customerResult = await client.query(
+          `INSERT INTO customers (
+             document, person_type, legal_name, trade_name, phone, email, supabase_user_id,
+             postal_code, address_line, address_number, address_complement, neighborhood, city, state
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+           RETURNING id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel`,
+          [
+            profile.document, profile.document.length === 11 ? 'CPF' : 'CNPJ', profile.legalName,
+            profile.tradeName, profile.phone, profile.email, request.authUser.id, profile.postalCode,
+            profile.addressLine, profile.addressNumber, profile.addressComplement, profile.neighborhood,
+            profile.city, profile.state,
+          ],
+        )
+      }
+    } else {
+      const existing = customerResult.rows[0]
+      if (existing.supabase_user_id && existing.supabase_user_id !== request.authUser.id) {
+        await client.query('ROLLBACK')
+        return response.status(409).json({ message: 'Este cliente já está vinculado a outra conta.' })
+      }
+      customerResult = await client.query(
+        `UPDATE customers SET supabase_user_id=$1, password_hash=NULL, updated_at=CURRENT_TIMESTAMP
+         WHERE id=$2
+         RETURNING id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel`,
+        [request.authUser.id, existing.id],
+      )
+    }
+
+    await client.query('COMMIT')
+    return response.json({ accountType: 'customer', customer: customerJson(customerResult.rows[0]) })
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined)
+    if (error?.code === '23505') return response.status(409).json({ message: 'Este acesso já está vinculado a outro cadastro.' })
+    return next(error)
+  } finally {
+    client.release()
+  }
+})
+
 app.post('/api/auth/login', async (request, response, next) => {
   try {
+    if (supabaseAuthConfigured()) {
+      return response.status(410).json({ message: 'Use a autenticação segura do Supabase para entrar.' })
+    }
     const parsed = loginSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
     const result = await pool.query(
@@ -284,6 +467,7 @@ app.post('/api/auth/logout', async (request, response, next) => {
 })
 
 app.get('/api/auth/me', (request, response) => {
+  if (request.authError) return response.status(401).json({ message: 'Sua sessão expirou. Entre novamente.' })
   if (!request.customer) return response.status(401).json({ message: 'Sessão não autenticada.' })
   return response.json({ customer: customerJson(request.customer) })
 })
@@ -641,12 +825,12 @@ app.get('/api/products', async (request, response, next) => {
   }
 })
 
-app.post('/api/customers/lookup', async (request, response, next) => {
+app.post('/api/customers/lookup', publicLookupLimiter, async (request, response, next) => {
   try {
     const parsed = lookupSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
     let result = await pool.query(
-      `SELECT id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel, password_hash
+      `SELECT id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel, supabase_user_id
        FROM customers WHERE document = $1 AND active = TRUE LIMIT 1`,
       [parsed.data.document],
     )
@@ -688,7 +872,7 @@ app.post('/api/customers/lookup', async (request, response, next) => {
           ],
         )
         result = await pool.query(
-          `SELECT id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel, password_hash
+          `SELECT id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel, supabase_user_id
            FROM customers WHERE document = $1 AND active = TRUE LIMIT 1`,
           [parsed.data.document],
         )
@@ -696,53 +880,15 @@ app.post('/api/customers/lookup', async (request, response, next) => {
     }
     if (!result.rows.length) return response.json({ found: false, document: parsed.data.document })
     const customer = result.rows[0]
-    return response.json({ found: true, hasAccess: Boolean(customer.password_hash), customer: customerJson(customer) })
+    return response.json({ found: true, hasAccess: Boolean(customer.supabase_user_id), customer: customerJson(customer) })
   } catch (error) {
     next(error)
   }
 })
 
-app.post('/api/customers', async (request, response, next) => {
-  try {
-    const parsed = customerSchema.safeParse(request.body)
-    if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message, issues: parsed.error.issues })
-    const customer = parsed.data
-    const existing = await pool.query('SELECT id, password_hash FROM customers WHERE document = $1 LIMIT 1', [customer.document])
-    if (existing.rows[0]?.password_hash) return response.status(409).json({ message: 'Este cliente já possui acesso. Entre com seu e-mail e senha.' })
-    const emailOwner = await pool.query('SELECT id FROM customers WHERE LOWER(email) = LOWER($1) AND document <> $2 LIMIT 1', [customer.email, customer.document])
-    if (emailOwner.rows.length) return response.status(409).json({ message: 'Este e-mail já está vinculado a outro cliente.' })
-    const passwordHash = hashPassword(customer.password)
-
-    const result = existing.rows.length ? await pool.query(
-      `UPDATE customers SET
-         legal_name=$2, trade_name=$3, phone=$4, email=$5, password_hash=$6,
-         postal_code=$7, address_line=$8, address_number=$9, address_complement=$10,
-         neighborhood=$11, city=$12, state=$13, updated_at=CURRENT_TIMESTAMP
-       WHERE id=$1
-       RETURNING id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel`,
-      [
-        existing.rows[0].id, customer.legalName, customer.tradeName, customer.phone, customer.email,
-        passwordHash, customer.postalCode, customer.addressLine, customer.addressNumber,
-        customer.addressComplement, customer.neighborhood, customer.city, customer.state,
-      ],
-    ) : await pool.query(
-      `INSERT INTO customers (
-        document, person_type, legal_name, trade_name, phone, email, password_hash, postal_code,
-        address_line, address_number, address_complement, neighborhood, city, state
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-       RETURNING id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel`,
-      [
-        customer.document, customer.document.length === 11 ? 'CPF' : 'CNPJ', customer.legalName,
-        customer.tradeName, customer.phone, customer.email, passwordHash, customer.postalCode, customer.addressLine,
-        customer.addressNumber, customer.addressComplement, customer.neighborhood, customer.city, customer.state,
-      ],
-    )
-    const row = result.rows[0]
-    return response.status(existing.rows.length ? 200 : 201).json({ customer: customerJson(row) })
-  } catch (error) {
-    next(error)
-  }
-})
+app.post('/api/customers', (_request, response) => response.status(410).json({
+  message: 'O cadastro agora é concluído com confirmação de e-mail pelo Supabase.',
+}))
 
 app.get('/api/orders', async (request, response, next) => {
   if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para consultar seus pedidos.' })

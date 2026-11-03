@@ -1,6 +1,8 @@
 node_modules
 dist
 .env
+resend.txt
+supabase/.temp/
 .env.*
 !.env.example
 *.local

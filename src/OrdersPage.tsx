@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, LoaderCircle, PackageCheck, ShoppingBag } from 'lucide-react'
+import { authenticatedFetch } from './api'
 import { money } from './data'
 import { orderStatusLabel } from './orderStatus'
 import type { Customer, Order } from './types'
@@ -15,7 +16,7 @@ export default function OrdersPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    Promise.all([fetch('/api/auth/me'), fetch('/api/orders')])
+    Promise.all([authenticatedFetch('/api/auth/me'), authenticatedFetch('/api/orders')])
       .then(async ([authResponse, ordersResponse]) => {
         if (!authResponse.ok) { window.location.href = '/conta'; return }
         const auth = await authResponse.json()

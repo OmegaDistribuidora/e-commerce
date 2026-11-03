@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, CheckSquare, ClipboardCheck, ImageOff, ImagePlus, LayoutDashboard, LoaderCircle, LogOut, PackageCheck, Plus, Save, Search, ShieldCheck, Tag, Trash2, Users } from 'lucide-react'
+import { authenticatedFetch } from './api'
 import { money } from './data'
 import { orderStatusLabel } from './orderStatus'
+import { supabase } from './supabase'
 import type { Banner, CatalogCategory, CatalogSupplier, Order, StaffCatalogProduct, StaffUser } from './types'
 import { formatDocument, formatPhone } from './validation'
 
 type Tab = 'orders' | 'banners' | 'categories' | 'users'
 
 async function api<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, options)
+  const response = await authenticatedFetch(url, options)
   const body = await response.text()
   const data = body ? JSON.parse(body) : {}
   if (!response.ok) throw new Error(data.message || 'Não foi possível concluir a operação.')
@@ -92,10 +94,19 @@ export default function StaffPortal() {
     setLoading(true); setError(''); setNotice('')
     const form = new FormData(event.currentTarget)
     try {
-      const data = await api<{ user: StaffUser }>('/api/staff/auth/login', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: form.get('email'), password: form.get('password') }),
-      })
+      const email = String(form.get('email'))
+      const password = String(form.get('password'))
+      const supabaseResult = await supabase.auth.signInWithPassword({ email, password })
+      let data: { user: StaffUser }
+      if (!supabaseResult.error) {
+        await api('/api/auth/link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        data = await api<{ user: StaffUser }>('/api/staff/auth/me')
+      } else {
+        // Compatibilidade temporária para as contas internas anteriores à migração.
+        data = await api<{ user: StaffUser }>('/api/staff/auth/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }),
+        })
+      }
       setTab('orders')
       setUser(data.user)
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível entrar.') }
@@ -104,7 +115,7 @@ export default function StaffPortal() {
 
   async function logout() {
     try {
-      await fetch('/api/staff/auth/logout', { method: 'POST' })
+      await Promise.all([supabase.auth.signOut(), fetch('/api/staff/auth/logout', { method: 'POST' })])
     } finally {
       setUser(null); setOrders([]); setBanners([]); setUsers([]); setCategories([]); setCatalogProducts([])
       setTab('orders'); setError(''); setNotice('')

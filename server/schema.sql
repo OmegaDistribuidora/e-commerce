@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS customers (
   trade_name TEXT,
   phone VARCHAR(11) NOT NULL,
   email TEXT NOT NULL,
+  supabase_user_id UUID,
   password_hash TEXT,
   sales_channel VARCHAR(20) NOT NULL DEFAULT 'Varejo' CHECK (sales_channel IN ('Varejo', 'Redes')),
   postal_code VARCHAR(8),
@@ -95,6 +96,7 @@ CREATE TABLE IF NOT EXISTS staff_users (
   id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
+  supabase_user_id UUID,
   password_hash TEXT NOT NULL,
   role VARCHAR(20) NOT NULL CHECK (role IN ('ADMIN', 'COMERCIAL')),
   active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -164,9 +166,11 @@ CREATE INDEX IF NOT EXISTS idx_products_active_category ON products(active, cate
 CREATE INDEX IF NOT EXISTS idx_sales_product_date ON sales(product_id, sold_at);
 CREATE INDEX IF NOT EXISTS idx_customers_document ON customers(document);
 CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_supabase_user ON customers(supabase_user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions(customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer_date ON orders(customer_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_staff_sessions_user ON staff_sessions(staff_user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_supabase_user ON staff_users(supabase_user_id);
 CREATE INDEX IF NOT EXISTS idx_banners_active_position ON banners(active, position);
 CREATE INDEX IF NOT EXISTS idx_product_categories_category ON product_categories(category_id, product_id);
 CREATE INDEX IF NOT EXISTS idx_product_categories_product ON product_categories(product_id, category_id);

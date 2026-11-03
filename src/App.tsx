@@ -9,7 +9,9 @@ import {
 import AccountPage from './AccountPage'
 import OrdersPage from './OrdersPage'
 import StaffPortal from './StaffPortal'
+import { authenticatedFetch } from './api'
 import { money } from './data'
+import { supabase } from './supabase'
 import type { Banner, CartItem, Category, Customer, Product } from './types'
 import { formatDocument } from './validation'
 
@@ -81,7 +83,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
   const productsRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
-    fetch('/api/auth/me')
+    authenticatedFetch('/api/auth/me')
       .then(async (response) => response.ok ? response.json() : null)
       .then((data) => {
         setCustomer(data?.customer ?? null)
@@ -95,7 +97,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
     if (!authReady) return
     const controller = new AbortController()
     setLoadingProducts(true)
-    fetch(`/api/products?limit=180&sort=${catalogMode}`, { signal: controller.signal })
+    authenticatedFetch(`/api/products?limit=180&sort=${catalogMode}`, { signal: controller.signal })
       .then(async (response) => {
         const data = await response.json()
         if (!response.ok) throw new Error(data.message)
@@ -168,7 +170,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
   }
 
   async function logout() {
-    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined)
+    await supabase.auth.signOut()
     localStorage.removeItem('omega-cart')
     setCart([])
     setCustomer(null)
@@ -223,7 +225,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
     setOrderError('')
     const form = new FormData(event.currentTarget)
     try {
-      const response = await fetch('/api/orders', {
+      const response = await authenticatedFetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ customerId: customer.id, paymentPlan: form.get('paymentPlan'), notes: form.get('notes'), items: cart.map((item) => ({ productId: item.id, quantity: item.quantity })) }),

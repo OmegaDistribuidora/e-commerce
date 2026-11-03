@@ -39,13 +39,12 @@ export function isValidDocument(value) {
   return normalized.length === 11 ? isValidCpf(normalized) : normalized.length === 14 && isValidCnpj(normalized)
 }
 
-export const customerSchema = z.object({
+export const customerProfileSchema = z.object({
   document: z.string().transform((value) => digits(value)).refine(isValidDocument, 'CPF ou CNPJ inválido'),
   legalName: z.string().trim().min(3, 'Informe o nome ou razão social').max(160),
   tradeName: z.string().trim().max(160).optional().default(''),
   phone: z.string().transform((value) => digits(value, 11)).refine((value) => value.length === 10 || value.length === 11, 'Telefone inválido'),
   email: z.string().trim().email('E-mail inválido').max(180),
-  password: z.string().min(8, 'A senha precisa ter pelo menos 8 caracteres').max(72).regex(/[A-Z]/, 'Inclua uma letra maiúscula na senha').regex(/[a-z]/, 'Inclua uma letra minúscula na senha').regex(/\d/, 'Inclua um número na senha'),
   postalCode: z.string().transform((value) => digits(value, 8)).refine((value) => !value || value.length === 8, 'CEP inválido').optional().default(''),
   addressLine: z.string().trim().max(180).optional().default(''),
   addressNumber: z.string().trim().max(20).optional().default(''),
