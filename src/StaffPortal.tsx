@@ -41,6 +41,12 @@ export default function StaffPortal() {
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
+    if (!notice) return undefined
+    const timeout = window.setTimeout(() => setNotice(''), 5000)
+    return () => window.clearTimeout(timeout)
+  }, [notice])
+
+  useEffect(() => {
     api<{ user: StaffUser }>('/api/staff/auth/me')
       .then((data) => setUser(data.user))
       .catch(() => setUser(null))
@@ -82,27 +88,39 @@ export default function StaffPortal() {
 
   async function login(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setLoading(true); setError('')
+    setLoading(true); setError(''); setNotice('')
     const form = new FormData(event.currentTarget)
     try {
       const data = await api<{ user: StaffUser }>('/api/staff/auth/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: form.get('email'), password: form.get('password') }),
       })
+      setTab('orders')
       setUser(data.user)
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível entrar.') }
     finally { setLoading(false) }
   }
 
   async function logout() {
-    await fetch('/api/staff/auth/logout', { method: 'POST' })
-    setUser(null); setOrders([]); setBanners([]); setUsers([]); setCategories([]); setCatalogProducts([])
+    try {
+      await fetch('/api/staff/auth/logout', { method: 'POST' })
+    } finally {
+      setUser(null); setOrders([]); setBanners([]); setUsers([]); setCategories([]); setCatalogProducts([])
+      setTab('orders'); setError(''); setNotice('')
+    }
+  }
+
+  function changeTab(nextTab: Tab) {
+    setTab(nextTab)
+    setError('')
+    setNotice('')
   }
 
   async function saveBanner(event: React.FormEvent<HTMLFormElement>, banner?: Banner) {
     event.preventDefault()
     setLoading(true); setError(''); setNotice('')
-    const form = new FormData(event.currentTarget)
+    const formElement = event.currentTarget
+    const form = new FormData(formElement)
     const file = form.get('image') as File
     let imageDataUrl = ''
     if (file?.size) imageDataUrl = await new Promise<string>((resolve, reject) => {
@@ -118,7 +136,7 @@ export default function StaffPortal() {
       })
       const data = await api<{ banners: Banner[] }>('/api/staff/banners')
       setBanners(data.banners); setNotice('Banner salvo com sucesso.')
-      if (!banner) event.currentTarget.reset()
+      if (!banner) formElement.reset()
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível salvar o banner.') }
     finally { setLoading(false) }
   }
@@ -126,14 +144,15 @@ export default function StaffPortal() {
   async function createUser(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setLoading(true); setError(''); setNotice('')
-    const form = new FormData(event.currentTarget)
+    const formElement = event.currentTarget
+    const form = new FormData(formElement)
     try {
       await api('/api/staff/users', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: form.get('name'), email: form.get('email'), password: form.get('password'), role: form.get('role') }),
       })
       const data = await api<{ users: StaffUser[] }>('/api/staff/users')
-      setUsers(data.users); setNotice('Usuário criado com sucesso.'); event.currentTarget.reset()
+      setUsers(data.users); setNotice('Usuário criado com sucesso.'); formElement.reset()
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível criar o usuário.') }
     finally { setLoading(false) }
   }
@@ -160,14 +179,15 @@ export default function StaffPortal() {
 
   async function createCategory(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setLoading(true); setError(''); setNotice('')
-    const form = new FormData(event.currentTarget)
+    const formElement = event.currentTarget
+    const form = new FormData(formElement)
     try {
       const data = await api<{ category: CatalogCategory }>('/api/staff/categories', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: form.get('name') }),
       })
       await refreshCategories(data.category.id)
-      setNotice(`Categoria “${data.category.name}” criada.`); event.currentTarget.reset()
+      setNotice(`Categoria “${data.category.name}” criada.`); formElement.reset()
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível criar a categoria.') }
     finally { setLoading(false) }
   }
@@ -219,7 +239,7 @@ export default function StaffPortal() {
   if (!user) return <main className="staff-login"><a href="/" className="account-back"><ArrowLeft size={18} /> Voltar para a loja</a><form onSubmit={login}><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /><span className="staff-login-icon"><ShieldCheck /></span><h1>Gestão do e-Commerce</h1><p>Acesso exclusivo para Administradores e equipe Comercial.</p><label>E-mail<input name="email" type="email" autoComplete="username" required /></label><label>Senha<input name="password" type="password" autoComplete="current-password" required /></label>{error && <span className="field-error">{error}</span>}<button className="checkout-button" disabled={loading}>{loading ? <LoaderCircle className="spin" /> : 'Entrar'}</button></form></main>
 
   return <div className="staff-shell">
-    <aside className="staff-sidebar"><a href="/"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /></a><div className="staff-identity"><strong>{user.name}</strong><span>{user.role === 'ADMIN' ? 'Administrador' : 'Comercial'}</span></div><nav><button className={tab === 'orders' ? 'active' : ''} onClick={() => setTab('orders')}><PackageCheck /> Pedidos</button><button className={tab === 'categories' ? 'active' : ''} onClick={() => setTab('categories')}><Tag /> Categorias</button><button className={tab === 'banners' ? 'active' : ''} onClick={() => setTab('banners')}><ImagePlus /> Banners</button>{user.role === 'ADMIN' && <button className={tab === 'users' ? 'active' : ''} onClick={() => setTab('users')}><Users /> Usuários</button>}</nav><button className="staff-logout" onClick={logout}><LogOut /> Sair</button></aside>
+    <aside className="staff-sidebar"><a href="/"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /></a><div className="staff-identity"><strong>{user.name}</strong><span>{user.role === 'ADMIN' ? 'Administrador' : 'Comercial'}</span></div><nav><button className={tab === 'orders' ? 'active' : ''} onClick={() => changeTab('orders')}><PackageCheck /> Pedidos</button><button className={tab === 'categories' ? 'active' : ''} onClick={() => changeTab('categories')}><Tag /> Categorias</button><button className={tab === 'banners' ? 'active' : ''} onClick={() => changeTab('banners')}><ImagePlus /> Banners</button>{user.role === 'ADMIN' && <button className={tab === 'users' ? 'active' : ''} onClick={() => changeTab('users')}><Users /> Usuários</button>}</nav><button className="staff-logout" onClick={logout}><LogOut /> Sair</button></aside>
     <main className="staff-main"><header><div><span className="eyebrow">PAINEL INTERNO</span><h1>{tab === 'orders' ? 'Pedidos do e-Commerce' : tab === 'categories' ? 'Categorias de produtos' : tab === 'banners' ? 'Banners da loja' : 'Usuários internos'}</h1></div><span className="staff-role"><LayoutDashboard /> {user.role}</span></header>{error && <div className="staff-alert error">{error}</div>}{notice && <div className="staff-alert success">{notice}</div>}
       {tab === 'orders' && <section className="staff-orders">{orders.length ? orders.map((order) => <details className="staff-order" key={order.id}><summary><div><strong>{order.number}</strong><span>{order.customer.tradeName || order.customer.legalName}</span></div><div><span>{new Date(order.createdAt).toLocaleString('pt-BR')}</span><strong>{money.format(order.total)}</strong></div></summary><div className="order-detail-grid"><p><b>Cliente</b>{formatDocument(order.customer.document)}<br />{order.customer.email}<br />{formatPhone(order.customer.phone)}</p><p><b>Pagamento</b>{paymentLabel(order.paymentPlan)}<br /><b>Status</b>{order.status}</p>{order.notes && <p><b>Observações</b>{order.notes}</p>}</div><div className="order-lines">{order.items.map((item) => <div key={item.id}><span>{item.code} · {item.name}</span><span>{item.boxes} cx. · {item.unitsPerBox} un./cx.</span><strong>{money.format(item.lineTotal)}</strong></div>)}</div></details>) : <div className="staff-empty">Nenhum pedido recebido até agora.</div>}</section>}
       {tab === 'categories' && <section className="category-manager"><aside className="category-manager-list"><form onSubmit={createCategory}><input name="name" placeholder="Nova categoria" required minLength={2} maxLength={80} /><button disabled={loading} aria-label="Criar categoria"><Plus /></button></form><div>{categories.map((category) => <button key={category.id} className={selectedCategoryId === category.id ? 'active' : ''} onClick={() => selectCategory(category)}><span><Tag /><b>{category.name}</b><small>{category.productIds?.length || 0} produtos</small></span><i role="button" tabIndex={0} aria-label={`Excluir ${category.name}`} onClick={(event) => { event.stopPropagation(); deleteCategory(category) }} onKeyDown={(event) => { if (event.key === 'Enter') deleteCategory(category) }}><Trash2 /></i></button>)}</div></aside><div className="category-product-picker">{selectedCategory ? <><div className="category-picker-heading"><div><span className="eyebrow">EDITANDO CATEGORIA</span><h2>{selectedCategory.name}</h2><p>Pesquise e marque todos os produtos que devem aparecer nesta categoria.</p></div><strong>{selectedProductIds.size} selecionados</strong></div><div className="category-product-filters"><label><Search /><input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Nome, EAN, marca ou códigos separados por vírgula" /></label><select value={supplierFilter} onChange={(event) => setSupplierFilter(event.target.value)}><option value="">Todos os fornecedores</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name} ({supplier.productCount})</option>)}</select><button onClick={toggleVisibleProducts}><CheckSquare /> {filteredCatalogProducts.length && filteredCatalogProducts.every((product) => selectedProductIds.has(product.id)) ? 'Desmarcar resultados' : 'Marcar resultados'}</button></div><div className="category-results-summary"><span>{filteredCatalogProducts.length} produtos encontrados</span><span>A seleção é mantida ao trocar a busca ou fornecedor.</span></div><div className="category-product-list">{filteredCatalogProducts.map((product) => <label key={product.id} className={selectedProductIds.has(product.id) ? 'selected' : ''}><input type="checkbox" checked={selectedProductIds.has(product.id)} onChange={() => toggleProduct(product.id)} />{product.image ? <img src={product.image} alt="" /> : <span className="category-no-image"><ImageOff /></span>}<span><b>{product.name}</b><small>Cód. {product.code} · {product.brand}</small><small>{product.package} · {product.unitsPerBox} un./caixa</small></span></label>)}</div><div className="category-save-bar"><span>{selectedProductIds.size} produtos nesta categoria</span><button className="primary-button" onClick={saveCategoryProducts} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar categoria</>}</button></div></> : <div className="staff-empty">Crie uma categoria para começar a selecionar produtos.</div>}</div></section>}
