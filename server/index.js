@@ -307,6 +307,19 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
   if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
 
   const uniqueProducts = [...new Map(parsed.data.products.map((product) => [product.externalId, product])).values()]
+  const minimumProducts = Math.max(1, Number(process.env.PRODUCT_SYNC_MIN_COUNT) || 100)
+  if (uniqueProducts.length < minimumProducts) {
+    return response.status(409).json({
+      message: `Sincronização cancelada: foram recebidos ${uniqueProducts.length} produtos, abaixo do mínimo de segurança (${minimumProducts}).`,
+    })
+  }
+  const currentCountResult = await pool.query("SELECT COUNT(*)::int AS count FROM products WHERE company='Filial' AND active=TRUE")
+  const currentActiveCount = Number(currentCountResult.rows[0].count)
+  if (currentActiveCount >= minimumProducts && uniqueProducts.length < Math.floor(currentActiveCount * 0.5)) {
+    return response.status(409).json({
+      message: `Sincronização cancelada: a carga reduziria o catálogo de ${currentActiveCount} para ${uniqueProducts.length} produtos ativos.`,
+    })
+  }
   const client = await pool.connect()
   try {
     await client.query('BEGIN')

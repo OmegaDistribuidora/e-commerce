@@ -6,10 +6,12 @@ Copie `dags/dag_ecommerce_produtos.py` para a pasta de DAGs do Airflow.
 
 Crie as Connections:
 
-- `oracle_filial`: Oracle do WinThor já utilizado pelas DAGs da filial.
+- `lancamentos_oracle_filial`: Oracle do WinThor já utilizado pelas DAGs atuais.
 - `ecommerce_api`: use a URL pública do e-commerce no campo `Host` e o mesmo valor de `PRODUCT_SYNC_TOKEN` no campo `Password`.
 
 Não é necessário habilitar acesso público ao PostgreSQL. A DAG envia os dados por HTTPS para uma rota autenticada da aplicação, e somente o servidor do Railway acessa o banco pela rede privada.
+
+Neste ambiente, a task usa o Python do Windows e o Oracle Client já instalado para manter compatibilidade com o verificador de senha legado do WinThor. As credenciais das Connections são encaminhadas somente no ambiente do processo e não são gravadas em arquivos ou logs.
 
 A DAG `ecommerce_produtos_precos` executa a cada 30 minutos e:
 
