@@ -98,6 +98,12 @@ export type Order = {
   id: number
   number: string
   status: string
+  winthorOrderNumber: number | null
+  winthorStatusCode: string
+  winthorStatusLabel: string
+  statusUpdatedAt: string | null
+  enteredAt: string | null
+  enteredBy: string
   paymentPlan: string
   total: number
   notes: string

@@ -74,6 +74,10 @@ export const orderSchema = z.object({
   })).min(1, 'O pedido precisa ter ao menos um item').max(200),
 })
 
+export const staffOrderLinkSchema = z.object({
+  winthorOrderNumber: z.coerce.number().int('Informe um NUMPED válido').positive('Informe um NUMPED válido').max(999999999999),
+})
+
 export const staffUserSchema = z.object({
   name: z.string().trim().min(3, 'Informe o nome do usuário').max(120),
   email: z.string().trim().email('E-mail inválido').max(180).transform((value) => value.toLowerCase()),

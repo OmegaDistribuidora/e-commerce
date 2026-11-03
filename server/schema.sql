@@ -61,7 +61,13 @@ CREATE TABLE IF NOT EXISTS customers (
 CREATE TABLE IF NOT EXISTS orders (
   id BIGSERIAL PRIMARY KEY,
   customer_id BIGINT NOT NULL REFERENCES customers(id),
-  status VARCHAR(30) NOT NULL DEFAULT 'received',
+  status VARCHAR(30) NOT NULL DEFAULT 'analysis',
+  winthor_order_number BIGINT,
+  winthor_status_code VARCHAR(20),
+  winthor_status_label VARCHAR(80),
+  winthor_status_checked_at TIMESTAMP,
+  winthor_entered_by_staff_user_id BIGINT,
+  winthor_entered_at TIMESTAMP,
   payment_plan VARCHAR(30) NOT NULL DEFAULT 'avista',
   total NUMERIC(14,2) NOT NULL,
   notes TEXT,
@@ -160,6 +166,7 @@ CREATE INDEX IF NOT EXISTS idx_customers_document ON customers(document);
 CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
 CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions(customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer_date ON orders(customer_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_winthor_order_number ON orders(winthor_order_number);
 CREATE INDEX IF NOT EXISTS idx_staff_sessions_user ON staff_sessions(staff_user_id);
 CREATE INDEX IF NOT EXISTS idx_banners_active_position ON banners(active, position);
 CREATE INDEX IF NOT EXISTS idx_product_categories_category ON product_categories(category_id, product_id);

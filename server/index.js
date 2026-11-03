@@ -6,12 +6,21 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
-import { bannerSchema, categoryProductsSchema, categorySchema, customerSchema, digits, loginSchema, lookupSchema, orderSchema, productSyncSchema, staffUserSchema } from './validation.js'
+import { bannerSchema, categoryProductsSchema, categorySchema, customerSchema, digits, loginSchema, lookupSchema, orderSchema, productSyncSchema, staffOrderLinkSchema, staffUserSchema } from './validation.js'
 
 const app = express()
 const port = Number(process.env.PORT) || 3000
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const distDir = resolve(currentDir, '../dist')
+const orderStatusCacheMs = Math.max(1, Number(process.env.ORDER_STATUS_CACHE_MINUTES) || 15) * 60 * 1000
+const customerOrderStatuses = new Set(['analysis', 'released', 'sent'])
+
+class OmegaApiError extends Error {
+  constructor(message, status = 502) {
+    super(message)
+    this.status = status
+  }
+}
 
 app.disable('x-powered-by')
 app.use(express.json({ limit: '25mb' }))
@@ -85,16 +94,98 @@ function requireAdmin(request, response, next) {
   return next()
 }
 
+function omegaApiConfig() {
+  const url = String(process.env.OMEGA_API_URL || '').trim().replace(/\/$/, '')
+  const key = String(process.env.OMEGA_API_KEY || '').trim()
+  return url && key ? { url, key } : null
+}
+
+async function fetchWinthorOrderStatuses(orderNumbers) {
+  const config = omegaApiConfig()
+  if (!config) throw new OmegaApiError('A consulta de pedidos do WinThor ainda não está configurada.', 503)
+  let response
+  try {
+    response = await fetch(`${config.url}/v1/winthor/pedidos/status`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': config.key,
+        'X-Client-Name': 'omega-ecommerce',
+      },
+      body: JSON.stringify({ numpeds: [...new Set(orderNumbers.map(Number))] }),
+      signal: AbortSignal.timeout(12_000),
+    })
+  } catch {
+    throw new OmegaApiError('Não foi possível consultar o status no WinThor agora.', 503)
+  }
+  const text = await response.text()
+  let data = {}
+  try { data = text ? JSON.parse(text) : {} } catch { data = {} }
+  if (!response.ok) {
+    const status = response.status === 401 ? 502 : (response.status >= 500 ? 503 : 502)
+    throw new OmegaApiError(data.detail || 'Não foi possível consultar o status no WinThor.', status)
+  }
+  const statuses = new Map()
+  for (const order of Array.isArray(data.pedidos) ? data.pedidos : []) {
+    const number = Number(order.numped)
+    if (Number.isSafeInteger(number) && customerOrderStatuses.has(order.status)) {
+      statuses.set(number, {
+        status: order.status,
+        code: String(order.posicao || '').trim().slice(0, 20),
+        label: String(order.statusReal || '').trim().slice(0, 80) || 'Em análise',
+      })
+    }
+  }
+  return statuses
+}
+
+async function refreshStaleOrderStatuses(orders) {
+  if (!omegaApiConfig()) return
+  const now = Date.now()
+  const staleOrders = orders.filter((order) => order.winthor_order_number && (
+    !order.winthor_status_checked_at
+    || now - new Date(order.winthor_status_checked_at).getTime() >= orderStatusCacheMs
+  ))
+  if (!staleOrders.length) return
+  try {
+    const statuses = await fetchWinthorOrderStatuses(staleOrders.map((order) => order.winthor_order_number))
+    await Promise.all(staleOrders.map(async (order) => {
+      const winthorOrderNumber = Number(order.winthor_order_number)
+      const winthorStatus = statuses.get(winthorOrderNumber)
+      if (!winthorStatus) return
+      const checkedAt = new Date()
+      await pool.query(
+        `UPDATE orders SET status=$2, winthor_status_code=$3, winthor_status_label=$4,
+           winthor_status_checked_at=$5,
+           updated_at=CASE WHEN status<>$2 THEN CURRENT_TIMESTAMP ELSE updated_at END
+         WHERE id=$1 AND winthor_order_number=$6`,
+        [order.id, winthorStatus.status, winthorStatus.code, winthorStatus.label, checkedAt, winthorOrderNumber],
+      )
+      order.status = winthorStatus.status
+      order.winthor_status_code = winthorStatus.code
+      order.winthor_status_label = winthorStatus.label
+      order.winthor_status_checked_at = checkedAt
+    }))
+  } catch (error) {
+    console.warn(`[orders] consulta de status adiada: ${error instanceof Error ? error.message : 'falha desconhecida'}`)
+  }
+}
+
 async function listOrders(whereClause = '', params = []) {
   const result = await pool.query(
-    `SELECT o.id, o.status, o.payment_plan, o.total, o.notes, o.created_at, o.updated_at,
-            c.id AS customer_id, c.legal_name, c.trade_name, c.document, c.email, c.phone
+    `SELECT o.id, o.status, o.winthor_order_number, o.winthor_status_code,
+            o.winthor_status_label, o.winthor_status_checked_at,
+            o.winthor_entered_at, o.payment_plan, o.total, o.notes, o.created_at, o.updated_at,
+            c.id AS customer_id, c.legal_name, c.trade_name, c.document, c.email, c.phone,
+            su.name AS winthor_entered_by_name
      FROM orders o
      JOIN customers c ON c.id = o.customer_id
+     LEFT JOIN staff_users su ON su.id = o.winthor_entered_by_staff_user_id
      ${whereClause}
      ORDER BY o.created_at DESC`,
     params,
   )
+  await refreshStaleOrderStatuses(result.rows)
   const orderIds = result.rows.map((order) => Number(order.id))
   let itemRows = []
   if (orderIds.length) {
@@ -112,6 +203,12 @@ async function listOrders(whereClause = '', params = []) {
     id: Number(order.id),
     number: `OMG-${String(order.id).padStart(6, '0')}`,
     status: order.status,
+    winthorOrderNumber: order.winthor_order_number == null ? null : Number(order.winthor_order_number),
+    winthorStatusCode: order.winthor_status_code || '',
+    winthorStatusLabel: order.winthor_status_label || '',
+    statusUpdatedAt: order.winthor_status_checked_at,
+    enteredAt: order.winthor_entered_at,
+    enteredBy: order.winthor_entered_by_name || '',
     paymentPlan: order.payment_plan,
     total: Number(order.total),
     notes: order.notes || '',
@@ -660,6 +757,36 @@ app.get('/api/staff/orders', requireStaff, async (_request, response, next) => {
   try {
     return response.json({ orders: await listOrders() })
   } catch (error) {
+    return next(error)
+  }
+})
+
+app.put('/api/staff/orders/:id/winthor', requireStaff, async (request, response, next) => {
+  try {
+    const orderId = Number(request.params.id)
+    if (!Number.isSafeInteger(orderId) || orderId < 1) return response.status(400).json({ message: 'Pedido do e-commerce inválido.' })
+    const parsed = staffOrderLinkSchema.safeParse(request.body)
+    if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+    const winthorOrderNumber = parsed.data.winthorOrderNumber
+    const statuses = await fetchWinthorOrderStatuses([winthorOrderNumber])
+    const winthorStatus = statuses.get(winthorOrderNumber)
+    if (!winthorStatus) return response.status(404).json({ message: 'NUMPED não encontrado no WinThor.' })
+    const result = await pool.query(
+      `UPDATE orders SET winthor_order_number=$2, status=$3,
+         winthor_status_code=$4, winthor_status_label=$5,
+         winthor_status_checked_at=CURRENT_TIMESTAMP,
+         winthor_entered_by_staff_user_id=$6,
+         winthor_entered_at=CURRENT_TIMESTAMP,
+         updated_at=CURRENT_TIMESTAMP
+       WHERE id=$1 RETURNING id`,
+      [orderId, winthorOrderNumber, winthorStatus.status, winthorStatus.code, winthorStatus.label, request.staff.id],
+    )
+    if (!result.rows.length) return response.status(404).json({ message: 'Pedido do e-commerce não encontrado.' })
+    const orders = await listOrders('WHERE o.id = $1', [orderId])
+    return response.json({ order: orders[0] })
+  } catch (error) {
+    if (error?.code === '23505') return response.status(409).json({ message: 'Este NUMPED já está vinculado a outro pedido do e-commerce.' })
+    if (error instanceof OmegaApiError) return response.status(error.status).json({ message: error.message })
     return next(error)
   }
 })

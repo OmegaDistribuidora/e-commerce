@@ -73,6 +73,16 @@ A DAG versionada em `airflow/dags/dag_ecommerce_produtos.py` atualiza produtos a
 
 As categorias são mantidas nas tabelas `catalog_categories` e `product_categories`. A classificação inicial do protótipo é migrada automaticamente, mas a DAG não altera categorias. Usuários Administradores e Comerciais podem criar, excluir e organizar produtos em várias categorias pela área `/gestao`, com busca por nome, código, EAN ou marca e filtro por fornecedor.
 
+### Status dos pedidos no WinThor
+
+Administradores e Comerciais liberam um pedido informando obrigatoriamente o `NUMPED`. O backend consulta a API Omega somente por HTTPS com `X-API-Key`; a credencial nunca é enviada ao navegador. Configure no Railway:
+
+- `OMEGA_API_URL=https://apiomega.williamfmarinho.com.br`
+- `OMEGA_API_KEY` com a chave armazenada no `.env` da API Omega
+- `ORDER_STATUS_CACHE_MINUTES=15`
+
+O cliente vê apenas **Em análise**, **Liberado** ou **Enviado**. O painel interno também mostra a posição real retornada pelo WinThor. A última resposta fica persistida no PostgreSQL por 15 minutos e continua disponível durante indisponibilidades temporárias da API ou do WinThor.
+
 ## Estrutura principal
 
 - `src/`: interface React/TypeScript
