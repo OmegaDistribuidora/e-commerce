@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, CheckSquare, ClipboardCheck, ImageOff, ImagePlus, LayoutDashboard, LoaderCircle, LogOut, PackageCheck, Plus, Save, Search, ShieldCheck, Tag, Trash2, Users } from 'lucide-react'
+import { ArrowLeft, CheckSquare, ClipboardCheck, ImageOff, ImagePlus, KeyRound, LayoutDashboard, LoaderCircle, LogOut, PackageCheck, Plus, Save, Search, ShieldCheck, Tag, Trash2, UserCheck, Users } from 'lucide-react'
 import { authenticatedFetch } from './api'
 import { money } from './data'
 import { orderStatusLabel } from './orderStatus'
 import { supabase } from './supabase'
-import type { Banner, CatalogCategory, CatalogSupplier, Order, StaffCatalogProduct, StaffUser } from './types'
-import { formatDocument, formatPhone } from './validation'
+import type { Banner, CatalogCategory, CatalogSupplier, Customer, Order, StaffCatalogProduct, StaffUser } from './types'
+import { formatDocument, formatPhone, formatPostalCode } from './validation'
 
-type Tab = 'orders' | 'banners' | 'categories' | 'users'
+type Tab = 'orders' | 'customers' | 'banners' | 'categories' | 'users' | 'settings'
 
 async function api<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await authenticatedFetch(url, options)
@@ -30,6 +30,7 @@ export default function StaffPortal() {
   const [ready, setReady] = useState(false)
   const [tab, setTab] = useState<Tab>('orders')
   const [orders, setOrders] = useState<Order[]>([])
+  const [pendingCustomers, setPendingCustomers] = useState<Customer[]>([])
   const [banners, setBanners] = useState<Banner[]>([])
   const [users, setUsers] = useState<StaffUser[]>([])
   const [categories, setCategories] = useState<CatalogCategory[]>([])
@@ -60,6 +61,7 @@ export default function StaffPortal() {
     if (!user) return
     Promise.all([
       api<{ orders: Order[] }>('/api/staff/orders').then((data) => setOrders(data.orders)),
+      api<{ customers: Customer[] }>('/api/staff/customers?status=pending').then((data) => setPendingCustomers(data.customers)),
       api<{ banners: Banner[] }>('/api/staff/banners').then((data) => setBanners(data.banners)),
       api<{ categories: CatalogCategory[] }>('/api/staff/categories').then((data) => {
         setCategories(data.categories)
@@ -117,7 +119,7 @@ export default function StaffPortal() {
     try {
       await Promise.all([supabase.auth.signOut(), fetch('/api/staff/auth/logout', { method: 'POST' })])
     } finally {
-      setUser(null); setOrders([]); setBanners([]); setUsers([]); setCategories([]); setCatalogProducts([])
+      setUser(null); setOrders([]); setPendingCustomers([]); setBanners([]); setUsers([]); setCategories([]); setCatalogProducts([])
       setTab('orders'); setError(''); setNotice('')
     }
   }
@@ -261,16 +263,57 @@ export default function StaffPortal() {
     finally { setLoading(false) }
   }
 
+  async function approveCustomer(customer: Customer) {
+    if (!window.confirm(`Aprovar o cadastro de ${customer.tradeName || customer.legalName}? O CPF/CNPJ será validado no WinThor.`)) return
+    setLoading(true); setError(''); setNotice('')
+    try {
+      const data = await api<{ customer: Customer; winthorCustomer: { code: number } }>(`/api/staff/customers/${customer.id}/approve`, { method: 'POST' })
+      setPendingCustomers((current) => current.filter((item) => item.id !== customer.id))
+      setNotice(`${data.customer.tradeName || data.customer.legalName} aprovado com o código WinThor ${data.winthorCustomer.code}.`)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível aprovar o cadastro.')
+    } finally { setLoading(false) }
+  }
+
+  async function changeStaffPassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setLoading(true); setError(''); setNotice('')
+    const formElement = event.currentTarget
+    const form = new FormData(formElement)
+    const newPassword = String(form.get('newPassword'))
+    if (newPassword !== String(form.get('confirmPassword'))) {
+      setError('A confirmação da senha não confere.'); setLoading(false); return
+    }
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(newPassword)) {
+      setError('Use ao menos 8 caracteres, com maiúscula, minúscula e número.'); setLoading(false); return
+    }
+    try {
+      if (user?.authProvider === 'supabase') {
+        const { error: updateError } = await supabase.auth.updateUser({ password: newPassword })
+        if (updateError) throw updateError
+      } else {
+        await api('/api/staff/password', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ currentPassword: form.get('currentPassword'), newPassword }),
+        })
+      }
+      formElement.reset(); setNotice('Senha alterada com sucesso.')
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível alterar a senha.')
+    } finally { setLoading(false) }
+  }
+
   if (!ready) return <main className="staff-loading"><LoaderCircle className="spin" /></main>
   if (!user) return <main className="staff-login"><a href="/" className="account-back"><ArrowLeft size={18} /> Voltar para a loja</a><form onSubmit={login}><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /><span className="staff-login-icon"><ShieldCheck /></span><h1>Gestão do e-Commerce</h1><p>Acesso exclusivo para Administradores e equipe Comercial.</p><label>E-mail<input name="email" type="email" autoComplete="username" required /></label><label>Senha<input name="password" type="password" autoComplete="current-password" required /></label>{error && <span className="field-error">{error}</span>}<button className="checkout-button" disabled={loading}>{loading ? <LoaderCircle className="spin" /> : 'Entrar'}</button></form></main>
 
   return <div className="staff-shell">
-    <aside className="staff-sidebar"><a href="/"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /></a><div className="staff-identity"><strong>{user.name}</strong><span>{user.role === 'ADMIN' ? 'Administrador' : 'Comercial'}</span></div><nav><button className={tab === 'orders' ? 'active' : ''} onClick={() => changeTab('orders')}><PackageCheck /> Pedidos</button><button className={tab === 'categories' ? 'active' : ''} onClick={() => changeTab('categories')}><Tag /> Categorias</button><button className={tab === 'banners' ? 'active' : ''} onClick={() => changeTab('banners')}><ImagePlus /> Banners</button>{user.role === 'ADMIN' && <button className={tab === 'users' ? 'active' : ''} onClick={() => changeTab('users')}><Users /> Usuários</button>}</nav><button className="staff-logout" onClick={logout}><LogOut /> Sair</button></aside>
-    <main className="staff-main"><header><div><span className="eyebrow">PAINEL INTERNO</span><h1>{tab === 'orders' ? 'Pedidos do e-Commerce' : tab === 'categories' ? 'Categorias de produtos' : tab === 'banners' ? 'Banners da loja' : 'Usuários internos'}</h1></div><span className="staff-role"><LayoutDashboard /> {user.role}</span></header>{error && <div className="staff-alert error">{error}</div>}{notice && <div className="staff-alert success">{notice}</div>}
+    <aside className="staff-sidebar"><a href="/"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /></a><div className="staff-identity"><strong>{user.name}</strong><span>{user.role === 'ADMIN' ? 'Administrador' : 'Comercial'}</span></div><nav><button className={tab === 'orders' ? 'active' : ''} onClick={() => changeTab('orders')}><PackageCheck /> Pedidos</button><button className={tab === 'customers' ? 'active' : ''} onClick={() => changeTab('customers')}><UserCheck /> Clientes pendentes{pendingCustomers.length > 0 && <b className="nav-count">{pendingCustomers.length}</b>}</button><button className={tab === 'categories' ? 'active' : ''} onClick={() => changeTab('categories')}><Tag /> Categorias</button><button className={tab === 'banners' ? 'active' : ''} onClick={() => changeTab('banners')}><ImagePlus /> Banners</button>{user.role === 'ADMIN' && <button className={tab === 'users' ? 'active' : ''} onClick={() => changeTab('users')}><Users /> Usuários</button>}<button className={tab === 'settings' ? 'active' : ''} onClick={() => changeTab('settings')}><KeyRound /> Configurações</button></nav><button className="staff-logout" onClick={logout}><LogOut /> Sair</button></aside>
+    <main className="staff-main"><header><div><span className="eyebrow">PAINEL INTERNO</span><h1>{({ orders: 'Pedidos do e-Commerce', customers: 'Clientes pendentes', categories: 'Categorias de produtos', banners: 'Banners da loja', users: 'Usuários internos', settings: 'Configurações da conta' } as Record<Tab, string>)[tab]}</h1></div><span className="staff-role"><LayoutDashboard /> {user.role}</span></header>{error && <div className="staff-alert error">{error}</div>}{notice && <div className="staff-alert success">{notice}</div>}
       {tab === 'orders' && <section className="staff-orders">{orders.length ? orders.map((order) => <StaffOrderCard key={order.id} order={order} loading={loading} onLink={linkWinthorOrder} />) : <div className="staff-empty">Nenhum pedido recebido até agora.</div>}</section>}
+      {tab === 'customers' && <section className="pending-customers">{pendingCustomers.length ? pendingCustomers.map((customer) => <article key={customer.id} className="pending-customer-card"><header><div className="pending-customer-avatar">{(customer.tradeName || customer.legalName).slice(0, 1).toUpperCase()}</div><div><span className="eyebrow">AGUARDANDO VALIDAÇÃO</span><h2>{customer.tradeName || customer.legalName}</h2><p>{customer.legalName}</p></div><span className="pending-date">Cadastrado em<br /><strong>{customer.createdAt ? new Date(customer.createdAt).toLocaleString('pt-BR') : '—'}</strong></span></header><div className="pending-customer-data"><p><b>CPF/CNPJ</b>{formatDocument(customer.document)}</p><p><b>Contato</b>{customer.email}<br />{formatPhone(customer.phone)}</p><p><b>Endereço</b>{customer.addressLine}, {customer.addressNumber}{customer.addressComplement ? ` · ${customer.addressComplement}` : ''}<br />{customer.neighborhood} · {customer.city}/{customer.state}<br />CEP {formatPostalCode(customer.postalCode)}</p></div><footer><span>A aprovação consultará este documento diretamente no WinThor e salvará o CODCLI encontrado.</span><button className="primary-button" disabled={loading} onClick={() => approveCustomer(customer)}>{loading ? <LoaderCircle className="spin" /> : <><UserCheck /> Validar e aprovar</>}</button></footer></article>) : <div className="staff-empty"><UserCheck /><h2>Nenhum cadastro pendente</h2><p>Novos clientes aguardando validação aparecerão aqui.</p></div>}</section>}
       {tab === 'categories' && <section className="category-manager"><aside className="category-manager-list"><form onSubmit={createCategory}><input name="name" placeholder="Nova categoria" required minLength={2} maxLength={80} /><button disabled={loading} aria-label="Criar categoria"><Plus /></button></form><div>{categories.map((category) => <button key={category.id} className={selectedCategoryId === category.id ? 'active' : ''} onClick={() => selectCategory(category)}><span><Tag /><b>{category.name}</b><small>{category.productIds?.length || 0} produtos</small></span><i role="button" tabIndex={0} aria-label={`Excluir ${category.name}`} onClick={(event) => { event.stopPropagation(); deleteCategory(category) }} onKeyDown={(event) => { if (event.key === 'Enter') deleteCategory(category) }}><Trash2 /></i></button>)}</div></aside><div className="category-product-picker">{selectedCategory ? <><div className="category-picker-heading"><div><span className="eyebrow">EDITANDO CATEGORIA</span><h2>{selectedCategory.name}</h2><p>Pesquise e marque todos os produtos que devem aparecer nesta categoria.</p></div><strong>{selectedProductIds.size} selecionados</strong></div><div className="category-product-filters"><label><Search /><input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Nome, EAN, marca ou códigos separados por vírgula" /></label><select value={supplierFilter} onChange={(event) => setSupplierFilter(event.target.value)}><option value="">Todos os fornecedores</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name} ({supplier.productCount})</option>)}</select><button onClick={toggleVisibleProducts}><CheckSquare /> {filteredCatalogProducts.length && filteredCatalogProducts.every((product) => selectedProductIds.has(product.id)) ? 'Desmarcar resultados' : 'Marcar resultados'}</button></div><div className="category-results-summary"><span>{filteredCatalogProducts.length} produtos encontrados</span><span>A seleção é mantida ao trocar a busca ou fornecedor.</span></div><div className="category-product-list">{filteredCatalogProducts.map((product) => <label key={product.id} className={selectedProductIds.has(product.id) ? 'selected' : ''}><input type="checkbox" checked={selectedProductIds.has(product.id)} onChange={() => toggleProduct(product.id)} />{product.image ? <img src={product.image} alt="" /> : <span className="category-no-image"><ImageOff /></span>}<span><b>{product.name}</b><small>Cód. {product.code} · {product.brand}</small><small>{product.package} · {product.unitsPerBox} un./caixa</small></span></label>)}</div><div className="category-save-bar"><span>{selectedProductIds.size} produtos nesta categoria</span><button className="primary-button" onClick={saveCategoryProducts} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar categoria</>}</button></div></> : <div className="staff-empty">Crie uma categoria para começar a selecionar produtos.</div>}</div></section>}
       {tab === 'banners' && <section><div className="staff-section-heading"><h2>Banners cadastrados</h2><span>PNG, JPG ou WEBP · máximo 5 MB</span></div><div className="banner-admin-grid">{banners.map((banner) => <BannerForm key={banner.id} banner={banner} onSave={saveBanner} loading={loading} />)}<BannerForm onSave={saveBanner} loading={loading} /></div></section>}
       {tab === 'users' && user.role === 'ADMIN' && <section className="users-admin"><form className="staff-form create-user-form" onSubmit={createUser}><h2><Plus /> Novo usuário</h2><label>Nome<input name="name" required minLength={3} /></label><label>E-mail<input name="email" type="email" required /></label><label>Senha inicial<input name="password" type="password" minLength={8} required /></label><label>Perfil<select name="role" defaultValue="COMERCIAL"><option value="COMERCIAL">Comercial</option><option value="ADMIN">Administrador</option></select></label><button className="primary-button" disabled={loading}>Criar usuário</button></form><div className="staff-user-list">{users.map((item) => <article key={item.id}><span>{item.name.slice(0, 1).toUpperCase()}</span><div><strong>{item.name}</strong><small>{item.email}</small></div><b>{item.role}</b></article>)}</div></section>}
+      {tab === 'settings' && <section className="staff-settings"><form className="staff-form" onSubmit={changeStaffPassword}><h2><KeyRound /> Alterar senha</h2><p>Atualize a senha utilizada para acessar a gestão do e-Commerce.</p>{user.authProvider !== 'supabase' && <label>Senha atual<input name="currentPassword" type="password" autoComplete="current-password" required /></label>}<label>Nova senha<input name="newPassword" type="password" autoComplete="new-password" minLength={8} required /></label><label>Confirmar nova senha<input name="confirmPassword" type="password" autoComplete="new-password" minLength={8} required /></label><small>Use ao menos 8 caracteres, com maiúscula, minúscula e número.</small><button className="primary-button" disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar nova senha</>}</button></form></section>}
     </main>
   </div>
 }

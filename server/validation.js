@@ -45,13 +45,23 @@ export const customerProfileSchema = z.object({
   tradeName: z.string().trim().max(160).optional().default(''),
   phone: z.string().transform((value) => digits(value, 11)).refine((value) => value.length === 10 || value.length === 11, 'Telefone inválido'),
   email: z.string().trim().email('E-mail inválido').max(180),
-  postalCode: z.string().transform((value) => digits(value, 8)).refine((value) => !value || value.length === 8, 'CEP inválido').optional().default(''),
-  addressLine: z.string().trim().max(180).optional().default(''),
-  addressNumber: z.string().trim().max(20).optional().default(''),
+  postalCode: z.string().transform((value) => digits(value, 8)).refine((value) => value.length === 8, 'Informe um CEP válido'),
+  addressLine: z.string().trim().min(3, 'Informe o endereço').max(180),
+  addressNumber: z.string().trim().min(1, 'Informe o número').max(20),
   addressComplement: z.string().trim().max(100).optional().default(''),
-  neighborhood: z.string().trim().max(100).optional().default(''),
-  city: z.string().trim().max(100).optional().default(''),
-  state: z.string().trim().toUpperCase().regex(/^$|^[A-Z]{2}$/, 'UF inválida').optional().default(''),
+  neighborhood: z.string().trim().min(2, 'Informe o bairro').max(100),
+  city: z.string().trim().min(2, 'Informe a cidade').max(100),
+  state: z.string().trim().toUpperCase().regex(/^[A-Z]{2}$/, 'Informe uma UF válida'),
+})
+
+export const customerUpdateSchema = customerProfileSchema.omit({ document: true, email: true })
+
+export const staffPasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Informe a senha atual').max(72),
+  newPassword: z.string().min(8, 'A nova senha precisa ter pelo menos 8 caracteres').max(72)
+    .regex(/[A-Z]/, 'Inclua uma letra maiúscula na nova senha')
+    .regex(/[a-z]/, 'Inclua uma letra minúscula na nova senha')
+    .regex(/\d/, 'Inclua um número na nova senha'),
 })
 
 export const loginSchema = z.object({

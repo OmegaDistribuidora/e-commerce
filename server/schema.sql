@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS customers (
   neighborhood TEXT,
   city TEXT,
   state VARCHAR(2),
+  registration_status VARCHAR(20) NOT NULL DEFAULT 'approved' CHECK (registration_status IN ('pending', 'approved')),
+  approved_at TIMESTAMP,
+  approved_by_staff_user_id BIGINT,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   source VARCHAR(30) NOT NULL DEFAULT 'ecommerce',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -166,6 +169,7 @@ CREATE INDEX IF NOT EXISTS idx_products_active_category ON products(active, cate
 CREATE INDEX IF NOT EXISTS idx_sales_product_date ON sales(product_id, sold_at);
 CREATE INDEX IF NOT EXISTS idx_customers_document ON customers(document);
 CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
+CREATE INDEX IF NOT EXISTS idx_customers_registration_status ON customers(registration_status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions(customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer_date ON orders(customer_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_staff_sessions_user ON staff_sessions(staff_user_id);

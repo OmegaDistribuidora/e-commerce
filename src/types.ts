@@ -27,15 +27,25 @@ export type CartItem = Product & { quantity: number }
 
 export type Customer = {
   id: number
+  externalId: number | null
   document: string
   personType: 'CPF' | 'CNPJ'
   legalName: string
   tradeName?: string
   phone: string
   email: string
+  postalCode: string
+  addressLine: string
+  addressNumber: string
+  addressComplement: string
+  neighborhood: string
   city?: string
   state?: string
   salesChannel: 'Varejo' | 'Redes'
+  registrationStatus: 'pending' | 'approved'
+  canOrder: boolean
+  createdAt?: string
+  approvedAt?: string | null
 }
 
 export type StaffUser = {
@@ -43,6 +53,7 @@ export type StaffUser = {
   name: string
   email: string
   role: 'ADMIN' | 'COMERCIAL'
+  authProvider?: 'supabase' | 'legacy'
   active?: boolean
   createdAt?: string
 }

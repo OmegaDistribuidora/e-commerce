@@ -91,7 +91,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
         const authenticatedStaff = data?.accountType === 'staff' ? data.user : null
         setCustomer(authenticatedCustomer)
         setStaffUser(authenticatedStaff)
-        setCart(authenticatedCustomer ? readStoredCart() : [])
+        setCart(authenticatedCustomer?.canOrder ? readStoredCart() : [])
       })
       .catch(() => { setCustomer(null); setStaffUser(null) })
       .finally(() => setAuthReady(true))
@@ -164,6 +164,10 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
       window.location.href = '/conta'
       return
     }
+    if (!customer.canOrder) {
+      setToast('Seu cadastro está em análise. Você poderá comprar após a aprovação da equipe Ômega.')
+      return
+    }
     setCart((current) => {
       const existing = current.find((item) => item.id === product.id)
       return existing
@@ -223,6 +227,11 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
       window.location.href = '/conta?return=checkout'
       return
     }
+    if (!customer.canOrder) {
+      setCartOpen(false)
+      setToast('Seu cadastro ainda está em análise e não pode enviar pedidos.')
+      return
+    }
     setCartOpen(false)
     setCheckoutOpen(true)
   }
@@ -266,6 +275,8 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
         <nav className="main-nav" aria-label="Navegação principal"><div className="container nav-inner"><button className="categories-button" onClick={() => setMenuOpen(true)}><Menu size={19} /> Todas as categorias <ChevronDown size={17} /></button><a href="#produtos" onClick={() => setCatalogMode('featured')}>Destaques</a><a href="#produtos" onClick={showBestSellers}>Mais vendidos</a><a href="#produtos">Ofertas</a><a href="#marcas">Marcas</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a></div></nav>
       </header>
 
+      {customer && !customer.canOrder && <div className="store-pending-banner"><LoaderCircle /><div><strong>Cadastro em análise</strong><span>Você já pode consultar o catálogo e os preços. A compra será liberada após a validação do seu cadastro.</span></div><a href="/pedidos">Ver meu cadastro</a></div>}
+
       <main id="top">
         <section className="hero" aria-label="Destaques"><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item) => <a key={item.id} className="hero-slide" href={item.targetUrl || '#produtos'}><img src={item.imageUrl} alt={item.altText} /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => setSlide((slide - 1 + slides.length) % slides.length)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => setSlide((slide + 1) % slides.length)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => setSlide(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section>
 
@@ -274,7 +285,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
         <section className="container products-section" id="produtos" ref={productsRef}>
           <div className="section-heading"><div><span className="eyebrow">CATÁLOGO REAL · PRODUTOS ATIVOS</span><h1>{selectedSupplierName ? `Produtos ${selectedSupplierName}` : query ? `Resultados para “${query}”` : catalogMode === 'bestsellers' ? 'Mais vendidos nos últimos 7 dias' : category === 'Todos' ? 'Produtos em destaque' : category}</h1></div><span className="result-count">{filteredProducts.length} {filteredProducts.length === 1 ? 'produto' : 'produtos'}</span></div>
           <div className="catalog-filters"><span className="filter-title"><SlidersHorizontal size={18} /> Filtrar catálogo</span><label>Fornecedor<select value={supplierFilter} onChange={(event) => { setSupplierFilter(event.target.value); setVisibleCount(24) }}><option value="">Todos os fornecedores</option>{supplierOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Categoria<select value={category} onChange={(event) => { setCategory(event.target.value as Category); setVisibleCount(24) }}><option value="Todos">Todos</option>{catalogCategories.map((name) => <option value={name} key={name}>{name}</option>)}</select></label><label>Departamento<select value={departmentFilter} onChange={(event) => { setDepartmentFilter(event.target.value); setVisibleCount(24) }}><option value="">Todos os departamentos</option>{departmentOptions.map((department) => <option value={department} key={department}>{department}</option>)}</select></label><button onClick={clearFilters}>Limpar filtros</button></div>
-          {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : visibleProducts.length > 0 ? <><div className="product-grid">{visibleProducts.map((product, index) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? index + 1 : undefined} addToCart={addToCart} authenticated={Boolean(customer)} />)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 24)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={clearFilters}>Limpar filtros</button></div>}
+          {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : visibleProducts.length > 0 ? <><div className="product-grid">{visibleProducts.map((product, index) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? index + 1 : undefined} addToCart={addToCart} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} />)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 24)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={clearFilters}>Limpar filtros</button></div>}
         </section>
 
         <section className="container benefits" id="atendimento"><article><span><Truck /></span><div><strong>Entrega programada</strong><p>Agilidade e segurança no seu abastecimento</p></div></article><article><span><ShieldCheck /></span><div><strong>Compra segura</strong><p>Seus dados e seu pedido protegidos</p></div></article><article><span><PackageCheck /></span><div><strong>Pedido por caixa</strong><p>Condições ideais para o seu negócio</p></div></article><a className="benefit-card" href={whatsappUrl} target="_blank" rel="noreferrer" aria-label="Falar com o atendimento da Ômega pelo WhatsApp"><span><Headphones /></span><div><strong>Atendimento próximo</strong><p>Fale agora com nossa equipe pelo WhatsApp</p></div></a></section>
@@ -284,7 +295,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
 
       <footer><div className="container footer-grid"><div className="footer-brand"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /><p>Distribuindo mais do que produtos: parcerias de sucesso.</p></div><div><strong>Institucional</strong><a href="#top">Sobre a Ômega</a><a href="#marcas">Nossas marcas</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Fale conosco</a></div><div><strong>Atendimento</strong><span>Segunda a sexta, 8h às 17h</span><a href={whatsappUrl} target="_blank" rel="noreferrer">WhatsApp: (85) 9202-0207</a></div><div><strong>Compra protegida</strong><p className="security-copy"><LockKeyhole size={19} /> Ambiente seguro para seus pedidos.</p></div></div><div className="container footer-bottom"><span>© 2026 Ômega Distribuidora. Todos os direitos reservados.</span><span>Preços unitários sujeitos à confirmação comercial.</span></div></footer>
 
-      {customer && <button className={`minimum-order-widget ${minimumRemaining === 0 ? 'complete' : ''}`} onClick={() => setCartOpen(true)} aria-label={`Carrinho em ${money.format(cartTotal)} de um pedido mínimo de ${money.format(minimumOrder)}`}><span><ShoppingCart size={18} /> Pedido mínimo</span><strong>{money.format(cartTotal)} <small>/ {money.format(minimumOrder)}</small></strong><i><b style={{ width: `${minimumProgress}%` }} /></i><em>{minimumRemaining > 0 ? `Faltam ${money.format(minimumRemaining)}` : 'Mínimo atingido'}</em></button>}
+      {customer?.canOrder && <button className={`minimum-order-widget ${minimumRemaining === 0 ? 'complete' : ''}`} onClick={() => setCartOpen(true)} aria-label={`Carrinho em ${money.format(cartTotal)} de um pedido mínimo de ${money.format(minimumOrder)}`}><span><ShoppingCart size={18} /> Pedido mínimo</span><strong>{money.format(cartTotal)} <small>/ {money.format(minimumOrder)}</small></strong><i><b style={{ width: `${minimumProgress}%` }} /></i><em>{minimumRemaining > 0 ? `Faltam ${money.format(minimumRemaining)}` : 'Mínimo atingido'}</em></button>}
 
       {menuOpen && <div className="overlay" onMouseDown={() => setMenuOpen(false)}><aside className="side-panel menu-panel" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><h2>Categorias</h2><button className="icon-btn" onClick={() => setMenuOpen(false)}><X /></button></div>{['Todos', ...catalogCategories].map((name) => { const Icon = categoryIcon(name); return <button key={name} className={category === name ? 'active' : ''} onClick={() => selectCategory(name)}><Icon size={21} />{name}<ChevronRight size={18} /></button> })}{(customer || staffUser) && <button className="menu-logout" onClick={logout}><LogOut size={20} />Sair da conta</button>}</aside></div>}
 
@@ -298,7 +309,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
   )
 }
 
-function ProductCard({ product, rank, addToCart, authenticated }: { product: Product; rank?: number; addToCart: (product: Product) => void; authenticated: boolean }) {
+function ProductCard({ product, rank, addToCart, authenticated, canOrder }: { product: Product; rank?: number; addToCart: (product: Product) => void; authenticated: boolean; canOrder: boolean }) {
   const [added, setAdded] = useState(false)
   const boxPrice = (product.unitPrice ?? 0) * product.unitsPerBox
   function add() {
@@ -318,7 +329,7 @@ function ProductCard({ product, rank, addToCart, authenticated }: { product: Pro
         <h3>{product.name}</h3>
         <div className="package-info"><Box size={16} /><span>Caixa com {product.unitsPerBox} {product.unitsPerBox === 1 ? 'unidade' : 'unidades'}</span><i>{product.package || product.masterPackage} · mín. {product.minBoxes} cx.</i></div>
         {authenticated && product.unitPrice !== null && <div className="price-row unit-price-row"><div><strong>{money.format(product.unitPrice)}</strong><small>por unidade · {product.priceChannel}</small></div><span>{money.format(boxPrice)}<small>/caixa</small></span></div>}
-        <button className={`buy-button ${added ? 'added' : ''} ${!authenticated ? 'login-to-buy' : ''}`} onClick={add}>{!authenticated ? <><LockKeyhole size={17} />Entrar para ver preço</> : added ? <><PackageCheck size={18} />Adicionado!</> : <><ShoppingCart size={18} />Adicionar caixa</>}</button>
+        <button className={`buy-button ${added ? 'added' : ''} ${!authenticated || !canOrder ? 'login-to-buy' : ''}`} onClick={add}>{!authenticated ? <><LockKeyhole size={17} />Entrar para ver preço</> : !canOrder ? <><LoaderCircle size={17} />Cadastro em análise</> : added ? <><PackageCheck size={18} />Adicionado!</> : <><ShoppingCart size={18} />Adicionar caixa</>}</button>
       </div>
     </article>
   )

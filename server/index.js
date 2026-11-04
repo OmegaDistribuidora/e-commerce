@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
 import { findSupabaseUserByEmail, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
-import { bannerSchema, categoryProductsSchema, categorySchema, customerProfileSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderSchema, productSyncSchema, staffOrderLinkSchema, staffUserSchema } from './validation.js'
+import { bannerSchema, categoryProductsSchema, categorySchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderSchema, productSyncSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema } from './validation.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -35,8 +35,9 @@ app.use(async (request, _response, next) => {
       request.authUser = authUser
       const [customerResult, staffResult] = await Promise.all([
         pool.query(
-          `SELECT id, document, person_type, legal_name, trade_name, phone,
-                  email, city, state, sales_channel
+          `SELECT id, external_id, document, person_type, legal_name, trade_name, phone,
+                  email, postal_code, address_line, address_number, address_complement,
+                  neighborhood, city, state, sales_channel, registration_status
            FROM customers
            WHERE supabase_user_id = $1 AND active = TRUE
            LIMIT 1`,
@@ -58,8 +59,9 @@ app.use(async (request, _response, next) => {
     const token = getCookie(request, 'omega_session')
     if (!token) return next()
     const result = await pool.query(
-      `SELECT c.id, c.document, c.person_type, c.legal_name, c.trade_name, c.phone,
-              c.email, c.city, c.state, c.sales_channel
+      `SELECT c.id, c.external_id, c.document, c.person_type, c.legal_name, c.trade_name, c.phone,
+              c.email, c.postal_code, c.address_line, c.address_number, c.address_complement,
+              c.neighborhood, c.city, c.state, c.sales_channel, c.registration_status
        FROM sessions s
        JOIN customers c ON c.id = s.customer_id
        WHERE s.token_hash = $1 AND s.expires_at > CURRENT_TIMESTAMP AND c.active = TRUE
@@ -97,15 +99,23 @@ app.use(async (request, _response, next) => {
 function customerJson(customer) {
   return {
     id: Number(customer.id),
+    externalId: customer.external_id == null ? null : Number(customer.external_id),
     document: customer.document,
     personType: customer.person_type,
     legalName: customer.legal_name,
     tradeName: customer.trade_name,
     phone: customer.phone,
     email: customer.email,
+    postalCode: customer.postal_code || '',
+    addressLine: customer.address_line || '',
+    addressNumber: customer.address_number || '',
+    addressComplement: customer.address_complement || '',
+    neighborhood: customer.neighborhood || '',
     city: customer.city,
     state: customer.state,
     salesChannel: customer.sales_channel || 'Varejo',
+    registrationStatus: customer.registration_status || 'approved',
+    canOrder: (customer.registration_status || 'approved') === 'approved',
   }
 }
 
@@ -185,6 +195,74 @@ async function fetchWinthorOrderStatuses(orderNumbers) {
     }
   }
   return statuses
+}
+
+async function fetchWinthorCustomerByDocument(document) {
+  const config = omegaApiConfig()
+  if (!config) throw new OmegaApiError('A consulta de clientes do WinThor ainda não está configurada.', 503)
+  let response
+  try {
+    response = await fetch(`${config.url}/v1/winthor/clientes/por-documento`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': config.key,
+        'X-Client-Name': 'omega-ecommerce',
+      },
+      body: JSON.stringify({ documento: document }),
+      signal: AbortSignal.timeout(12_000),
+    })
+  } catch {
+    throw new OmegaApiError('Não foi possível consultar o cliente no WinThor agora.', 503)
+  }
+  const text = await response.text()
+  let data = {}
+  try { data = text ? JSON.parse(text) : {} } catch { data = {} }
+  if (response.status === 404 && data.detail === 'Not Found') {
+    try {
+      response = await fetch(`${config.url}/v1/query`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': config.key,
+          'X-Client-Name': 'omega-ecommerce',
+        },
+        body: JSON.stringify({
+          sql: `SELECT codcli AS codigo, cliente AS nome, fantasia,
+                       regexp_replace(cnpj, '[^0-9]', '', 'g') AS documento
+                FROM filial.dcliente
+                WHERE regexp_replace(cnpj, '[^0-9]', '', 'g') = %s
+                ORDER BY codcli
+                LIMIT 1`,
+          params: [document],
+          max_rows: 1,
+        }),
+        signal: AbortSignal.timeout(12_000),
+      })
+      const fallbackText = await response.text()
+      data = fallbackText ? JSON.parse(fallbackText) : {}
+      if (response.ok && Array.isArray(data.rows) && data.rows.length) {
+        const record = Object.fromEntries(data.columns.map((column, index) => [column, data.rows[0][index]]))
+        data = { cliente: record }
+      } else if (response.ok) {
+        return null
+      }
+    } catch {
+      throw new OmegaApiError('Não foi possível consultar o cliente no WinThor agora.', 503)
+    }
+  } else if (response.status === 404) {
+    return null
+  }
+  if (!response.ok) {
+    const status = response.status === 401 ? 502 : (response.status >= 500 ? 503 : 502)
+    throw new OmegaApiError(data.detail || 'Não foi possível consultar o cliente no WinThor.', status)
+  }
+  const customer = data.cliente
+  const code = Number(customer?.codigo)
+  if (!Number.isSafeInteger(code) || code < 1 || digits(customer?.documento) !== digits(document)) {
+    throw new OmegaApiError('A API retornou um cadastro de cliente inválido.', 502)
+  }
+  return { code, name: String(customer.nome || ''), tradeName: String(customer.fantasia || '') }
 }
 
 async function refreshStaleOrderStatuses(orders) {
@@ -378,8 +456,9 @@ app.post('/api/auth/link', authLinkLimiter, async (request, response, next) => {
     }
     const document = profile?.document || ''
     let customerResult = await client.query(
-      `SELECT id, document, person_type, legal_name, trade_name, phone, email, city, state,
-              sales_channel, supabase_user_id
+      `SELECT id, external_id, document, person_type, legal_name, trade_name, phone, email,
+              postal_code, address_line, address_number, address_complement, neighborhood, city, state,
+              sales_channel, registration_status, supabase_user_id
        FROM customers
        WHERE supabase_user_id=$1
           OR LOWER(email)=LOWER($2)
@@ -389,7 +468,7 @@ app.post('/api/auth/link', authLinkLimiter, async (request, response, next) => {
       [request.authUser.id, request.authUser.email, document],
     )
 
-    if (!customerResult.rows.length && !profile) {
+    if ((!customerResult.rows.length || !customerResult.rows[0].supabase_user_id) && !profile) {
       await client.query('ROLLBACK')
       return response.status(409).json({
         message: 'Complete a identificação do cliente para vincular esta conta.',
@@ -418,9 +497,14 @@ app.post('/api/auth/link', authLinkLimiter, async (request, response, next) => {
              legal_name=$2, trade_name=$3, phone=$4, email=$5, supabase_user_id=$6,
              password_hash=NULL, postal_code=$7, address_line=$8, address_number=$9,
              address_complement=$10, neighborhood=$11, city=$12, state=$13,
+             registration_status=CASE WHEN supabase_user_id IS NULL THEN 'pending' ELSE registration_status END,
+             approved_at=CASE WHEN supabase_user_id IS NULL THEN NULL ELSE approved_at END,
+             approved_by_staff_user_id=CASE WHEN supabase_user_id IS NULL THEN NULL ELSE approved_by_staff_user_id END,
              updated_at=CURRENT_TIMESTAMP
            WHERE id=$1
-           RETURNING id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel`,
+           RETURNING id, external_id, document, person_type, legal_name, trade_name, phone, email,
+                     postal_code, address_line, address_number, address_complement, neighborhood,
+                     city, state, sales_channel, registration_status`,
           [
             existing.id, profile.legalName, profile.tradeName, profile.phone, profile.email,
             request.authUser.id, profile.postalCode, profile.addressLine, profile.addressNumber,
@@ -431,9 +515,12 @@ app.post('/api/auth/link', authLinkLimiter, async (request, response, next) => {
         customerResult = await client.query(
           `INSERT INTO customers (
              document, person_type, legal_name, trade_name, phone, email, supabase_user_id,
-             postal_code, address_line, address_number, address_complement, neighborhood, city, state
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-           RETURNING id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel`,
+             postal_code, address_line, address_number, address_complement, neighborhood, city, state,
+             registration_status
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending')
+           RETURNING id, external_id, document, person_type, legal_name, trade_name, phone, email,
+                     postal_code, address_line, address_number, address_complement, neighborhood,
+                     city, state, sales_channel, registration_status`,
           [
             profile.document, profile.document.length === 11 ? 'CPF' : 'CNPJ', profile.legalName,
             profile.tradeName, profile.phone, profile.email, request.authUser.id, profile.postalCode,
@@ -451,7 +538,9 @@ app.post('/api/auth/link', authLinkLimiter, async (request, response, next) => {
       customerResult = await client.query(
         `UPDATE customers SET supabase_user_id=$1, password_hash=NULL, updated_at=CURRENT_TIMESTAMP
          WHERE id=$2
-         RETURNING id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel`,
+         RETURNING id, external_id, document, person_type, legal_name, trade_name, phone, email,
+                   postal_code, address_line, address_number, address_complement, neighborhood,
+                   city, state, sales_channel, registration_status`,
         [request.authUser.id, existing.id],
       )
     }
@@ -475,8 +564,9 @@ app.post('/api/auth/login', async (request, response, next) => {
     const parsed = loginSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
     const result = await pool.query(
-      `SELECT id, document, person_type, legal_name, trade_name, phone, email, city, state,
-              sales_channel, password_hash
+      `SELECT id, external_id, document, person_type, legal_name, trade_name, phone, email,
+              postal_code, address_line, address_number, address_complement, neighborhood, city, state,
+              sales_channel, registration_status, password_hash
        FROM customers
        WHERE LOWER(email) = LOWER($1) AND active = TRUE
        LIMIT 1`,
@@ -514,6 +604,33 @@ app.get('/api/auth/me', (request, response) => {
   if (request.customer) return response.json({ accountType: 'customer', customer: customerJson(request.customer) })
   if (request.staff) return response.json({ accountType: 'staff', user: staffJson(request.staff) })
   return response.status(401).json({ message: 'Sessão não autenticada.' })
+})
+
+app.patch('/api/customer/profile', async (request, response, next) => {
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para alterar seus dados.' })
+  try {
+    const parsed = customerUpdateSchema.safeParse(request.body)
+    if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+    const profile = parsed.data
+    const result = await pool.query(
+      `UPDATE customers SET legal_name=$2, trade_name=$3, phone=$4,
+         postal_code=$5, address_line=$6, address_number=$7, address_complement=$8,
+         neighborhood=$9, city=$10, state=$11, updated_at=CURRENT_TIMESTAMP
+       WHERE id=$1 AND active=TRUE
+       RETURNING id, external_id, document, person_type, legal_name, trade_name, phone, email,
+                 postal_code, address_line, address_number, address_complement, neighborhood,
+                 city, state, sales_channel, registration_status`,
+      [
+        request.customer.id, profile.legalName, profile.tradeName, profile.phone,
+        profile.postalCode, profile.addressLine, profile.addressNumber, profile.addressComplement,
+        profile.neighborhood, profile.city, profile.state,
+      ],
+    )
+    if (!result.rows.length) return response.status(404).json({ message: 'Cliente não encontrado.' })
+    return response.json({ customer: customerJson(result.rows[0]) })
+  } catch (error) {
+    return next(error)
+  }
 })
 
 app.post('/api/staff/auth/login', async (request, response, next) => {
@@ -554,7 +671,28 @@ app.post('/api/staff/auth/logout', async (request, response, next) => {
 
 app.get('/api/staff/auth/me', (request, response) => {
   if (!request.staff) return response.status(401).json({ message: 'Sessão interna não autenticada.' })
-  return response.json({ user: staffJson(request.staff) })
+  return response.json({ user: { ...staffJson(request.staff), authProvider: request.authUser ? 'supabase' : 'legacy' } })
+})
+
+app.put('/api/staff/password', requireStaff, async (request, response, next) => {
+  try {
+    if (request.authUser) {
+      return response.status(400).json({ message: 'Altere a senha desta conta pelo provedor seguro de autenticação.' })
+    }
+    const parsed = staffPasswordSchema.safeParse(request.body)
+    if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+    const result = await pool.query('SELECT password_hash FROM staff_users WHERE id=$1 AND active=TRUE', [request.staff.id])
+    if (!result.rows.length || !verifyPassword(parsed.data.currentPassword, result.rows[0].password_hash)) {
+      return response.status(401).json({ message: 'A senha atual está incorreta.' })
+    }
+    await pool.query(
+      'UPDATE staff_users SET password_hash=$2, updated_at=CURRENT_TIMESTAMP WHERE id=$1',
+      [request.staff.id, hashPassword(parsed.data.newPassword)],
+    )
+    return response.status(204).end()
+  } catch (error) {
+    return next(error)
+  }
 })
 
 app.get('/api/banners', async (_request, response, next) => {
@@ -874,7 +1012,9 @@ app.post('/api/customers/lookup', publicLookupLimiter, async (request, response,
     const parsed = lookupSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
     let result = await pool.query(
-      `SELECT id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel, supabase_user_id
+      `SELECT id, external_id, document, person_type, legal_name, trade_name, phone, email,
+              postal_code, address_line, address_number, address_complement, neighborhood, city, state,
+              sales_channel, registration_status, supabase_user_id
        FROM customers WHERE document = $1 AND active = TRUE LIMIT 1`,
       [parsed.data.document],
     )
@@ -916,7 +1056,9 @@ app.post('/api/customers/lookup', publicLookupLimiter, async (request, response,
           ],
         )
         result = await pool.query(
-          `SELECT id, document, person_type, legal_name, trade_name, phone, email, city, state, sales_channel, supabase_user_id
+          `SELECT id, external_id, document, person_type, legal_name, trade_name, phone, email,
+                  postal_code, address_line, address_number, address_complement, neighborhood, city, state,
+                  sales_channel, registration_status, supabase_user_id
            FROM customers WHERE document = $1 AND active = TRUE LIMIT 1`,
           [parsed.data.document],
         )
@@ -939,6 +1081,72 @@ app.get('/api/orders', async (request, response, next) => {
   try {
     return response.json({ orders: await listOrders('WHERE o.customer_id = $1', [request.customer.id]) })
   } catch (error) {
+    return next(error)
+  }
+})
+
+app.get('/api/staff/customers', requireStaff, async (request, response, next) => {
+  try {
+    const status = request.query.status === 'approved' ? 'approved' : 'pending'
+    const result = await pool.query(
+      `SELECT id, external_id, document, person_type, legal_name, trade_name, phone, email,
+              postal_code, address_line, address_number, address_complement, neighborhood,
+              city, state, sales_channel, registration_status, created_at, approved_at
+       FROM customers
+       WHERE active=TRUE AND registration_status=$1
+       ORDER BY created_at ASC`,
+      [status],
+    )
+    return response.json({
+      customers: result.rows.map((customer) => ({
+        ...customerJson(customer),
+        createdAt: customer.created_at,
+        approvedAt: customer.approved_at,
+      })),
+    })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.post('/api/staff/customers/:id/approve', requireStaff, async (request, response, next) => {
+  try {
+    const customerId = Number(request.params.id)
+    if (!Number.isSafeInteger(customerId) || customerId < 1) {
+      return response.status(400).json({ message: 'Cliente inválido.' })
+    }
+    const current = await pool.query(
+      `SELECT id, document, registration_status
+       FROM customers WHERE id=$1 AND active=TRUE LIMIT 1`,
+      [customerId],
+    )
+    if (!current.rows.length) return response.status(404).json({ message: 'Cliente não encontrado.' })
+    if (current.rows[0].registration_status === 'approved') {
+      return response.status(409).json({ message: 'Este cadastro já foi aprovado.' })
+    }
+    const winthorCustomer = await fetchWinthorCustomerByDocument(current.rows[0].document)
+    if (!winthorCustomer) {
+      return response.status(422).json({
+        message: 'CPF ou CNPJ não encontrado no WinThor. O cadastro continua em análise.',
+      })
+    }
+    const result = await pool.query(
+      `UPDATE customers SET external_id=$2, registration_status='approved',
+         approved_at=CURRENT_TIMESTAMP, approved_by_staff_user_id=$3,
+         updated_at=CURRENT_TIMESTAMP
+       WHERE id=$1 AND registration_status='pending'
+       RETURNING id, external_id, document, person_type, legal_name, trade_name, phone, email,
+                 postal_code, address_line, address_number, address_complement, neighborhood,
+                 city, state, sales_channel, registration_status, approved_at`,
+      [customerId, winthorCustomer.code, request.staff.id],
+    )
+    if (!result.rows.length) return response.status(409).json({ message: 'O cadastro já foi analisado por outro usuário.' })
+    return response.json({
+      customer: { ...customerJson(result.rows[0]), approvedAt: result.rows[0].approved_at },
+      winthorCustomer,
+    })
+  } catch (error) {
+    if (error instanceof OmegaApiError) return response.status(error.status).json({ message: error.message })
     return next(error)
   }
 })
@@ -1221,6 +1429,9 @@ app.post('/api/staff/banners', requireStaff, async (request, response, next) => 
 
 app.post('/api/orders', async (request, response, next) => {
   if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para finalizar o pedido.' })
+  if ((request.customer.registration_status || 'approved') !== 'approved') {
+    return response.status(403).json({ message: 'Seu cadastro está em análise. Os pedidos serão liberados após a aprovação da equipe Ômega.' })
+  }
   const parsed = orderSchema.safeParse(request.body)
   if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
 
