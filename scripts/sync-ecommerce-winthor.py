@@ -6,6 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 import glob
 import os
+import re
 
 import oracledb
 import requests
@@ -143,7 +144,7 @@ def main() -> None:
             "section": text(section),
             "ean": text(ean),
             "manufacturerCode": text(manufacturer_code),
-            "ncm": text(ncm),
+            "ncm": re.sub(r"\D", "", text(ncm)),
             "priceDate": iso_date(price_date),
         })
 
@@ -216,7 +217,6 @@ def main() -> None:
             if value is not None and int(value) > 0:
                 allowed_codes.append(int(value))
         if allowed_list:
-            import re
             allowed_codes.extend(int(value) for value in re.findall(r"\d+", str(allowed_list)))
         unique_codes = list(dict.fromkeys(value for value in allowed_codes if value in plan_map))
         conditions.append({
