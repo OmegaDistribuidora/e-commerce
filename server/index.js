@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
-import { verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
-import { bannerSchema, categoryProductsSchema, categorySchema, customerProfileSchema, digits, loginSchema, lookupSchema, orderSchema, productSyncSchema, staffOrderLinkSchema, staffUserSchema } from './validation.js'
+import { findSupabaseUserByEmail, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
+import { bannerSchema, categoryProductsSchema, categorySchema, customerProfileSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderSchema, productSyncSchema, staffOrderLinkSchema, staffUserSchema } from './validation.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -292,6 +292,43 @@ function validIntegrationToken(request) {
   return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer)
 }
 
+app.post('/api/auth/check-email', publicLookupLimiter, async (request, response, next) => {
+  try {
+    const parsed = emailCheckSchema.safeParse(request.body)
+    if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+    const email = parsed.data.email
+    const [staffResult, customerResult] = await Promise.all([
+      pool.query(
+        'SELECT id FROM staff_users WHERE LOWER(email)=LOWER($1) AND active=TRUE LIMIT 1',
+        [email],
+      ),
+      pool.query(
+        `SELECT id, supabase_user_id
+         FROM customers WHERE LOWER(email)=LOWER($1) AND active=TRUE
+         ORDER BY CASE WHEN supabase_user_id IS NOT NULL THEN 0 ELSE 1 END
+         LIMIT 1`,
+        [email],
+      ),
+    ])
+    if (staffResult.rows.length) {
+      return response.json({ exists: true, accountType: 'staff' })
+    }
+    if (customerResult.rows[0]?.supabase_user_id) {
+      return response.json({ exists: true, accountType: 'customer' })
+    }
+    const authUser = await findSupabaseUserByEmail(email)
+    if (authUser) {
+      return response.json({
+        exists: true,
+        accountType: authUser.user_metadata?.account_type === 'staff' ? 'staff' : 'customer',
+      })
+    }
+    return response.json({ exists: false, existingCustomerRecord: Boolean(customerResult.rows.length) })
+  } catch (error) {
+    return next(error)
+  }
+})
+
 app.post('/api/auth/link', authLinkLimiter, async (request, response, next) => {
   if (request.authError) return response.status(401).json({ message: 'Sua sessão expirou. Entre novamente.' })
   if (!request.authUser) return response.status(401).json({ message: 'Confirme seu e-mail antes de continuar.' })
@@ -308,13 +345,19 @@ app.post('/api/auth/link', authLinkLimiter, async (request, response, next) => {
     )
     if (existingStaff.rows.length) {
       const staff = existingStaff.rows[0]
+      if (staff.supabase_user_id === request.authUser.id) {
+        await client.query('COMMIT')
+        return response.json({ accountType: 'staff', user: staffJson(staff) })
+      }
       if (staff.supabase_user_id && staff.supabase_user_id !== request.authUser.id) {
         await client.query('ROLLBACK')
         return response.status(409).json({ message: 'Este usuário interno já está vinculado a outra conta.' })
       }
-      await client.query('UPDATE staff_users SET supabase_user_id=$1 WHERE id=$2', [request.authUser.id, staff.id])
-      await client.query('COMMIT')
-      return response.json({ accountType: 'staff', user: staffJson(staff) })
+      await client.query('ROLLBACK')
+      return response.status(409).json({
+        message: 'Este e-mail é reservado para uma conta de gestão. O acesso deve ser ativado pelo administrador.',
+        code: 'STAFF_EMAIL_RESERVED',
+      })
     }
 
     const parsedProfile = customerProfileSchema.safeParse(request.body?.profile)
@@ -468,8 +511,9 @@ app.post('/api/auth/logout', async (request, response, next) => {
 
 app.get('/api/auth/me', (request, response) => {
   if (request.authError) return response.status(401).json({ message: 'Sua sessão expirou. Entre novamente.' })
-  if (!request.customer) return response.status(401).json({ message: 'Sessão não autenticada.' })
-  return response.json({ customer: customerJson(request.customer) })
+  if (request.customer) return response.json({ accountType: 'customer', customer: customerJson(request.customer) })
+  if (request.staff) return response.json({ accountType: 'staff', user: staffJson(request.staff) })
+  return response.status(401).json({ message: 'Sessão não autenticada.' })
 })
 
 app.post('/api/staff/auth/login', async (request, response, next) => {
@@ -955,6 +999,17 @@ app.post('/api/staff/users', requireAdmin, async (request, response, next) => {
     const parsed = staffUserSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
     const user = parsed.data
+    const customerOwner = await pool.query(
+      'SELECT id FROM customers WHERE LOWER(email)=LOWER($1) AND active=TRUE LIMIT 1',
+      [user.email],
+    )
+    if (customerOwner.rows.length) {
+      return response.status(409).json({ message: 'Este e-mail já pertence a uma conta de cliente e não pode ser usado na gestão.' })
+    }
+    const authOwner = await findSupabaseUserByEmail(user.email)
+    if (authOwner) {
+      return response.status(409).json({ message: 'Este e-mail já possui uma conta de autenticação e não pode ser usado na gestão.' })
+    }
     const result = await pool.query(
       `INSERT INTO staff_users (name, email, password_hash, role)
        VALUES ($1,$2,$3,$4)

@@ -12,7 +12,7 @@ import StaffPortal from './StaffPortal'
 import { authenticatedFetch } from './api'
 import { money } from './data'
 import { supabase } from './supabase'
-import type { Banner, CartItem, Category, Customer, Product } from './types'
+import type { Banner, CartItem, Category, Customer, Product, StaffUser } from './types'
 import { formatDocument } from './validation'
 
 const defaultCategories: Category[] = ['Limpeza', 'Higiene', 'Utilidades', 'Alimentos']
@@ -70,6 +70,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
   const [visibleCount, setVisibleCount] = useState(24)
   const [cart, setCart] = useState<CartItem[]>([])
   const [customer, setCustomer] = useState<Customer | null>(null)
+  const [staffUser, setStaffUser] = useState<StaffUser | null>(null)
   const [authReady, setAuthReady] = useState(false)
   const [cartOpen, setCartOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -86,10 +87,13 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
     authenticatedFetch('/api/auth/me')
       .then(async (response) => response.ok ? response.json() : null)
       .then((data) => {
-        setCustomer(data?.customer ?? null)
-        setCart(data?.customer ? readStoredCart() : [])
+        const authenticatedCustomer = data?.accountType === 'customer' ? data.customer : null
+        const authenticatedStaff = data?.accountType === 'staff' ? data.user : null
+        setCustomer(authenticatedCustomer)
+        setStaffUser(authenticatedStaff)
+        setCart(authenticatedCustomer ? readStoredCart() : [])
       })
-      .catch(() => setCustomer(null))
+      .catch(() => { setCustomer(null); setStaffUser(null) })
       .finally(() => setAuthReady(true))
   }, [])
 
@@ -170,10 +174,15 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
   }
 
   async function logout() {
-    await supabase.auth.signOut()
+    await Promise.all([
+      supabase.auth.signOut(),
+      fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined),
+      fetch('/api/staff/auth/logout', { method: 'POST' }).catch(() => undefined),
+    ])
     localStorage.removeItem('omega-cart')
     setCart([])
     setCustomer(null)
+    setStaffUser(null)
     setMenuOpen(false)
     setToast('Você saiu da sua conta')
   }
@@ -244,14 +253,14 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
 
   return (
     <div className="app-shell">
-      <div className="topbar"><div className="container topbar-inner"><p>{customer ? <>Bem-vindo(a), <strong>{customer.tradeName || customer.legalName}</strong></> : <>Tudo o que você precisa, <strong>sempre por perto.</strong></>}</p><div className="topbar-links"><span><MapPin size={15} /> Entregamos em todo o Ceará</span><a href={whatsappUrl} target="_blank" rel="noreferrer">Central de ajuda</a></div></div></div>
+      <div className="topbar"><div className="container topbar-inner"><p>{customer ? <>Bem-vindo(a), <strong>{customer.tradeName || customer.legalName}</strong></> : staffUser ? <>Sessão de gestão: <strong>{staffUser.name}</strong></> : <>Tudo o que você precisa, <strong>sempre por perto.</strong></>}</p><div className="topbar-links"><span><MapPin size={15} /> Entregamos em todo o Ceará</span><a href={whatsappUrl} target="_blank" rel="noreferrer">Central de ajuda</a></div></div></div>
       <header className="site-header">
         <div className="container header-main">
           <button className="mobile-menu-btn icon-btn" aria-label="Abrir menu" onClick={() => setMenuOpen(true)}><Menu /></button>
           <a className="logo" href="#top" aria-label="Ômega Distribuidora — início"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /></a>
           <label className="search-box"><Search size={21} /><input value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(24) }} onFocus={() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} placeholder="Busque produtos, marcas ou código" aria-label="Buscar produtos" />{query && <button onClick={() => setQuery('')} aria-label="Limpar busca"><X size={18} /></button>}</label>
-          <a className="account-button" href={customer ? '/pedidos' : '/conta'}><CircleUserRound /><span><small>{customer ? 'Meus pedidos' : 'Área do cliente'}</small><strong>{customer ? `Bem-vindo(a), ${customer.tradeName || customer.legalName}` : 'Entrar ou cadastrar'}</strong></span></a>
-          {customer && <button className="logout-button" onClick={logout} aria-label="Sair da conta" title="Sair da conta"><LogOut size={19} /><span>Sair</span></button>}
+          <a className="account-button" href={staffUser ? '/gestao' : customer ? '/pedidos' : '/conta'}><CircleUserRound /><span><small>{staffUser ? 'Painel interno' : customer ? 'Meus pedidos' : 'Área do cliente'}</small><strong>{staffUser ? `${staffUser.name} · ${staffUser.role}` : customer ? `Bem-vindo(a), ${customer.tradeName || customer.legalName}` : 'Entrar ou cadastrar'}</strong></span></a>
+          {(customer || staffUser) && <button className="logout-button" onClick={logout} aria-label="Sair da conta" title="Sair da conta"><LogOut size={19} /><span>Sair</span></button>}
           <button className="cart-button" onClick={() => setCartOpen(true)} aria-label={`Abrir carrinho com ${cartCount} caixas`}><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{cartCount ? `${cartCount} ${cartCount === 1 ? 'caixa' : 'caixas'}` : 'Está vazio'}</strong></span></button>
         </div>
         <nav className="main-nav" aria-label="Navegação principal"><div className="container nav-inner"><button className="categories-button" onClick={() => setMenuOpen(true)}><Menu size={19} /> Todas as categorias <ChevronDown size={17} /></button><a href="#produtos" onClick={() => setCatalogMode('featured')}>Destaques</a><a href="#produtos" onClick={showBestSellers}>Mais vendidos</a><a href="#produtos">Ofertas</a><a href="#marcas">Marcas</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a></div></nav>
@@ -277,7 +286,7 @@ function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) 
 
       {customer && <button className={`minimum-order-widget ${minimumRemaining === 0 ? 'complete' : ''}`} onClick={() => setCartOpen(true)} aria-label={`Carrinho em ${money.format(cartTotal)} de um pedido mínimo de ${money.format(minimumOrder)}`}><span><ShoppingCart size={18} /> Pedido mínimo</span><strong>{money.format(cartTotal)} <small>/ {money.format(minimumOrder)}</small></strong><i><b style={{ width: `${minimumProgress}%` }} /></i><em>{minimumRemaining > 0 ? `Faltam ${money.format(minimumRemaining)}` : 'Mínimo atingido'}</em></button>}
 
-      {menuOpen && <div className="overlay" onMouseDown={() => setMenuOpen(false)}><aside className="side-panel menu-panel" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><h2>Categorias</h2><button className="icon-btn" onClick={() => setMenuOpen(false)}><X /></button></div>{['Todos', ...catalogCategories].map((name) => { const Icon = categoryIcon(name); return <button key={name} className={category === name ? 'active' : ''} onClick={() => selectCategory(name)}><Icon size={21} />{name}<ChevronRight size={18} /></button> })}{customer && <button className="menu-logout" onClick={logout}><LogOut size={20} />Sair da conta</button>}</aside></div>}
+      {menuOpen && <div className="overlay" onMouseDown={() => setMenuOpen(false)}><aside className="side-panel menu-panel" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><h2>Categorias</h2><button className="icon-btn" onClick={() => setMenuOpen(false)}><X /></button></div>{['Todos', ...catalogCategories].map((name) => { const Icon = categoryIcon(name); return <button key={name} className={category === name ? 'active' : ''} onClick={() => selectCategory(name)}><Icon size={21} />{name}<ChevronRight size={18} /></button> })}{(customer || staffUser) && <button className="menu-logout" onClick={logout}><LogOut size={20} />Sair da conta</button>}</aside></div>}
 
       {cartOpen && <div className="overlay" onMouseDown={() => setCartOpen(false)}><aside className="side-panel cart-panel" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">SEU PEDIDO</span><h2>Meu carrinho</h2></div><button className="icon-btn" onClick={() => setCartOpen(false)}><X /></button></div>{cart.length === 0 ? <div className="empty-cart"><span><ShoppingCart /></span><h3>Seu carrinho está vazio</h3><p>Explore o catálogo e adicione os produtos que seu negócio precisa.</p><button className="primary-button" onClick={() => setCartOpen(false)}>Explorar produtos</button></div> : <><div className="cart-items">{cart.map((item) => <div className="cart-item" key={item.id}><div className="cart-product-image">{item.image ? <img src={item.image} alt="" /> : <ImageOff />}</div><div className="cart-product-info"><strong>{item.name}</strong><small>Caixa com {item.unitsPerBox} {item.unitsPerBox === 1 ? 'unidade' : 'unidades'}</small><span>{money.format(item.unitPrice ?? 0)} / unidade</span><div className="quantity-control"><button onClick={() => changeQuantity(item.id, -1)} aria-label="Diminuir quantidade"><Minus size={15} /></button><b>{item.quantity}</b><button onClick={() => changeQuantity(item.id, 1)} aria-label="Aumentar quantidade"><Plus size={15} /></button><button className="remove-item" onClick={() => removeFromCart(item.id)} aria-label="Remover item"><Trash2 size={16} /></button></div></div></div>)}</div><div className="cart-summary"><div><span>Subtotal estimado</span><strong>{money.format(cartTotal)}</strong></div><div className={`cart-minimum ${minimumRemaining === 0 ? 'complete' : ''}`}><span>{minimumRemaining > 0 ? `Adicione mais ${money.format(minimumRemaining)} para atingir o mínimo.` : 'Pedido mínimo atingido.'}</span><i><b style={{ width: `${minimumProgress}%` }} /></i></div><p>Pedido para {customer?.tradeName || customer?.legalName}. Frete e condições comerciais serão confirmados pela equipe.</p><button className="checkout-button" onClick={beginCheckout} disabled={minimumRemaining > 0}>{minimumRemaining > 0 ? `Mínimo de ${money.format(minimumOrder)}` : 'Finalizar pedido'} <ArrowRight size={19} /></button><button className="keep-shopping" onClick={() => setCartOpen(false)}>Continuar comprando</button></div></>}</aside></div>}
 

@@ -59,6 +59,10 @@ export const loginSchema = z.object({
   password: z.string().min(1, 'Informe sua senha').max(72),
 })
 
+export const emailCheckSchema = z.object({
+  email: z.string().trim().email('E-mail inválido').max(180).transform((value) => value.toLowerCase()),
+})
+
 export const lookupSchema = z.object({
   document: z.string().transform((value) => digits(value)).refine(isValidDocument, 'CPF ou CNPJ inválido'),
 })

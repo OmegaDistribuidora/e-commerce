@@ -24,6 +24,26 @@ export function supabaseAuthConfigured() {
   return Boolean(authConfig())
 }
 
+export async function findSupabaseUserByEmail(email) {
+  const config = authConfig()
+  const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim()
+  if (!config || !serviceRoleKey) return null
+
+  for (let page = 1; page <= 20; page += 1) {
+    const response = await fetch(`${config.url}/auth/v1/admin/users?page=${page}&per_page=1000`, {
+      headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` },
+      signal: AbortSignal.timeout(5_000),
+    })
+    if (!response.ok) throw new Error('Não foi possível consultar as contas de autenticação.')
+    const payload = await response.json()
+    const users = Array.isArray(payload.users) ? payload.users : []
+    const user = users.find((item) => String(item.email || '').toLowerCase() === email.toLowerCase())
+    if (user) return user
+    if (users.length < 1000) return null
+  }
+  throw new Error('A consulta de contas excedeu o limite seguro.')
+}
+
 export async function verifySupabaseAccessToken(request) {
   const config = authConfig()
   if (!config) return null
