@@ -44,7 +44,7 @@ LEFT JOIN pctabpr r
       AND r.numregiao = :network_region
       AND NVL(r.excluido, 'N') <> 'S'
 WHERE p.codprod > 0
-  AND NVL(UPPER(TRIM(p.obs2)), 'ATIVO') <> 'FL'
+  AND NVL(UPPER(TRIM(p.statusprod)), 'ATIVO') <> 'FL'
 ORDER BY p.codprod
 """
 

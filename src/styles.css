@@ -132,12 +132,12 @@ img { display: block; max-width: 100%; }
 .buy-button { height: 42px; width: 100%; font-size: 11px; }
 .buy-button:hover, .checkout-button:hover, .primary-button:hover { background: #e96300; box-shadow: 0 8px 18px rgba(255,115,0,.22); }
 .buy-button.added { background: #159a5c; animation: button-pop .35s ease; }
-.product-quantity-control { width: 100%; height: 42px; display: grid; grid-template-columns: 42px 1fr 42px; align-items: stretch; border: 1px solid #cbd9e9; border-radius: 7px; overflow: hidden; background: #fff; }
+.product-quantity-control { width: 100%; height: 48px; display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; align-items: stretch; border: 1px solid #b9cce2; border-radius: 8px; overflow: hidden; background: #fff; }
 .product-quantity-control button { border: 0; background: #edf5ff; color: var(--blue); display: grid; place-items: center; }
 .product-quantity-control button:hover { background: #deedff; }
-.product-quantity-control span { display: flex; justify-content: center; align-items: baseline; gap: 5px; color: var(--navy); }
-.product-quantity-control strong { font-size: 15px; }
-.product-quantity-control small { color: var(--muted); font-size: 9px; }
+.product-quantity-control span { min-width: 0; display: flex; justify-content: center; align-items: center; gap: 7px; color: var(--navy); line-height: 1; white-space: nowrap; }
+.product-quantity-control strong { font-size: 19px; font-weight: 850; letter-spacing: -.02em; }
+.product-quantity-control small { color: #5e7087; font-size: 12px; font-weight: 650; }
 .load-more { min-height: 46px; margin: 28px auto 0; padding: 0 22px; display: flex; align-items: center; gap: 9px; border: 1px solid #cbd9e9; border-radius: 8px; color: var(--blue); background: #fff; font-weight: 800; }
 .load-more:hover { border-color: var(--blue); box-shadow: 0 8px 20px rgba(8,61,130,.1); }
 .catalog-loading { min-height: 280px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #6c7c90; font-size: 13px; }
