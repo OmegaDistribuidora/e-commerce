@@ -16,7 +16,7 @@ PRODUCT_QUERY = """
 SELECT
     p.codprod,
     p.codfornec,
-    NVL(f.fornecedor, 'Fornecedor ' || TO_CHAR(p.codfornec)) AS fornecedor,
+    NVL(NULLIF(TRIM(f.fantasia), ''), NVL(f.fornecedor, 'Fornecedor ' || TO_CHAR(p.codfornec))) AS fornecedor,
     INITCAP(p.descricao) AS produto,
     p.embalagem,
     p.embalagemmaster,
@@ -51,6 +51,10 @@ WHERE p.codprod > 0
   AND NVL(UPPER(TRIM(p.obs2)), 'ATIVO') <> 'FL'
 ORDER BY p.codprod
 """
+
+SUPPLIER_DISPLAY_NAMES = {
+    117: "Bombril S.A.",
+}
 
 
 def required(name: str) -> str:
@@ -88,6 +92,11 @@ def number(value) -> float:
 
 def text(value) -> str:
     return str(value or "").strip()
+
+
+def supplier_display_name(code, value) -> str:
+    normalized = re.sub(r"\s+", " ", text(value))
+    return SUPPLIER_DISPLAY_NAMES.get(int(code or 0), normalized)
 
 
 def iso_date(value) -> str | None:
@@ -131,7 +140,7 @@ def main() -> None:
         products.append({
             "externalId": int(code),
             "supplierId": int(supplier_id or 0),
-            "brand": text(supplier),
+            "brand": supplier_display_name(supplier_id, supplier),
             "name": text(name),
             "package": text(package),
             "masterPackage": text(master_package),

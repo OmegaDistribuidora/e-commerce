@@ -56,26 +56,32 @@ function App() {
   if (window.location.pathname === '/gestao') return <StaffPortal />
   const productMatch = /^\/produto\/(\d+)$/.exec(window.location.pathname)
   if (productMatch) return <ProductPage code={Number(productMatch[1])} />
-  const supplierId = Number(new URLSearchParams(window.location.search).get('fornecedor'))
-  return <StorePage initialSupplierId={Number.isFinite(supplierId) && supplierId > 0 ? supplierId : null} />
+  const parameters = new URLSearchParams(window.location.search)
+  const supplierId = Number(parameters.get('fornecedor'))
+  return <StorePage
+    initialSupplierId={Number.isFinite(supplierId) && supplierId > 0 ? supplierId : null}
+    initialQuery={parameters.get('busca') || ''}
+    initialCartOpen={parameters.get('carrinho') === '1'}
+    initialMode={parameters.get('modo') === 'mais-vendidos' ? 'bestsellers' : 'featured'}
+  />
 }
 
-function StorePage({ initialSupplierId }: { initialSupplierId: number | null }) {
+function StorePage({ initialSupplierId, initialQuery, initialCartOpen, initialMode }: { initialSupplierId: number | null; initialQuery: string; initialCartOpen: boolean; initialMode: 'featured' | 'bestsellers' }) {
   const [products, setProducts] = useState<Product[]>([])
   const [catalogCategories, setCatalogCategories] = useState<Category[]>(defaultCategories)
   const [loadingProducts, setLoadingProducts] = useState(true)
   const [productsError, setProductsError] = useState('')
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(initialQuery)
   const [category, setCategory] = useState<Category>('Todos')
   const [supplierFilter, setSupplierFilter] = useState(initialSupplierId ? String(initialSupplierId) : '')
   const [departmentFilter, setDepartmentFilter] = useState('')
-  const [catalogMode, setCatalogMode] = useState<'featured' | 'bestsellers'>('featured')
+  const [catalogMode, setCatalogMode] = useState<'featured' | 'bestsellers'>(initialMode)
   const [visibleCount, setVisibleCount] = useState(25)
   const [cart, setCart] = useState<CartItem[]>([])
   const [customer, setCustomer] = useState<Customer | null>(null)
   const [staffUser, setStaffUser] = useState<StaffUser | null>(null)
   const [authReady, setAuthReady] = useState(false)
-  const [cartOpen, setCartOpen] = useState(false)
+  const [cartOpen, setCartOpen] = useState(initialCartOpen)
   const [menuOpen, setMenuOpen] = useState(false)
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [sendingOrder, setSendingOrder] = useState(false)

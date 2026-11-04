@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, ImageOff, LoaderCircle, LockKeyhole, Minus, Plus, ShoppingCart, X, ZoomIn } from 'lucide-react'
+import {
+  ArrowLeft, CircleUserRound, ImageOff, LoaderCircle, LockKeyhole, LogOut,
+  MapPin, Menu, Minus, Plus, Search, ShoppingCart, X, ZoomIn,
+} from 'lucide-react'
 import { authenticatedFetch } from './api'
 import { money } from './data'
-import type { CartItem, Customer, Product } from './types'
+import { supabase } from './supabase'
+import type { CartItem, Customer, Product, StaffUser } from './types'
+
+const whatsappUrl = `https://wa.me/558592020207?text=${encodeURIComponent('Olá! Venho do e-Commerce da Ômega Distribuidora e preciso de atendimento!')}`
 
 function readCart(): CartItem[] {
   try {
@@ -14,10 +20,12 @@ function readCart(): CartItem[] {
 export default function ProductPage({ code }: { code: number }) {
   const [product, setProduct] = useState<Product | null>(null)
   const [customer, setCustomer] = useState<Customer | null>(null)
+  const [staffUser, setStaffUser] = useState<StaffUser | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [zoomed, setZoomed] = useState(false)
   const [quantity, setQuantity] = useState(0)
+  const [search, setSearch] = useState('')
 
   useEffect(() => {
     Promise.all([
@@ -29,9 +37,10 @@ export default function ProductPage({ code }: { code: number }) {
       }),
     ]).then(([account, loadedProduct]) => {
       setCustomer(account?.accountType === 'customer' ? account.customer : null)
+      setStaffUser(account?.accountType === 'staff' ? account.user : null)
       setProduct(loadedProduct)
       setQuantity(readCart().find((item) => item.id === loadedProduct.id)?.quantity || 0)
-    }).catch((requestError) => setError(requestError instanceof Error ? requestError.message : 'NÃ£o foi possÃ­vel carregar o produto.'))
+    }).catch((requestError) => setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar o produto.'))
       .finally(() => setLoading(false))
   }, [code])
 
@@ -43,34 +52,66 @@ export default function ProductPage({ code }: { code: number }) {
     setQuantity(nextQuantity)
   }
 
-  if (loading) return <main className="product-page-state"><LoaderCircle className="spin" /><span>Carregando produto...</span></main>
-  if (!product || error) return <main className="product-page-state"><ImageOff /><h1>Produto indisponÃ­vel</h1><p>{error}</p><a href="/"><ArrowLeft /> Voltar para a loja</a></main>
+  function submitSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    window.location.href = `/?busca=${encodeURIComponent(search.trim())}#produtos`
+  }
 
-  return <div className="product-page">
-    <header><a href="/"><img src="/assets/omega-logo.png" alt="Ã”mega Distribuidora" /></a><a href="/#produtos"><ArrowLeft /> Voltar ao catÃ¡logo</a></header>
-    <main>
-      <section className="product-detail-image">
-        {product.image ? <button onClick={() => setZoomed(true)} aria-label="Ampliar foto do produto"><img src={product.image} alt={product.name} /><span><ZoomIn /> Clique para ampliar</span></button> : <div className="product-detail-no-image"><ImageOff /><span>Produto sem foto</span></div>}
-      </section>
-      <section className="product-detail-content">
-        <span className="eyebrow">CÃ“DIGO {product.code}</span>
-        <h1>{product.name}</h1>
-        <p className="product-detail-brand">{product.brand}</p>
-        {customer && product.unitPrice !== null ? <div className="product-detail-price"><strong>{money.format(product.unitPrice)}</strong><span>por unidade</span></div> : <a className="product-detail-login" href="/conta"><LockKeyhole /> Entrar para ver preÃ§o</a>}
-        {customer?.canOrder && product.unitPrice !== null && (quantity > 0 ? <div className="product-detail-quantity"><button onClick={() => updateCart(Math.max(0, quantity - product.salesMultiple))}><Minus /></button><span><strong>{quantity}</strong> unidades no carrinho</span><button onClick={() => updateCart(quantity + product.salesMultiple)}><Plus /></button></div> : <button className="product-detail-add" onClick={() => updateCart(product.salesMultiple)}><ShoppingCart /> Adicionar {product.salesMultiple} {product.salesMultiple === 1 ? 'unidade' : 'unidades'}</button>)}
-        <div className="product-specifications">
-          <h2>Detalhes do produto</h2>
-          <dl>
-            <div><dt>CÃ³digo do Fabricante</dt><dd>{product.manufacturerCode || 'NÃ£o informado'}</dd></div>
-            <div><dt>CÃ³digo</dt><dd>{product.code}</dd></div>
-            <div><dt>CÃ³digo NCM</dt><dd>{product.ncm || 'NÃ£o informado'}</dd></div>
-            <div><dt>CÃ³digo de Barras do Produto</dt><dd>{product.ean || 'NÃ£o informado'}</dd></div>
-            <div><dt>MÃºltiplo</dt><dd>{product.salesMultiple} unidades</dd></div>
-            <div><dt>Embalagem Master</dt><dd>{product.unitsPerBox} unidades</dd></div>
-            <div><dt>Fabricante</dt><dd>{product.brand}</dd></div>
-          </dl>
-        </div>
-      </section>
+  async function logout() {
+    await Promise.all([
+      supabase.auth.signOut(),
+      fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined),
+      fetch('/api/staff/auth/logout', { method: 'POST' }).catch(() => undefined),
+    ])
+    localStorage.removeItem('omega-cart-v2')
+    window.location.href = '/'
+  }
+
+  if (loading) return <main className="product-page-state"><LoaderCircle className="spin" /><span>Carregando produto...</span></main>
+  if (!product || error) return <main className="product-page-state"><ImageOff /><h1>Produto indisponível</h1><p>{error}</p><a href="/"><ArrowLeft /> Voltar para a loja</a></main>
+
+  const cartCount = readCart().reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+
+  return <div className="app-shell product-page">
+    <div className="topbar"><div className="container topbar-inner"><p>{customer ? <>Bem-vindo(a), <strong>{customer.tradeName || customer.legalName}</strong></> : staffUser ? <>Sessão de gestão: <strong>{staffUser.name}</strong></> : <>Tudo o que você precisa, <strong>sempre por perto.</strong></>}</p><div className="topbar-links"><span><MapPin size={15} /> Entregamos em todo o Ceará</span><a href={whatsappUrl} target="_blank" rel="noreferrer">Central de ajuda</a></div></div></div>
+    <header className="site-header">
+      <div className="container header-main">
+        <a className="mobile-menu-btn icon-btn" href="/#produtos" aria-label="Voltar ao catálogo"><Menu /></a>
+        <a className="logo" href="/" aria-label="Ômega Distribuidora — início"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /></a>
+        <form className="search-box" onSubmit={submitSearch}><Search size={21} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Busque produtos, marcas ou código" aria-label="Buscar produtos" /><button aria-label="Buscar"><Search size={18} /></button></form>
+        <a className="account-button" href={staffUser ? '/gestao' : customer ? '/pedidos' : '/conta'}><CircleUserRound /><span><small>{staffUser ? 'Painel interno' : customer ? 'Meus pedidos' : 'Área do cliente'}</small><strong>{staffUser ? `${staffUser.name} · ${staffUser.role}` : customer ? `Bem-vindo(a), ${customer.tradeName || customer.legalName}` : 'Entrar ou cadastrar'}</strong></span></a>
+        {(customer || staffUser) && <button className="logout-button" onClick={logout} aria-label="Sair da conta"><LogOut size={19} /><span>Sair</span></button>}
+        <a className="cart-button" href="/?carrinho=1"><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{cartCount ? `${cartCount} ${cartCount === 1 ? 'unidade' : 'unidades'}` : 'Está vazio'}</strong></span></a>
+      </div>
+      <nav className="main-nav" aria-label="Navegação principal"><div className="container nav-inner"><a className="categories-button" href="/#produtos"><Menu size={19} /> Todas as categorias</a><a href="/#produtos">Destaques</a><a href="/?modo=mais-vendidos#produtos">Mais vendidos</a><a href="/#produtos">Ofertas</a><a href="/#marcas">Marcas</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a></div></nav>
+    </header>
+
+    <main className="product-page-main">
+      <a className="product-back-link" href="/#produtos"><ArrowLeft /> Voltar ao catálogo</a>
+      <div className="product-detail-layout">
+        <section className="product-detail-image">
+          {product.image ? <button onClick={() => setZoomed(true)} aria-label="Ampliar foto do produto"><img src={product.image} alt={product.name} /><span><ZoomIn /> Clique para ampliar</span></button> : <div className="product-detail-no-image"><ImageOff /><span>Produto sem foto</span></div>}
+        </section>
+        <section className="product-detail-content">
+          <span className="eyebrow">CÓDIGO {product.code}</span>
+          <h1>{product.name}</h1>
+          <p className="product-detail-brand">{product.brand}</p>
+          {customer && product.unitPrice !== null ? <div className="product-detail-price"><strong>{money.format(product.unitPrice)}</strong><span>por unidade</span></div> : <a className="product-detail-login" href="/conta"><LockKeyhole /> Entrar para ver preço</a>}
+          {customer?.canOrder && product.unitPrice !== null && (quantity > 0 ? <div className="product-detail-quantity"><button onClick={() => updateCart(Math.max(0, quantity - product.salesMultiple))}><Minus /></button><span><strong>{quantity}</strong> unidades no carrinho</span><button onClick={() => updateCart(quantity + product.salesMultiple)}><Plus /></button></div> : <button className="product-detail-add" onClick={() => updateCart(product.salesMultiple)}><ShoppingCart /> Adicionar {product.salesMultiple} {product.salesMultiple === 1 ? 'unidade' : 'unidades'}</button>)}
+          <div className="product-specifications">
+            <h2>Detalhes do produto</h2>
+            <dl>
+              <div><dt>Código do Fabricante</dt><dd>{product.manufacturerCode || 'Não informado'}</dd></div>
+              <div><dt>Código</dt><dd>{product.code}</dd></div>
+              <div><dt>Código NCM</dt><dd>{product.ncm || 'Não informado'}</dd></div>
+              <div><dt>Código de Barras do Produto</dt><dd>{product.ean || 'Não informado'}</dd></div>
+              <div><dt>Múltiplo</dt><dd>{product.salesMultiple} unidades</dd></div>
+              <div><dt>Embalagem Master</dt><dd>{product.unitsPerBox} unidades</dd></div>
+              <div><dt>Fabricante</dt><dd>{product.brand}</dd></div>
+            </dl>
+          </div>
+        </section>
+      </div>
     </main>
     {zoomed && product.image && <div className="product-zoom" onMouseDown={() => setZoomed(false)} role="dialog" aria-modal="true"><button onClick={() => setZoomed(false)} aria-label="Fechar"><X /></button><img src={product.image} alt={product.name} onMouseDown={(event) => event.stopPropagation()} /></div>}
   </div>
