@@ -83,7 +83,7 @@ export const orderSchema = z.object({
   notes: z.string().trim().max(1000).optional().default(''),
   items: z.array(z.object({
     productId: z.coerce.number().int().positive(),
-    quantity: z.coerce.number().int().positive().max(999),
+    quantity: z.coerce.number().int().positive().max(100000),
   })).min(1, 'O pedido precisa ter ao menos um item').max(200),
 })
 
@@ -107,6 +107,7 @@ export const bannerSchema = z.object({
   targetUrl: z.string().trim().max(500).default('#produtos'),
   position: z.coerce.number().int().min(0).max(1000),
   active: z.boolean(),
+  placement: z.enum(['hero', 'catalog']).default('hero'),
   imageDataUrl: z.string().optional().default(''),
 })
 
@@ -127,6 +128,7 @@ const syncProductSchema = z.object({
   package: z.string().trim().max(100).default(''),
   masterPackage: z.string().trim().max(100).default(''),
   unitsPerBox: z.coerce.number().int().positive().max(100000).default(1),
+  salesMultiple: z.coerce.number().int().positive().max(100000).default(1),
   minBoxes: z.coerce.number().int().positive().max(10000).default(1),
   retailUnitPrice: z.coerce.number().nonnegative().max(999999999),
   networkUnitPrice: z.coerce.number().nonnegative().max(999999999),

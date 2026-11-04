@@ -11,6 +11,7 @@ export type Product = {
   package: string
   masterPackage: string
   unitsPerBox: number
+  salesMultiple: number
   minBoxes: number
   unitPrice: number | null
   listUnitPrice: number | null
@@ -66,6 +67,7 @@ export type Banner = {
   targetUrl: string
   position: number
   active: boolean
+  placement: 'hero' | 'catalog'
 }
 
 export type CatalogCategory = {
@@ -100,6 +102,7 @@ export type OrderItem = {
   code: number
   name: string
   boxes: number
+  units: number
   unitsPerBox: number
   unitPrice: number
   lineTotal: number

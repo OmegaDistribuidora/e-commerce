@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS products (
   package TEXT,
   master_package TEXT,
   units_per_box INTEGER NOT NULL DEFAULT 1 CHECK (units_per_box > 0),
+  sales_multiple INTEGER NOT NULL DEFAULT 1 CHECK (sales_multiple > 0),
   min_boxes INTEGER NOT NULL DEFAULT 1 CHECK (min_boxes > 0),
   unit_price NUMERIC(14,2) NOT NULL CHECK (unit_price >= 0),
   list_unit_price NUMERIC(14,2),
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS order_items (
   order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
   product_id INTEGER NOT NULL REFERENCES products(id),
   boxes INTEGER NOT NULL CHECK (boxes > 0),
+  units INTEGER NOT NULL CHECK (units > 0),
   units_per_box INTEGER NOT NULL,
   unit_price NUMERIC(14,2) NOT NULL,
   line_total NUMERIC(14,2) NOT NULL
@@ -122,6 +124,7 @@ CREATE TABLE IF NOT EXISTS banners (
   image_data BYTEA,
   image_mime VARCHAR(50),
   target_url TEXT NOT NULL DEFAULT '#produtos',
+  placement VARCHAR(20) NOT NULL DEFAULT 'hero' CHECK (placement IN ('hero', 'catalog')),
   position INTEGER NOT NULL DEFAULT 0,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

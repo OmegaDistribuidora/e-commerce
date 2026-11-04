@@ -21,6 +21,7 @@ SELECT
     p.embalagemmaster,
     p.qtunit,
     p.qtunitcx,
+    NVL(p.multiplo, 1) AS multiplo,
     NVL(d.descricao, '') AS departamento,
     NVL(s.descricao, '') AS secao,
     p.codauxiliar AS ean,
@@ -117,7 +118,7 @@ def main() -> None:
     for row in rows:
         (
             code, supplier_id, supplier, name, package, master_package,
-            unit_quantity, units_per_box, department, section, ean,
+            unit_quantity, units_per_box, sales_multiple, department, section, ean,
             retail_price, network_price, price_date,
         ) = row
         retail = round(number(retail_price), 2)
@@ -130,6 +131,7 @@ def main() -> None:
             "package": text(package),
             "masterPackage": text(master_package),
             "unitsPerBox": max(1, int(number(units_per_box) or number(unit_quantity) or 1)),
+            "salesMultiple": max(1, int(number(sales_multiple) or 1)),
             "minBoxes": 1,
             "retailUnitPrice": retail,
             "networkUnitPrice": network,

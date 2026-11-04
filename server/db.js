@@ -38,6 +38,7 @@ export async function initializeDatabase() {
   await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_plan VARCHAR(30) NOT NULL DEFAULT 'avista'")
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS retail_unit_price NUMERIC(14,2)')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS network_unit_price NUMERIC(14,2)')
+  await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS sales_multiple INTEGER NOT NULL DEFAULT 1')
   await pool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS sales_channel VARCHAR(20) NOT NULL DEFAULT 'Varejo'")
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS password_hash TEXT')
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS supabase_user_id UUID')
@@ -55,6 +56,9 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS winthor_status_checked_at TIMESTAMP')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS winthor_entered_by_staff_user_id BIGINT')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS winthor_entered_at TIMESTAMP')
+  await pool.query('ALTER TABLE order_items ADD COLUMN IF NOT EXISTS units INTEGER')
+  await pool.query('UPDATE order_items SET units = boxes * units_per_box WHERE units IS NULL')
+  await pool.query("ALTER TABLE banners ADD COLUMN IF NOT EXISTS placement VARCHAR(20) NOT NULL DEFAULT 'hero'")
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_winthor_order_number ON orders(winthor_order_number)')
   await pool.query("UPDATE orders SET status='analysis' WHERE status='received'")
   await pool.query('UPDATE products SET retail_unit_price = unit_price WHERE retail_unit_price IS NULL')
@@ -142,15 +146,15 @@ async function seedDatabase() {
       const result = await client.query(
         `INSERT INTO products (
           company, external_id, supplier_id, brand, name, package, master_package,
-          units_per_box, min_boxes, unit_price, list_unit_price, retail_unit_price,
+          units_per_box, sales_multiple, min_boxes, unit_price, list_unit_price, retail_unit_price,
           network_unit_price, department, section, source_category, category, ean,
           stock_units, image_path, active, price_date
         ) VALUES (
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
         ) RETURNING id`,
         [
           seed.source, product.externalId, product.supplierId, product.brand, product.name,
-          product.package, product.masterPackage, product.unitsPerBox, product.minBoxes,
+          product.package, product.masterPackage, product.unitsPerBox, product.salesMultiple ?? product.unitsPerBox ?? 1, product.minBoxes,
           product.unitPrice, product.listUnitPrice,
           product.retailUnitPrice ?? product.unitPrice,
           product.networkUnitPrice ?? product.unitPrice,

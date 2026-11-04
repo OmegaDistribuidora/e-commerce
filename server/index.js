@@ -318,7 +318,8 @@ async function listOrders(whereClause = '', params = []) {
     const placeholders = orderIds.map((_, index) => `$${index + 1}`).join(',')
     const items = await pool.query(
       `SELECT oi.id, oi.order_id, p.id AS product_id, p.external_id AS code, p.name,
-              oi.boxes, oi.units_per_box, oi.unit_price, oi.line_total
+              oi.boxes, COALESCE(oi.units, oi.boxes * oi.units_per_box) AS units,
+              oi.units_per_box, oi.unit_price, oi.line_total
        FROM order_items oi JOIN products p ON p.id = oi.product_id
        WHERE oi.order_id IN (${placeholders}) ORDER BY oi.id`,
       orderIds,
@@ -346,7 +347,7 @@ async function listOrders(whereClause = '', params = []) {
     },
     items: itemRows.filter((item) => Number(item.order_id) === Number(order.id)).map((item) => ({
       id: Number(item.id), productId: Number(item.product_id), code: Number(item.code), name: item.name,
-      boxes: Number(item.boxes), unitsPerBox: Number(item.units_per_box),
+      boxes: Number(item.boxes), units: Number(item.units), unitsPerBox: Number(item.units_per_box),
       unitPrice: Number(item.unit_price), lineTotal: Number(item.line_total),
     })),
   }))
@@ -695,12 +696,14 @@ app.put('/api/staff/password', requireStaff, async (request, response, next) => 
   }
 })
 
-app.get('/api/banners', async (_request, response, next) => {
+app.get('/api/banners', async (request, response, next) => {
   try {
+    const placement = request.query.placement === 'catalog' ? 'catalog' : 'hero'
     const result = await pool.query(
       `SELECT id, title, alt_text, image_path, image_data IS NOT NULL AS uploaded,
-              target_url, position, active, updated_at
-       FROM banners WHERE active = TRUE ORDER BY position, id`,
+              target_url, position, active, placement, updated_at
+       FROM banners WHERE active = TRUE AND placement = $1 ORDER BY position, id`,
+      [placement],
     )
     return response.json({ banners: result.rows.map((banner) => ({
       id: Number(banner.id),
@@ -710,6 +713,7 @@ app.get('/api/banners', async (_request, response, next) => {
       targetUrl: banner.target_url,
       position: Number(banner.position),
       active: banner.active,
+      placement: banner.placement,
     })) })
   } catch (error) {
     return next(error)
@@ -793,7 +797,7 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
     await client.query(
       `CREATE TABLE ecommerce_product_stage (
         company VARCHAR(40), external_id INTEGER, supplier_id INTEGER, brand TEXT, name TEXT,
-        package TEXT, master_package TEXT, units_per_box INTEGER, min_boxes INTEGER,
+        package TEXT, master_package TEXT, units_per_box INTEGER, sales_multiple INTEGER, min_boxes INTEGER,
         unit_price NUMERIC(14,2), list_unit_price NUMERIC(14,2),
         retail_unit_price NUMERIC(14,2), network_unit_price NUMERIC(14,2),
         department TEXT, section TEXT, ean TEXT, active BOOLEAN, price_date DATE
@@ -802,7 +806,7 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
 
     const rows = uniqueProducts.map((product) => [
       'Filial', product.externalId, product.supplierId, product.brand, product.name,
-      product.package, product.masterPackage, product.unitsPerBox, product.minBoxes,
+      product.package, product.masterPackage, product.unitsPerBox, product.salesMultiple, product.minBoxes,
       product.retailUnitPrice, product.retailUnitPrice, product.retailUnitPrice,
       product.networkUnitPrice || product.retailUnitPrice, product.department,
       product.section, product.ean, true, product.priceDate || null,
@@ -832,7 +836,7 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
        WHERE COALESCE(p.supplier_id,-1)<>COALESCE(s.supplier_id,-1)
           OR COALESCE(p.brand,'')<>COALESCE(s.brand,'') OR COALESCE(p.name,'')<>COALESCE(s.name,'')
           OR COALESCE(p.package,'')<>COALESCE(s.package,'') OR COALESCE(p.master_package,'')<>COALESCE(s.master_package,'')
-          OR p.units_per_box<>s.units_per_box OR p.min_boxes<>s.min_boxes
+          OR p.units_per_box<>s.units_per_box OR p.sales_multiple<>s.sales_multiple OR p.min_boxes<>s.min_boxes
           OR p.unit_price<>s.unit_price OR COALESCE(p.list_unit_price,-1)<>COALESCE(s.list_unit_price,-1)
           OR COALESCE(p.retail_unit_price,-1)<>COALESCE(s.retail_unit_price,-1)
           OR COALESCE(p.network_unit_price,-1)<>COALESCE(s.network_unit_price,-1)
@@ -849,17 +853,17 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
     await client.query(
       `INSERT INTO products (
          company,external_id,supplier_id,brand,name,package,master_package,units_per_box,
-         min_boxes,unit_price,list_unit_price,retail_unit_price,network_unit_price,
+         sales_multiple,min_boxes,unit_price,list_unit_price,retail_unit_price,network_unit_price,
          department,section,ean,active,price_date,source_category,category
        )
        SELECT company,external_id,supplier_id,brand,name,package,master_package,units_per_box,
-              min_boxes,unit_price,list_unit_price,retail_unit_price,network_unit_price,
+              sales_multiple,min_boxes,unit_price,list_unit_price,retail_unit_price,network_unit_price,
               department,section,ean,active,price_date,'','Sem categoria'
        FROM ecommerce_product_stage
        ON CONFLICT (company,external_id) DO UPDATE SET
          supplier_id=EXCLUDED.supplier_id, brand=EXCLUDED.brand, name=EXCLUDED.name,
          package=EXCLUDED.package, master_package=EXCLUDED.master_package,
-         units_per_box=EXCLUDED.units_per_box, min_boxes=EXCLUDED.min_boxes,
+         units_per_box=EXCLUDED.units_per_box, sales_multiple=EXCLUDED.sales_multiple, min_boxes=EXCLUDED.min_boxes,
          unit_price=EXCLUDED.unit_price, list_unit_price=EXCLUDED.list_unit_price,
          retail_unit_price=EXCLUDED.retail_unit_price, network_unit_price=EXCLUDED.network_unit_price,
          department=EXCLUDED.department, section=EXCLUDED.section, ean=EXCLUDED.ean,
@@ -867,7 +871,7 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
        WHERE COALESCE(products.supplier_id,-1)<>COALESCE(EXCLUDED.supplier_id,-1)
           OR COALESCE(products.brand,'')<>COALESCE(EXCLUDED.brand,'') OR COALESCE(products.name,'')<>COALESCE(EXCLUDED.name,'')
           OR COALESCE(products.package,'')<>COALESCE(EXCLUDED.package,'') OR COALESCE(products.master_package,'')<>COALESCE(EXCLUDED.master_package,'')
-          OR products.units_per_box<>EXCLUDED.units_per_box OR products.min_boxes<>EXCLUDED.min_boxes
+          OR products.units_per_box<>EXCLUDED.units_per_box OR products.sales_multiple<>EXCLUDED.sales_multiple OR products.min_boxes<>EXCLUDED.min_boxes
           OR products.unit_price<>EXCLUDED.unit_price OR COALESCE(products.list_unit_price,-1)<>COALESCE(EXCLUDED.list_unit_price,-1)
           OR COALESCE(products.retail_unit_price,-1)<>COALESCE(EXCLUDED.retail_unit_price,-1)
           OR COALESCE(products.network_unit_price,-1)<>COALESCE(EXCLUDED.network_unit_price,-1)
@@ -941,7 +945,7 @@ app.get('/api/products', async (request, response, next) => {
          GROUP BY product_id
        )
        SELECT p.id, p.external_id, p.supplier_id, p.brand, p.name, p.package, p.master_package,
-              p.units_per_box, p.min_boxes, p.unit_price, p.list_unit_price,
+              p.units_per_box, p.sales_multiple, p.min_boxes, p.unit_price, p.list_unit_price,
               p.retail_unit_price, p.network_unit_price,
               p.category, p.department, p.section, p.stock_units, p.image_path,
               p.price_date, COALESCE(w.units, 0) AS weekly_sales
@@ -986,6 +990,7 @@ app.get('/api/products', async (request, response, next) => {
         package: row.package,
         masterPackage: row.master_package,
         unitsPerBox: Number(row.units_per_box),
+        salesMultiple: Number(row.sales_multiple),
         minBoxes: Number(row.min_boxes),
         unitPrice: authenticated ? Number(channelPrice ?? row.unit_price) : null,
         listUnitPrice: authenticated ? Number(row.list_unit_price ?? channelPrice ?? row.unit_price) : null,
@@ -1366,13 +1371,13 @@ app.get('/api/staff/banners', requireStaff, async (_request, response, next) => 
   try {
     const result = await pool.query(
       `SELECT id, title, alt_text, image_path, image_data IS NOT NULL AS uploaded,
-              target_url, position, active, updated_at
+              target_url, position, active, placement, updated_at
        FROM banners ORDER BY position, id`,
     )
     return response.json({ banners: result.rows.map((banner) => ({
       id: Number(banner.id), title: banner.title, altText: banner.alt_text,
       imageUrl: banner.uploaded ? `/api/banners/${banner.id}/image?v=${new Date(banner.updated_at).getTime()}` : banner.image_path,
-      targetUrl: banner.target_url, position: Number(banner.position), active: banner.active,
+      targetUrl: banner.target_url, position: Number(banner.position), active: banner.active, placement: banner.placement,
     })) })
   } catch (error) {
     return next(error)
@@ -1389,15 +1394,15 @@ app.put('/api/staff/banners/:id', requireStaff, async (request, response, next) 
     }
     const values = [
       parsed.data.title, parsed.data.altText, parsed.data.targetUrl || '#produtos',
-      parsed.data.position, parsed.data.active, image?.data ?? null, image?.mime ?? null,
+      parsed.data.position, parsed.data.active, parsed.data.placement, image?.data ?? null, image?.mime ?? null,
       request.params.id,
     ]
     const result = await pool.query(
-      `UPDATE banners SET title=$1, alt_text=$2, target_url=$3, position=$4, active=$5,
-         image_data=COALESCE($6, image_data), image_mime=COALESCE($7, image_mime),
-         image_path=CASE WHEN $6::bytea IS NOT NULL THEN NULL ELSE image_path END,
+      `UPDATE banners SET title=$1, alt_text=$2, target_url=$3, position=$4, active=$5, placement=$6,
+         image_data=COALESCE($7, image_data), image_mime=COALESCE($8, image_mime),
+         image_path=CASE WHEN $7::bytea IS NOT NULL THEN NULL ELSE image_path END,
          updated_at=CURRENT_TIMESTAMP
-       WHERE id=$8 RETURNING id`,
+       WHERE id=$9 RETURNING id`,
       values,
     )
     if (!result.rows.length) return response.status(404).json({ message: 'Banner não encontrado.' })
@@ -1417,9 +1422,9 @@ app.post('/api/staff/banners', requireStaff, async (request, response, next) => 
     }
     if (!image) return response.status(400).json({ message: 'Selecione uma imagem para o novo banner.' })
     const result = await pool.query(
-      `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, position, active)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-      [parsed.data.title, parsed.data.altText, image.data, image.mime, parsed.data.targetUrl || '#produtos', parsed.data.position, parsed.data.active],
+      `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, position, active, placement)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [parsed.data.title, parsed.data.altText, image.data, image.mime, parsed.data.targetUrl || '#produtos', parsed.data.position, parsed.data.active, parsed.data.placement],
     )
     return response.status(201).json({ id: Number(result.rows[0].id), saved: true })
   } catch (error) {
@@ -1446,7 +1451,7 @@ app.post('/api/orders', async (request, response, next) => {
     const uniqueProductIds = [...new Set(parsed.data.items.map((item) => item.productId))]
     const placeholders = uniqueProductIds.map((_, index) => `$${index + 1}`).join(',')
     const productsResult = await client.query(
-      `SELECT id, unit_price, retail_unit_price, network_unit_price, units_per_box, min_boxes
+      `SELECT id, unit_price, retail_unit_price, network_unit_price, units_per_box, sales_multiple
        FROM products WHERE active = TRUE AND id IN (${placeholders})`,
       uniqueProductIds,
     )
@@ -1457,16 +1462,23 @@ app.post('/api/orders', async (request, response, next) => {
     }
 
     let total = 0
-    const lines = parsed.data.items.map((item) => {
+    const lines = []
+    for (const item of parsed.data.items) {
       const product = productMap.get(item.productId)
-      const boxes = Math.max(item.quantity, Number(product.min_boxes))
+      const units = item.quantity
+      const salesMultiple = Math.max(1, Number(product.sales_multiple))
+      if (units < salesMultiple || units % salesMultiple !== 0) {
+        await client.query('ROLLBACK')
+        return response.status(400).json({ message: `A quantidade do produto deve ser um múltiplo de ${salesMultiple} unidades.` })
+      }
+      const boxes = Math.max(1, Math.ceil(units / Number(product.units_per_box)))
       const unitPrice = Number(request.customer.sales_channel === 'Redes'
         ? product.network_unit_price ?? product.unit_price
         : product.retail_unit_price ?? product.unit_price)
-      const lineTotal = boxes * Number(product.units_per_box) * unitPrice
+      const lineTotal = units * unitPrice
       total += lineTotal
-      return { product, boxes, unitPrice, lineTotal }
-    })
+      lines.push({ product, boxes, units, unitPrice, lineTotal })
+    }
 
     if (total < 200) {
       await client.query('ROLLBACK')
@@ -1480,9 +1492,9 @@ app.post('/api/orders', async (request, response, next) => {
     const order = orderResult.rows[0]
     for (const line of lines) {
       await client.query(
-        `INSERT INTO order_items (order_id, product_id, boxes, units_per_box, unit_price, line_total)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [order.id, line.product.id, line.boxes, line.product.units_per_box, line.unitPrice, line.lineTotal.toFixed(2)],
+        `INSERT INTO order_items (order_id, product_id, boxes, units, units_per_box, unit_price, line_total)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [order.id, line.product.id, line.boxes, line.units, line.product.units_per_box, line.unitPrice, line.lineTotal.toFixed(2)],
       )
     }
     await client.query('COMMIT')
