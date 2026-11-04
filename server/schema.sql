@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS products (
   source_category TEXT,
   category VARCHAR(40) NOT NULL,
   ean TEXT,
+  manufacturer_code TEXT,
+  ncm_code TEXT,
   stock_units NUMERIC(14,2) NOT NULL DEFAULT 0,
   image_path TEXT,
   active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -74,6 +76,7 @@ CREATE TABLE IF NOT EXISTS orders (
   winthor_entered_by_staff_user_id BIGINT,
   winthor_entered_at TIMESTAMP,
   payment_plan VARCHAR(30) NOT NULL DEFAULT 'avista',
+  payment_plan_label VARCHAR(160),
   total NUMERIC(14,2) NOT NULL,
   notes TEXT,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -127,9 +130,19 @@ CREATE TABLE IF NOT EXISTS banners (
   placement VARCHAR(20) NOT NULL DEFAULT 'hero' CHECK (placement IN ('hero', 'catalog')),
   position INTEGER NOT NULL DEFAULT 0,
   active BOOLEAN NOT NULL DEFAULT TRUE,
+  starts_at TIMESTAMP,
+  ends_at TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CHECK (image_path IS NOT NULL OR image_data IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS customer_commercial_conditions (
+  customer_id BIGINT PRIMARY KEY REFERENCES customers(id) ON DELETE CASCADE,
+  credit_limit NUMERIC(14,2) NOT NULL DEFAULT 0,
+  payment_plans JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source_updated_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS product_sync_runs (

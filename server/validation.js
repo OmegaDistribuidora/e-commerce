@@ -79,7 +79,7 @@ export const lookupSchema = z.object({
 
 export const orderSchema = z.object({
   customerId: z.coerce.number().int().positive(),
-  paymentPlan: z.enum(['avista', '7_dias', '14_dias', '28_dias', '4_14_dias', '14_28_dias']),
+  paymentPlan: z.string().trim().min(1, 'Selecione um plano de pagamento').max(30),
   notes: z.string().trim().max(1000).optional().default(''),
   items: z.array(z.object({
     productId: z.coerce.number().int().positive(),
@@ -102,6 +102,7 @@ export const staffUserSchema = z.object({
 })
 
 export const bannerSchema = z.object({
+  id: z.coerce.number().int().positive().optional(),
   title: z.string().trim().min(2, 'Informe o título').max(160),
   altText: z.string().trim().min(3, 'Informe o texto alternativo').max(240),
   targetUrl: z.string().trim().max(500).default('#produtos'),
@@ -109,6 +110,15 @@ export const bannerSchema = z.object({
   active: z.boolean(),
   placement: z.enum(['hero', 'catalog']).default('hero'),
   imageDataUrl: z.string().optional().default(''),
+  startsAt: z.string().datetime({ offset: true }).nullable().optional(),
+  endsAt: z.string().datetime({ offset: true }).nullable().optional(),
+}).refine((value) => !value.startsAt || !value.endsAt || new Date(value.endsAt) > new Date(value.startsAt), {
+  message: 'O encerramento deve ser posterior ao inÃ­cio.', path: ['endsAt'],
+})
+
+export const bannersBulkSchema = z.object({
+  banners: z.array(bannerSchema).max(100),
+  deletedIds: z.array(z.coerce.number().int().positive()).max(100).default([]),
 })
 
 export const categorySchema = z.object({
@@ -135,10 +145,26 @@ const syncProductSchema = z.object({
   department: z.string().trim().max(200).default(''),
   section: z.string().trim().max(200).default(''),
   ean: z.string().trim().max(40).default(''),
+  manufacturerCode: z.string().trim().max(100).default(''),
+  ncm: z.string().trim().max(40).default(''),
   priceDate: z.string().trim().max(30).nullable().optional(),
 })
 
 export const productSyncSchema = z.object({
   source: z.literal('WinThor'),
   products: z.array(syncProductSchema).min(1).max(20000),
+})
+
+const paymentPlanSyncSchema = z.object({
+  code: z.coerce.string().trim().min(1).max(30),
+  label: z.string().trim().min(1).max(160),
+})
+
+export const customerConditionsSyncSchema = z.object({
+  customers: z.array(z.object({
+    externalId: z.coerce.number().int().positive(),
+    creditLimit: z.coerce.number().nonnegative().max(999999999999),
+    paymentPlans: z.array(paymentPlanSyncSchema).max(100),
+    sourceUpdatedAt: z.string().datetime({ offset: true }).nullable().optional(),
+  })).max(50000),
 })

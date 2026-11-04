@@ -39,6 +39,8 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS retail_unit_price NUMERIC(14,2)')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS network_unit_price NUMERIC(14,2)')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS sales_multiple INTEGER NOT NULL DEFAULT 1')
+  await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS manufacturer_code TEXT')
+  await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS ncm_code TEXT')
   await pool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS sales_channel VARCHAR(20) NOT NULL DEFAULT 'Varejo'")
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS password_hash TEXT')
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS supabase_user_id UUID')
@@ -59,6 +61,18 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE order_items ADD COLUMN IF NOT EXISTS units INTEGER')
   await pool.query('UPDATE order_items SET units = boxes * units_per_box WHERE units IS NULL')
   await pool.query("ALTER TABLE banners ADD COLUMN IF NOT EXISTS placement VARCHAR(20) NOT NULL DEFAULT 'hero'")
+  await pool.query('ALTER TABLE banners ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ')
+  await pool.query('ALTER TABLE banners ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ')
+  await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_plan_label VARCHAR(160)')
+  if (process.env.DATABASE_URL) {
+    await pool.query(`CREATE TABLE IF NOT EXISTS customer_commercial_conditions (
+      customer_id BIGINT PRIMARY KEY REFERENCES customers(id) ON DELETE CASCADE,
+      credit_limit NUMERIC(14,2) NOT NULL DEFAULT 0,
+      payment_plans JSONB NOT NULL DEFAULT '[]'::jsonb,
+      source_updated_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`)
+  }
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_winthor_order_number ON orders(winthor_order_number)')
   await pool.query("UPDATE orders SET status='analysis' WHERE status='received'")
   await pool.query('UPDATE products SET retail_unit_price = unit_price WHERE retail_unit_price IS NULL')

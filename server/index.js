@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
 import { findSupabaseUserByEmail, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
-import { bannerSchema, categoryProductsSchema, categorySchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderSchema, productSyncSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema } from './validation.js'
+import { bannerSchema, bannersBulkSchema, categoryProductsSchema, categorySchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderSchema, productSyncSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema } from './validation.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -301,7 +301,7 @@ async function listOrders(whereClause = '', params = []) {
   const result = await pool.query(
     `SELECT o.id, o.status, o.winthor_order_number, o.winthor_status_code,
             o.winthor_status_label, o.winthor_status_checked_at,
-            o.winthor_entered_at, o.payment_plan, o.total, o.notes, o.created_at, o.updated_at,
+            o.winthor_entered_at, o.payment_plan, o.payment_plan_label, o.total, o.notes, o.created_at, o.updated_at,
             c.id AS customer_id, c.legal_name, c.trade_name, c.document, c.email, c.phone,
             su.name AS winthor_entered_by_name
      FROM orders o
@@ -336,7 +336,8 @@ async function listOrders(whereClause = '', params = []) {
     statusUpdatedAt: order.winthor_status_checked_at,
     enteredAt: order.winthor_entered_at,
     enteredBy: order.winthor_entered_by_name || '',
-    paymentPlan: order.payment_plan,
+    paymentPlan: order.payment_plan_label || order.payment_plan,
+    paymentPlanLabel: order.payment_plan_label || '',
     total: Number(order.total),
     notes: order.notes || '',
     createdAt: order.created_at,
@@ -701,8 +702,12 @@ app.get('/api/banners', async (request, response, next) => {
     const placement = request.query.placement === 'catalog' ? 'catalog' : 'hero'
     const result = await pool.query(
       `SELECT id, title, alt_text, image_path, image_data IS NOT NULL AS uploaded,
-              target_url, position, active, placement, updated_at
-       FROM banners WHERE active = TRUE AND placement = $1 ORDER BY position, id`,
+              target_url, position, active, placement, starts_at, ends_at, updated_at
+       FROM banners
+       WHERE active = TRUE AND placement = $1
+         AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP)
+         AND (ends_at IS NULL OR ends_at > CURRENT_TIMESTAMP)
+       ORDER BY position, id`,
       [placement],
     )
     return response.json({ banners: result.rows.map((banner) => ({
@@ -714,6 +719,8 @@ app.get('/api/banners', async (request, response, next) => {
       position: Number(banner.position),
       active: banner.active,
       placement: banner.placement,
+      startsAt: banner.starts_at,
+      endsAt: banner.ends_at,
     })) })
   } catch (error) {
     return next(error)
@@ -800,7 +807,8 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
         package TEXT, master_package TEXT, units_per_box INTEGER, sales_multiple INTEGER, min_boxes INTEGER,
         unit_price NUMERIC(14,2), list_unit_price NUMERIC(14,2),
         retail_unit_price NUMERIC(14,2), network_unit_price NUMERIC(14,2),
-        department TEXT, section TEXT, ean TEXT, active BOOLEAN, price_date DATE
+        department TEXT, section TEXT, ean TEXT, manufacturer_code TEXT, ncm_code TEXT,
+        active BOOLEAN, price_date DATE
       )`,
     )
 
@@ -809,7 +817,7 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
       product.package, product.masterPackage, product.unitsPerBox, product.salesMultiple, product.minBoxes,
       product.retailUnitPrice, product.retailUnitPrice, product.retailUnitPrice,
       product.networkUnitPrice || product.retailUnitPrice, product.department,
-      product.section, product.ean, true, product.priceDate || null,
+      product.section, product.ean, product.manufacturerCode, product.ncm, true, product.priceDate || null,
     ])
     const batchSize = 250
     for (let offset = 0; offset < rows.length; offset += batchSize) {
@@ -841,7 +849,9 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
           OR COALESCE(p.retail_unit_price,-1)<>COALESCE(s.retail_unit_price,-1)
           OR COALESCE(p.network_unit_price,-1)<>COALESCE(s.network_unit_price,-1)
           OR COALESCE(p.department,'')<>COALESCE(s.department,'') OR COALESCE(p.section,'')<>COALESCE(s.section,'')
-          OR COALESCE(p.ean,'')<>COALESCE(s.ean,'') OR p.active<>s.active
+          OR COALESCE(p.ean,'')<>COALESCE(s.ean,'')
+          OR COALESCE(p.manufacturer_code,'')<>COALESCE(s.manufacturer_code,'')
+          OR COALESCE(p.ncm_code,'')<>COALESCE(s.ncm_code,'') OR p.active<>s.active
           OR COALESCE(p.price_date,DATE '1900-01-01')<>COALESCE(s.price_date,DATE '1900-01-01')`,
     )
     const deactivatedResult = await client.query(
@@ -854,11 +864,11 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
       `INSERT INTO products (
          company,external_id,supplier_id,brand,name,package,master_package,units_per_box,
          sales_multiple,min_boxes,unit_price,list_unit_price,retail_unit_price,network_unit_price,
-         department,section,ean,active,price_date,source_category,category
+         department,section,ean,manufacturer_code,ncm_code,active,price_date,source_category,category
        )
        SELECT company,external_id,supplier_id,brand,name,package,master_package,units_per_box,
               sales_multiple,min_boxes,unit_price,list_unit_price,retail_unit_price,network_unit_price,
-              department,section,ean,active,price_date,'','Sem categoria'
+              department,section,ean,manufacturer_code,ncm_code,active,price_date,'','Sem categoria'
        FROM ecommerce_product_stage
        ON CONFLICT (company,external_id) DO UPDATE SET
          supplier_id=EXCLUDED.supplier_id, brand=EXCLUDED.brand, name=EXCLUDED.name,
@@ -867,6 +877,7 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
          unit_price=EXCLUDED.unit_price, list_unit_price=EXCLUDED.list_unit_price,
          retail_unit_price=EXCLUDED.retail_unit_price, network_unit_price=EXCLUDED.network_unit_price,
          department=EXCLUDED.department, section=EXCLUDED.section, ean=EXCLUDED.ean,
+         manufacturer_code=EXCLUDED.manufacturer_code, ncm_code=EXCLUDED.ncm_code,
          active=TRUE, price_date=EXCLUDED.price_date, updated_at=CURRENT_TIMESTAMP
        WHERE COALESCE(products.supplier_id,-1)<>COALESCE(EXCLUDED.supplier_id,-1)
           OR COALESCE(products.brand,'')<>COALESCE(EXCLUDED.brand,'') OR COALESCE(products.name,'')<>COALESCE(EXCLUDED.name,'')
@@ -876,7 +887,9 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
           OR COALESCE(products.retail_unit_price,-1)<>COALESCE(EXCLUDED.retail_unit_price,-1)
           OR COALESCE(products.network_unit_price,-1)<>COALESCE(EXCLUDED.network_unit_price,-1)
           OR COALESCE(products.department,'')<>COALESCE(EXCLUDED.department,'') OR COALESCE(products.section,'')<>COALESCE(EXCLUDED.section,'')
-          OR COALESCE(products.ean,'')<>COALESCE(EXCLUDED.ean,'') OR products.active<>EXCLUDED.active
+          OR COALESCE(products.ean,'')<>COALESCE(EXCLUDED.ean,'')
+          OR COALESCE(products.manufacturer_code,'')<>COALESCE(EXCLUDED.manufacturer_code,'')
+          OR COALESCE(products.ncm_code,'')<>COALESCE(EXCLUDED.ncm_code,'') OR products.active<>EXCLUDED.active
           OR COALESCE(products.price_date,DATE '1900-01-01')<>COALESCE(EXCLUDED.price_date,DATE '1900-01-01')`,
     )
     await client.query(
@@ -900,6 +913,46 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
     await client.query('DROP TABLE ecommerce_product_stage')
     await client.query('COMMIT')
     return response.json({ synchronized: true, ...stats })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    return next(error)
+  } finally {
+    client.release()
+  }
+})
+
+app.get('/api/integrations/customers', async (request, response) => {
+  if (!validIntegrationToken(request)) return response.status(401).json({ message: 'Credencial de integraÃ§Ã£o invÃ¡lida.' })
+  const result = await pool.query(
+    `SELECT DISTINCT external_id FROM customers
+     WHERE active=TRUE AND registration_status='approved' AND external_id IS NOT NULL
+     ORDER BY external_id`,
+  )
+  return response.json({ externalIds: result.rows.map((row) => Number(row.external_id)) })
+})
+
+app.post('/api/integrations/customers/conditions', async (request, response, next) => {
+  if (!validIntegrationToken(request)) return response.status(401).json({ message: 'Credencial de integraÃ§Ã£o invÃ¡lida.' })
+  const parsed = customerConditionsSyncSchema.safeParse(request.body)
+  if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    let updatedCount = 0
+    for (const condition of parsed.data.customers) {
+      const result = await client.query(
+        `INSERT INTO customer_commercial_conditions (customer_id, credit_limit, payment_plans, source_updated_at)
+         SELECT id,$2::numeric,$3::jsonb,$4::timestamptz FROM customers WHERE external_id=$1 AND active=TRUE
+         ON CONFLICT (customer_id) DO UPDATE SET credit_limit=EXCLUDED.credit_limit,
+           payment_plans=EXCLUDED.payment_plans, source_updated_at=EXCLUDED.source_updated_at,
+           updated_at=CURRENT_TIMESTAMP
+         RETURNING customer_id`,
+        [condition.externalId, condition.creditLimit, JSON.stringify(condition.paymentPlans), condition.sourceUpdatedAt || null],
+      )
+      updatedCount += result.rowCount
+    }
+    await client.query('COMMIT')
+    return response.json({ updatedCount })
   } catch (error) {
     await client.query('ROLLBACK')
     return next(error)
@@ -947,7 +1000,8 @@ app.get('/api/products', async (request, response, next) => {
        SELECT p.id, p.external_id, p.supplier_id, p.brand, p.name, p.package, p.master_package,
               p.units_per_box, p.sales_multiple, p.min_boxes, p.unit_price, p.list_unit_price,
               p.retail_unit_price, p.network_unit_price,
-              p.category, p.department, p.section, p.stock_units, p.image_path,
+              p.category, p.department, p.section, p.stock_units, p.image_path, p.ean,
+              p.manufacturer_code, p.ncm_code,
               p.price_date, COALESCE(w.units, 0) AS weekly_sales
        FROM products p
        LEFT JOIN weekly w ON w.product_id = p.id
@@ -1000,6 +1054,9 @@ app.get('/api/products', async (request, response, next) => {
         section: row.section,
         stockUnits: Number(row.stock_units),
         image: row.image_path,
+        ean: row.ean || '',
+        manufacturerCode: row.manufacturer_code || '',
+        ncm: row.ncm_code || '',
         priceDate: row.price_date,
         weeklySales: Number(row.weekly_sales),
       }}),
@@ -1008,6 +1065,58 @@ app.get('/api/products', async (request, response, next) => {
     })
   } catch (error) {
     next(error)
+  }
+})
+
+app.get('/api/products/:code', async (request, response, next) => {
+  try {
+    const code = Number(request.params.code)
+    if (!Number.isSafeInteger(code) || code < 1) return response.status(400).json({ message: 'CÃ³digo de produto invÃ¡lido.' })
+    const result = await pool.query(
+      `SELECT id, external_id, supplier_id, brand, name, package, master_package, units_per_box,
+              sales_multiple, min_boxes, unit_price, list_unit_price, retail_unit_price,
+              network_unit_price, category, department, section, stock_units, image_path,
+              ean, manufacturer_code, ncm_code, price_date
+       FROM products WHERE external_id=$1 AND active=TRUE LIMIT 1`,
+      [code],
+    )
+    if (!result.rows.length) return response.status(404).json({ message: 'Produto nÃ£o encontrado ou indisponÃ­vel.' })
+    const row = result.rows[0]
+    const channelPrice = request.customer?.sales_channel === 'Redes' ? row.network_unit_price : row.retail_unit_price
+    return response.json({ product: {
+      id: Number(row.id), code: Number(row.external_id), supplierId: Number(row.supplier_id || 0),
+      brand: row.brand, name: row.name, package: row.package || '', masterPackage: row.master_package || '',
+      unitsPerBox: Number(row.units_per_box), salesMultiple: Number(row.sales_multiple), minBoxes: Number(row.min_boxes),
+      unitPrice: request.customer ? Number(channelPrice ?? row.unit_price) : null,
+      listUnitPrice: request.customer ? Number(row.list_unit_price ?? channelPrice ?? row.unit_price) : null,
+      category: row.category || 'Sem categoria', categories: [], department: row.department || '', section: row.section || '',
+      stockUnits: Number(row.stock_units), image: row.image_path, priceDate: row.price_date, weeklySales: 0,
+      ean: row.ean || '', manufacturerCode: row.manufacturer_code || '', ncm: row.ncm_code || '',
+    } })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.get('/api/customer/commercial-conditions', async (request, response, next) => {
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para consultar as condiÃ§Ãµes comerciais.' })
+  try {
+    const result = await pool.query(
+      `SELECT credit_limit, payment_plans, source_updated_at, updated_at
+       FROM customer_commercial_conditions WHERE customer_id=$1 LIMIT 1`,
+      [request.customer.id],
+    )
+    if (!result.rows.length) {
+      return response.status(503).json({ message: 'As condiÃ§Ãµes comerciais deste cadastro ainda estÃ£o sendo atualizadas pelo WinThor.' })
+    }
+    const row = result.rows[0]
+    return response.json({
+      creditLimit: Number(row.credit_limit),
+      paymentPlans: Array.isArray(row.payment_plans) ? row.payment_plans : [],
+      updatedAt: row.source_updated_at || row.updated_at,
+    })
+  } catch (error) {
+    return next(error)
   }
 })
 
@@ -1370,16 +1479,66 @@ app.get('/api/staff/banners', requireStaff, async (_request, response, next) => 
   try {
     const result = await pool.query(
       `SELECT id, title, alt_text, image_path, image_data IS NOT NULL AS uploaded,
-              target_url, position, active, placement, updated_at
+              target_url, position, active, placement, starts_at, ends_at, updated_at
        FROM banners ORDER BY position, id`,
     )
     return response.json({ banners: result.rows.map((banner) => ({
       id: Number(banner.id), title: banner.title, altText: banner.alt_text,
       imageUrl: banner.uploaded ? `/api/banners/${banner.id}/image?v=${new Date(banner.updated_at).getTime()}` : banner.image_path,
       targetUrl: banner.target_url, position: Number(banner.position), active: banner.active, placement: banner.placement,
+      startsAt: banner.starts_at, endsAt: banner.ends_at,
     })) })
   } catch (error) {
     return next(error)
+  }
+})
+
+app.put('/api/staff/banners', requireStaff, async (request, response, next) => {
+  const parsed = bannersBulkSchema.safeParse(request.body)
+  if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    if (parsed.data.deletedIds.length) {
+      await client.query('DELETE FROM banners WHERE id = ANY($1::bigint[])', [parsed.data.deletedIds])
+    }
+    for (const banner of parsed.data.banners) {
+      let image = null
+      try { image = decodeBannerImage(banner.imageDataUrl) } catch (error) {
+        await client.query('ROLLBACK')
+        return response.status(400).json({ message: error.message })
+      }
+      if (banner.id) {
+        const result = await client.query(
+          `UPDATE banners SET title=$1, alt_text=$2, target_url=$3, position=$4, active=$5, placement=$6,
+             starts_at=$7, ends_at=$8, image_data=COALESCE($9, image_data), image_mime=COALESCE($10, image_mime),
+             image_path=CASE WHEN $9::bytea IS NOT NULL THEN NULL ELSE image_path END,
+             updated_at=CURRENT_TIMESTAMP
+           WHERE id=$11 RETURNING id`,
+          [banner.title, banner.altText, banner.targetUrl || '#produtos', banner.position, banner.active,
+            banner.placement, banner.startsAt || null, banner.endsAt || null, image?.data ?? null, image?.mime ?? null, banner.id],
+        )
+        if (!result.rows.length) throw new Error('Um dos banners editados nÃ£o existe mais.')
+      } else {
+        if (!image) {
+          await client.query('ROLLBACK')
+          return response.status(400).json({ message: `Selecione uma imagem para o banner â€œ${banner.title}â€.` })
+        }
+        await client.query(
+          `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, position, active, placement, starts_at, ends_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [banner.title, banner.altText, image.data, image.mime, banner.targetUrl || '#produtos', banner.position,
+            banner.active, banner.placement, banner.startsAt || null, banner.endsAt || null],
+        )
+      }
+    }
+    await client.query('COMMIT')
+    return response.json({ saved: true })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    return next(error)
+  } finally {
+    client.release()
   }
 })
 
@@ -1484,9 +1643,33 @@ app.post('/api/orders', async (request, response, next) => {
       return response.status(400).json({ message: `O pedido mínimo é R$ 200,00. Adicione mais R$ ${(200 - total).toFixed(2).replace('.', ',')}.` })
     }
 
+    const conditionsResult = await client.query(
+      `SELECT credit_limit, payment_plans FROM customer_commercial_conditions
+       WHERE customer_id=$1 FOR UPDATE`,
+      [request.customer.id],
+    )
+    if (!conditionsResult.rows.length) {
+      await client.query('ROLLBACK')
+      return response.status(503).json({ message: 'As condiÃ§Ãµes comerciais deste cadastro ainda nÃ£o foram sincronizadas com o WinThor.' })
+    }
+    const conditions = conditionsResult.rows[0]
+    const paymentPlans = Array.isArray(conditions.payment_plans) ? conditions.payment_plans : []
+    const selectedPlan = paymentPlans.find((plan) => String(plan.code) === parsed.data.paymentPlan)
+    if (!selectedPlan) {
+      await client.query('ROLLBACK')
+      return response.status(400).json({ message: 'O plano de pagamento selecionado nÃ£o estÃ¡ liberado para este cliente.' })
+    }
+    const creditLimit = Number(conditions.credit_limit)
+    if (total > creditLimit) {
+      await client.query('ROLLBACK')
+      return response.status(400).json({
+        message: `O total do pedido excede o limite de crÃ©dito disponÃ­vel de R$ ${creditLimit.toFixed(2).replace('.', ',')}.`,
+      })
+    }
+
     const orderResult = await client.query(
-      'INSERT INTO orders (customer_id, payment_plan, total, notes) VALUES ($1,$2,$3,$4) RETURNING id, created_at',
-      [request.customer.id, parsed.data.paymentPlan, total.toFixed(2), parsed.data.notes],
+      'INSERT INTO orders (customer_id, payment_plan, payment_plan_label, total, notes) VALUES ($1,$2,$3,$4,$5) RETURNING id, created_at',
+      [request.customer.id, parsed.data.paymentPlan, String(selectedPlan.label).slice(0, 160), total.toFixed(2), parsed.data.notes],
     )
     const order = orderResult.rows[0]
     for (const line of lines) {
@@ -1503,6 +1686,7 @@ app.post('/api/orders', async (request, response, next) => {
         number: `OMG-${String(order.id).padStart(6, '0')}`,
         total,
         paymentPlan: parsed.data.paymentPlan,
+        paymentPlanLabel: selectedPlan.label,
         createdAt: order.created_at,
       },
     })

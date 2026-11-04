@@ -22,6 +22,8 @@ A DAG `ecommerce_produtos_precos` executa a cada 30 minutos e:
 5. inativa no e-commerce produtos que deixaram de estar ativos no WinThor;
 6. preserva as fotos já cadastradas no e-commerce;
 7. registra os totais em `product_sync_runs`.
+8. atualiza código do fabricante, NCM, EAN, múltiplo e embalagem master;
+9. atualiza os planos de pagamento liberados e o `LIMCRED` dos clientes aprovados.
 
 No Railway, crie `PRODUCT_SYNC_TOKEN` no serviço `e-commerce` com um valor longo e aleatório. Use exatamente o mesmo valor como senha da Connection `ecommerce_api` no Airflow. Não grave o token no arquivo da DAG.
 

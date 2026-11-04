@@ -25,6 +25,20 @@ function normalizeSearch(value: string) {
   return value.toLocaleLowerCase('pt-BR').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 }
 
+function toBrasiliaInput(value: string | null) {
+  if (!value) return ''
+  const parts = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(value))
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value || ''
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`
+}
+
+function fromBrasiliaInput(value: string) {
+  return value ? new Date(`${value}:00-03:00`).toISOString() : null
+}
+
 export default function StaffPortal() {
   const [user, setUser] = useState<StaffUser | null>(null)
   const [ready, setReady] = useState(false)
@@ -32,6 +46,7 @@ export default function StaffPortal() {
   const [orders, setOrders] = useState<Order[]>([])
   const [pendingCustomers, setPendingCustomers] = useState<Customer[]>([])
   const [banners, setBanners] = useState<Banner[]>([])
+  const [deletedBannerIds, setDeletedBannerIds] = useState<number[]>([])
   const [users, setUsers] = useState<StaffUser[]>([])
   const [categories, setCategories] = useState<CatalogCategory[]>([])
   const [catalogProducts, setCatalogProducts] = useState<StaffCatalogProduct[]>([])
@@ -130,28 +145,47 @@ export default function StaffPortal() {
     setNotice('')
   }
 
-  async function saveBanner(event: React.FormEvent<HTMLFormElement>, banner?: Banner) {
-    event.preventDefault()
-    setLoading(true); setError(''); setNotice('')
-    const formElement = event.currentTarget
-    const form = new FormData(formElement)
-    const file = form.get('image') as File
-    let imageDataUrl = ''
-    if (file?.size) imageDataUrl = await new Promise<string>((resolve, reject) => {
+  function updateBanner(id: number, values: Partial<Banner>) {
+    setBanners((current) => current.map((banner) => banner.id === id ? { ...banner, ...values } : banner))
+  }
+
+  function addBanner() {
+    setBanners((current) => [...current, {
+      id: -Date.now(), title: '', altText: '', imageUrl: '', targetUrl: '#produtos',
+      position: current.length + 1, active: true, placement: 'hero', startsAt: null, endsAt: null,
+    }])
+  }
+
+  function deleteBanner(banner: Banner) {
+    if (!window.confirm(`Excluir o banner “${banner.title || 'novo banner'}”? A exclusão será efetivada ao salvar.`)) return
+    setBanners((current) => current.filter((item) => item.id !== banner.id))
+    if (banner.id > 0) setDeletedBannerIds((current) => [...new Set([...current, banner.id])])
+  }
+
+  async function selectBannerImage(banner: Banner, file?: File) {
+    if (!file?.size) return
+    if (file.size > 5 * 1024 * 1024) { setError('A imagem deve ter no máximo 5 MB.'); return }
+    const imageDataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file)
     })
+    updateBanner(banner.id, { imageDataUrl, imageUrl: imageDataUrl })
+  }
+
+  async function saveBanners() {
+    setLoading(true); setError(''); setNotice('')
     try {
-      await api(banner ? `/api/staff/banners/${banner.id}` : '/api/staff/banners', {
-        method: banner ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: form.get('title'), altText: form.get('altText'), targetUrl: form.get('targetUrl'),
-          position: Number(form.get('position')), active: form.get('active') === 'on', placement: form.get('placement'), imageDataUrl,
-        }),
+      await api('/api/staff/banners', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ banners: banners.map((banner) => ({
+          ...(banner.id > 0 ? { id: banner.id } : {}), title: banner.title, altText: banner.altText,
+          targetUrl: banner.targetUrl, position: banner.position, active: banner.active,
+          placement: banner.placement, imageDataUrl: banner.imageDataUrl || '',
+          startsAt: banner.startsAt, endsAt: banner.endsAt,
+        })), deletedIds: deletedBannerIds }),
       })
       const data = await api<{ banners: Banner[] }>('/api/staff/banners')
-      setBanners(data.banners); setNotice('Banner salvo com sucesso.')
-      if (!banner) formElement.reset()
-    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível salvar o banner.') }
+      setBanners(data.banners); setDeletedBannerIds([]); setNotice('Todas as alterações dos banners foram salvas.')
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível salvar os banners.') }
     finally { setLoading(false) }
   }
 
@@ -311,7 +345,7 @@ export default function StaffPortal() {
       {tab === 'orders' && <section className="staff-orders">{orders.length ? orders.map((order) => <StaffOrderCard key={order.id} order={order} loading={loading} onLink={linkWinthorOrder} />) : <div className="staff-empty">Nenhum pedido recebido até agora.</div>}</section>}
       {tab === 'customers' && <section className="pending-customers">{pendingCustomers.length ? pendingCustomers.map((customer) => <article key={customer.id} className="pending-customer-card"><header><div className="pending-customer-avatar">{(customer.tradeName || customer.legalName).slice(0, 1).toUpperCase()}</div><div><span className="eyebrow">AGUARDANDO VALIDAÇÃO</span><h2>{customer.tradeName || customer.legalName}</h2><p>{customer.legalName}</p></div><span className="pending-date">Cadastrado em<br /><strong>{customer.createdAt ? new Date(customer.createdAt).toLocaleString('pt-BR') : '—'}</strong></span></header><div className="pending-customer-data"><p><b>CPF/CNPJ</b>{formatDocument(customer.document)}</p><p><b>Contato</b>{customer.email}<br />{formatPhone(customer.phone)}</p><p><b>Endereço</b>{customer.addressLine}, {customer.addressNumber}{customer.addressComplement ? ` · ${customer.addressComplement}` : ''}<br />{customer.neighborhood} · {customer.city}/{customer.state}<br />CEP {formatPostalCode(customer.postalCode)}</p></div><footer><span>A aprovação consultará este documento diretamente no WinThor e salvará o CODCLI encontrado.</span><button className="primary-button" disabled={loading} onClick={() => approveCustomer(customer)}>{loading ? <LoaderCircle className="spin" /> : <><UserCheck /> Validar e aprovar</>}</button></footer></article>) : <div className="staff-empty"><UserCheck /><h2>Nenhum cadastro pendente</h2><p>Novos clientes aguardando validação aparecerão aqui.</p></div>}</section>}
       {tab === 'categories' && <section className="category-manager"><aside className="category-manager-list"><form onSubmit={createCategory}><input name="name" placeholder="Nova categoria" required minLength={2} maxLength={80} /><button disabled={loading} aria-label="Criar categoria"><Plus /></button></form><div>{categories.map((category) => <button key={category.id} className={selectedCategoryId === category.id ? 'active' : ''} onClick={() => selectCategory(category)}><span><Tag /><b>{category.name}</b><small>{category.productIds?.length || 0} produtos</small></span><i role="button" tabIndex={0} aria-label={`Excluir ${category.name}`} onClick={(event) => { event.stopPropagation(); deleteCategory(category) }} onKeyDown={(event) => { if (event.key === 'Enter') deleteCategory(category) }}><Trash2 /></i></button>)}</div></aside><div className="category-product-picker">{selectedCategory ? <><div className="category-picker-heading"><div><span className="eyebrow">EDITANDO CATEGORIA</span><h2>{selectedCategory.name}</h2><p>Pesquise e marque todos os produtos que devem aparecer nesta categoria.</p></div><strong>{selectedProductIds.size} selecionados</strong></div><div className="category-product-filters"><label><Search /><input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Nome, EAN, marca ou códigos separados por vírgula" /></label><select value={supplierFilter} onChange={(event) => setSupplierFilter(event.target.value)}><option value="">Todos os fornecedores</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name} ({supplier.productCount})</option>)}</select><button onClick={toggleVisibleProducts}><CheckSquare /> {filteredCatalogProducts.length && filteredCatalogProducts.every((product) => selectedProductIds.has(product.id)) ? 'Desmarcar resultados' : 'Marcar resultados'}</button></div><div className="category-results-summary"><span>{filteredCatalogProducts.length} produtos encontrados</span><span>A seleção é mantida ao trocar a busca ou fornecedor.</span></div><div className="category-product-list">{filteredCatalogProducts.map((product) => <label key={product.id} className={selectedProductIds.has(product.id) ? 'selected' : ''}><input type="checkbox" checked={selectedProductIds.has(product.id)} onChange={() => toggleProduct(product.id)} />{product.image ? <img src={product.image} alt="" /> : <span className="category-no-image"><ImageOff /></span>}<span><b>{product.name}</b><small>Cód. {product.code} · {product.brand}</small><small>{product.package} · {product.unitsPerBox} un./caixa</small></span></label>)}</div><div className="category-save-bar"><span>{selectedProductIds.size} produtos nesta categoria</span><button className="primary-button" onClick={saveCategoryProducts} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar categoria</>}</button></div></> : <div className="staff-empty">Crie uma categoria para começar a selecionar produtos.</div>}</div></section>}
-      {tab === 'banners' && <section><div className="staff-section-heading"><h2>Banners cadastrados</h2><span>PNG, JPG ou WEBP · máximo 5 MB</span></div><div className="banner-admin-grid">{banners.map((banner) => <BannerForm key={banner.id} banner={banner} onSave={saveBanner} loading={loading} />)}<BannerForm onSave={saveBanner} loading={loading} /></div></section>}
+      {tab === 'banners' && <section><div className="staff-section-heading banner-manager-heading"><div><h2>Banners cadastrados</h2><span>Edite tudo o que precisar e salve as alterações de uma só vez. Horários em Brasília.</span></div><button className="secondary-button" onClick={addBanner}><Plus /> Adicionar banner</button></div><div className="banner-admin-grid">{banners.map((banner) => <BannerEditor key={banner.id} banner={banner} onChange={updateBanner} onImage={selectBannerImage} onDelete={deleteBanner} />)}</div><div className="banner-save-all"><span>{banners.length} {banners.length === 1 ? 'banner configurado' : 'banners configurados'}{deletedBannerIds.length > 0 && ` · ${deletedBannerIds.length} aguardando exclusão`}</span><button className="primary-button" onClick={saveBanners} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar todas as alterações</>}</button></div></section>}
       {tab === 'users' && user.role === 'ADMIN' && <section className="users-admin"><form className="staff-form create-user-form" onSubmit={createUser}><h2><Plus /> Novo usuário</h2><label>Nome<input name="name" required minLength={3} /></label><label>E-mail<input name="email" type="email" required /></label><label>Senha inicial<input name="password" type="password" minLength={8} required /></label><label>Perfil<select name="role" defaultValue="COMERCIAL"><option value="COMERCIAL">Comercial</option><option value="ADMIN">Administrador</option></select></label><button className="primary-button" disabled={loading}>Criar usuário</button></form><div className="staff-user-list">{users.map((item) => <article key={item.id}><span>{item.name.slice(0, 1).toUpperCase()}</span><div><strong>{item.name}</strong><small>{item.email}</small></div><b>{item.role}</b></article>)}</div></section>}
       {tab === 'settings' && <section className="staff-settings"><form className="staff-form" onSubmit={changeStaffPassword}><h2><KeyRound /> Alterar senha</h2><p>Atualize a senha utilizada para acessar a gestão do e-Commerce.</p>{user.authProvider !== 'supabase' && <label>Senha atual<input name="currentPassword" type="password" autoComplete="current-password" required /></label>}<label>Nova senha<input name="newPassword" type="password" autoComplete="new-password" minLength={8} required /></label><label>Confirmar nova senha<input name="confirmPassword" type="password" autoComplete="new-password" minLength={8} required /></label><small>Use ao menos 8 caracteres, com maiúscula, minúscula e número.</small><button className="primary-button" disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar nova senha</>}</button></form></section>}
     </main>
@@ -322,6 +356,16 @@ function StaffOrderCard({ order, loading, onLink }: { order: Order; loading: boo
   return <details className="staff-order"><summary><div><strong>{order.number}</strong><span>{order.customer.tradeName || order.customer.legalName}</span></div><div><span>{new Date(order.createdAt).toLocaleString('pt-BR')}</span><strong>{money.format(order.total)}</strong><b className={`order-status ${order.status}`}>{orderStatusLabel(order.status)}</b></div></summary><div className="order-detail-grid"><p><b>Cliente</b>{formatDocument(order.customer.document)}<br />{order.customer.email}<br />{formatPhone(order.customer.phone)}</p><p><b>Pagamento</b>{paymentLabel(order.paymentPlan)}<br /><b>Status para o cliente</b>{orderStatusLabel(order.status)}{order.winthorStatusLabel && <><b>Status real no WinThor</b>{order.winthorStatusLabel}{order.winthorStatusCode && ` (${order.winthorStatusCode})`}</>}{order.statusUpdatedAt && <small>Consultado em {new Date(order.statusUpdatedAt).toLocaleString('pt-BR')}</small>}</p><div className="winthor-order-box"><b>Liberação do pedido</b><form onSubmit={(event) => onLink(event, order)}><input name="winthorOrderNumber" inputMode="numeric" pattern="[0-9]+" defaultValue={order.winthorOrderNumber ?? ''} placeholder="Informe o NUMPED" required /><button disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><ClipboardCheck /> {order.winthorOrderNumber ? 'Atualizar NUMPED' : 'Liberar pedido'}</>}</button></form>{order.winthorOrderNumber && <small>NUMPED {order.winthorOrderNumber}{order.enteredBy ? ` · por ${order.enteredBy}` : ''}{order.enteredAt ? ` em ${new Date(order.enteredAt).toLocaleString('pt-BR')}` : ''}</small>}</div>{order.notes && <p><b>Observações</b>{order.notes}</p>}</div><div className="order-lines">{order.items.map((item) => <div key={item.id}><span>{item.code} · {item.name}</span><span>{item.units} {item.units === 1 ? 'unidade' : 'unidades'}</span><strong>{money.format(item.lineTotal)}</strong></div>)}</div></details>
 }
 
-function BannerForm({ banner, onSave, loading }: { banner?: Banner; onSave: (event: React.FormEvent<HTMLFormElement>, banner?: Banner) => void; loading: boolean }) {
-  return <form className={`staff-form banner-form ${banner?.placement === 'catalog' ? 'catalog-format' : ''}`} onSubmit={(event) => onSave(event, banner)}>{banner ? <img src={banner.imageUrl} alt={banner.altText} /> : <div className="new-banner-placeholder"><ImagePlus /><span>Novo banner</span></div>}<h3>{banner ? banner.title : 'Adicionar banner'}</h3><label>Tipo<select name="placement" defaultValue={banner?.placement ?? 'hero'}><option value="hero">Banner principal</option><option value="catalog">Banner entre produtos</option></select></label><label>Título<input name="title" defaultValue={banner?.title} required /></label><label>Texto alternativo<input name="altText" defaultValue={banner?.altText} required /></label><div className="staff-form-row"><label>Posição<input name="position" type="number" min="0" defaultValue={banner?.position ?? 10} required /></label><label>Destino<input name="targetUrl" defaultValue={banner?.targetUrl ?? '#produtos'} required /></label></div><label>Imagem{banner && <small>Deixe vazio para manter a atual</small>}<input name="image" type="file" accept="image/png,image/jpeg,image/webp" required={!banner} /></label><label className="staff-check"><input name="active" type="checkbox" defaultChecked={banner?.active ?? true} /> Exibir na loja</label><button className="secondary-button" disabled={loading}><Save /> Salvar banner</button></form>
+function BannerEditor({ banner, onChange, onImage, onDelete }: { banner: Banner; onChange: (id: number, values: Partial<Banner>) => void; onImage: (banner: Banner, file?: File) => void; onDelete: (banner: Banner) => void }) {
+  return <article className={`staff-form banner-form ${banner.placement === 'catalog' ? 'catalog-format' : ''}`}>
+    {banner.imageUrl ? <img src={banner.imageUrl} alt={banner.altText} /> : <div className="new-banner-placeholder"><ImagePlus /><span>Selecione a imagem</span></div>}
+    <div className="banner-editor-title"><h3>{banner.title || 'Novo banner'}</h3><button type="button" onClick={() => onDelete(banner)} aria-label="Excluir banner"><Trash2 /> Excluir</button></div>
+    <label>Tipo<select value={banner.placement} onChange={(event) => onChange(banner.id, { placement: event.target.value as Banner['placement'] })}><option value="hero">Banner principal</option><option value="catalog">Banner entre produtos</option></select></label>
+    <label>Título<input value={banner.title} onChange={(event) => onChange(banner.id, { title: event.target.value })} required /></label>
+    <label>Texto alternativo<input value={banner.altText} onChange={(event) => onChange(banner.id, { altText: event.target.value })} required /></label>
+    <div className="staff-form-row"><label>Posição<input type="number" min="0" value={banner.position} onChange={(event) => onChange(banner.id, { position: Number(event.target.value) })} /></label><label>Destino<input value={banner.targetUrl} onChange={(event) => onChange(banner.id, { targetUrl: event.target.value })} /></label></div>
+    <div className="staff-form-row banner-schedule"><label>Início opcional <small>Data e hora de Brasília</small><input type="datetime-local" value={toBrasiliaInput(banner.startsAt)} onChange={(event) => onChange(banner.id, { startsAt: fromBrasiliaInput(event.target.value) })} /></label><label>Encerramento opcional <small>Sem data, não expira</small><input type="datetime-local" value={toBrasiliaInput(banner.endsAt)} onChange={(event) => onChange(banner.id, { endsAt: fromBrasiliaInput(event.target.value) })} /></label></div>
+    <label>Imagem <small>{banner.id > 0 ? 'Selecione apenas se quiser substituir a atual' : 'PNG, JPG ou WEBP · máximo 5 MB'}</small><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => onImage(banner, event.target.files?.[0])} /></label>
+    <label className="staff-check"><input type="checkbox" checked={banner.active} onChange={(event) => onChange(banner.id, { active: event.target.checked })} /> Exibir na loja</label>
+  </article>
 }

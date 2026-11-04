@@ -21,6 +21,9 @@ export type Product = {
   stockUnits: number
   weeklySales: number
   priceDate: string
+  manufacturerCode: string
+  ncm: string
+  ean: string
 }
 
 export type CartItem = Product & { quantity: number }
@@ -67,6 +70,15 @@ export type Banner = {
   position: number
   active: boolean
   placement: 'hero' | 'catalog'
+  startsAt: string | null
+  endsAt: string | null
+  imageDataUrl?: string
+}
+
+export type CommercialConditions = {
+  creditLimit: number
+  paymentPlans: Array<{ code: string; label: string }>
+  updatedAt: string | null
 }
 
 export type CatalogCategory = {
@@ -118,6 +130,7 @@ export type Order = {
   enteredAt: string | null
   enteredBy: string
   paymentPlan: string
+  paymentPlanLabel?: string
   total: number
   notes: string
   createdAt: string
