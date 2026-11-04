@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import pg from 'pg'
 import { newDb } from 'pg-mem'
 import { hashPassword } from './auth.js'
@@ -6,6 +6,7 @@ import { hashPassword } from './auth.js'
 const { Pool: PostgresPool } = pg
 const seedUrl = new URL('./seed-data.json', import.meta.url)
 const schemaUrl = new URL('./schema.sql', import.meta.url)
+const bundledProductImagesUrl = new URL('../public/assets/products/', import.meta.url)
 
 function createPool() {
   if (process.env.DATABASE_URL) {
@@ -41,6 +42,10 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS sales_multiple INTEGER NOT NULL DEFAULT 1')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS manufacturer_code TEXT')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS ncm_code TEXT')
+  await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_data BYTEA')
+  await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_mime VARCHAR(50)')
+  await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_hidden BOOLEAN NOT NULL DEFAULT FALSE')
+  await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_updated_at TIMESTAMPTZ')
   await pool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS sales_channel VARCHAR(20) NOT NULL DEFAULT 'Varejo'")
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS password_hash TEXT')
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS supabase_user_id UUID')
@@ -89,8 +94,56 @@ export async function initializeDatabase() {
 
   const countResult = await pool.query('SELECT COUNT(*)::int AS count FROM products')
   if (Number(countResult.rows[0].count) === 0) await seedDatabase()
+  await ensureBundledProductImages()
   await ensureCatalogCategories()
   if (!process.env.DATABASE_URL) await ensureLocalCustomer()
+}
+
+async function ensureBundledProductImages() {
+  let fileNames = []
+  try {
+    fileNames = await readdir(bundledProductImagesUrl)
+  } catch {
+    console.warn('[images] diretório de imagens iniciais não encontrado.')
+    return
+  }
+  const imageByCode = new Map()
+  for (const fileName of fileNames) {
+    const match = /^(\d+)\.webp$/i.exec(fileName)
+    if (match) imageByCode.set(Number(match[1]), `/assets/products/${fileName}?v=webp-v1`)
+  }
+
+  const migrationKey = 'product_images_webp_v1_imported'
+  const migration = await pool.query('SELECT value FROM app_settings WHERE key=$1 LIMIT 1', [migrationKey])
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    if (!migration.rows.length) {
+      // Substitui integralmente o acervo antigo, sem afetar futuros uploads feitos pela gestão.
+      await client.query(`UPDATE products SET image_path=NULL, image_data=NULL, image_mime=NULL,
+        image_hidden=FALSE, image_updated_at=NULL`)
+    }
+    for (const [code, imagePath] of imageByCode) {
+      await client.query(
+        `UPDATE products SET image_path=$1
+         WHERE external_id=$2 AND image_data IS NULL AND image_hidden=FALSE
+           AND COALESCE(image_path,'') <> $1`,
+        [imagePath, code],
+      )
+    }
+    await client.query(
+      `INSERT INTO app_settings (key,value) VALUES ($1,$2)
+       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_at=CURRENT_TIMESTAMP`,
+      [migrationKey, String(imageByCode.size)],
+    )
+    await client.query('COMMIT')
+    console.info(`[images] ${imageByCode.size} imagens WEBP iniciais disponíveis.`)
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 }
 
 async function ensureCatalogCategories() {

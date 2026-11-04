@@ -363,6 +363,23 @@ function decodeBannerImage(dataUrl) {
   return { mime: match[1], data }
 }
 
+function decodeProductImage(dataUrl) {
+  const match = /^data:(image\/webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''))
+  if (!match) throw new Error('Imagem inválida. A foto do produto deve estar no formato WEBP.')
+  const data = Buffer.from(match[2], 'base64')
+  if (!data.length || data.length > 5 * 1024 * 1024) throw new Error('A foto deve ter no máximo 5 MB.')
+  return { mime: match[1], data }
+}
+
+function productImageUrl(row) {
+  if (row.image_hidden) return null
+  if (row.image_uploaded) {
+    const version = row.image_updated_at ? new Date(row.image_updated_at).getTime() : Date.now()
+    return `/api/products/${row.id}/image?v=${version}`
+  }
+  return row.image_path || null
+}
+
 function validIntegrationToken(request) {
   const expected = String(process.env.PRODUCT_SYNC_TOKEN || '')
   const received = String(request.headers.authorization || '').replace(/^Bearer\s+/i, '')
@@ -750,6 +767,21 @@ app.get('/api/health', async (_request, response, next) => {
   }
 })
 
+app.get('/api/products/:id/image', async (request, response, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT image_data, image_mime FROM products
+       WHERE id=$1 AND active=TRUE AND image_hidden=FALSE LIMIT 1`,
+      [request.params.id],
+    )
+    if (!result.rows[0]?.image_data) return response.status(404).end()
+    response.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+    return response.type(result.rows[0].image_mime || 'image/webp').send(result.rows[0].image_data)
+  } catch (error) {
+    return next(error)
+  }
+})
+
 app.get('/api/categories', async (_request, response, next) => {
   try {
     const result = await pool.query(
@@ -986,9 +1018,10 @@ app.get('/api/products', async (request, response, next) => {
     }
     params.push(limit)
 
+    const hasImage = `(p.image_hidden=FALSE AND (p.image_data IS NOT NULL OR p.image_path IS NOT NULL))`
     const orderBy = sort === 'bestsellers'
-      ? 'weekly_sales DESC, (p.image_path IS NOT NULL) DESC, p.name'
-      : '(p.image_path IS NOT NULL) DESC, weekly_sales DESC, p.name'
+      ? `weekly_sales DESC, ${hasImage} DESC, p.name`
+      : `${hasImage} DESC, weekly_sales DESC, p.name`
 
     const result = await pool.query(
       `WITH weekly AS (
@@ -1000,7 +1033,8 @@ app.get('/api/products', async (request, response, next) => {
        SELECT p.id, p.external_id, p.supplier_id, p.brand, p.name, p.package, p.master_package,
               p.units_per_box, p.sales_multiple, p.min_boxes, p.unit_price, p.list_unit_price,
               p.retail_unit_price, p.network_unit_price,
-              p.category, p.department, p.section, p.stock_units, p.image_path, p.ean,
+              p.category, p.department, p.section, p.stock_units, p.image_path,
+              p.image_data IS NOT NULL AS image_uploaded, p.image_hidden, p.image_updated_at, p.ean,
               p.manufacturer_code, p.ncm_code,
               p.price_date, COALESCE(w.units, 0) AS weekly_sales
        FROM products p
@@ -1053,7 +1087,7 @@ app.get('/api/products', async (request, response, next) => {
         department: row.department,
         section: row.section,
         stockUnits: Number(row.stock_units),
-        image: row.image_path,
+        image: productImageUrl(row),
         ean: row.ean || '',
         manufacturerCode: row.manufacturer_code || '',
         ncm: row.ncm_code || '',
@@ -1076,6 +1110,7 @@ app.get('/api/products/:code', async (request, response, next) => {
       `SELECT id, external_id, supplier_id, brand, name, package, master_package, units_per_box,
               sales_multiple, min_boxes, unit_price, list_unit_price, retail_unit_price,
               network_unit_price, category, department, section, stock_units, image_path,
+              image_data IS NOT NULL AS image_uploaded, image_hidden, image_updated_at,
               ean, manufacturer_code, ncm_code, price_date
        FROM products WHERE external_id=$1 AND active=TRUE LIMIT 1`,
       [code],
@@ -1090,7 +1125,7 @@ app.get('/api/products/:code', async (request, response, next) => {
       unitPrice: request.customer ? Number(channelPrice ?? row.unit_price) : null,
       listUnitPrice: request.customer ? Number(row.list_unit_price ?? channelPrice ?? row.unit_price) : null,
       category: row.category || 'Sem categoria', categories: [], department: row.department || '', section: row.section || '',
-      stockUnits: Number(row.stock_units), image: row.image_path, priceDate: row.price_date, weeklySales: 0,
+      stockUnits: Number(row.stock_units), image: productImageUrl(row), priceDate: row.price_date, weeklySales: 0,
       ean: row.ean || '', manufacturerCode: row.manufacturer_code || '', ncm: row.ncm_code || '',
     } })
   } catch (error) {
@@ -1450,9 +1485,10 @@ app.get('/api/staff/catalog-products', requireStaff, async (request, response, n
       }
     }
     const result = await pool.query(
-      `SELECT p.id,p.external_id,p.supplier_id,p.brand,p.name,p.package,p.units_per_box,p.image_path
+      `SELECT p.id,p.external_id,p.supplier_id,p.brand,p.name,p.package,p.units_per_box,p.image_path,
+              p.image_data IS NOT NULL AS image_uploaded,p.image_hidden,p.image_updated_at
        FROM products p WHERE ${conditions.join(' AND ')}
-       ORDER BY (p.image_path IS NOT NULL) DESC,p.brand,p.name LIMIT 20000`,
+       ORDER BY (p.image_hidden=FALSE AND (p.image_data IS NOT NULL OR p.image_path IS NOT NULL)) DESC,p.brand,p.name LIMIT 20000`,
       params,
     )
     const suppliersResult = await pool.query(
@@ -1464,12 +1500,48 @@ app.get('/api/staff/catalog-products', requireStaff, async (request, response, n
       products: result.rows.map((product) => ({
         id: Number(product.id), code: Number(product.external_id), supplierId: Number(product.supplier_id),
         brand: product.brand, name: product.name, package: product.package,
-        unitsPerBox: Number(product.units_per_box), image: product.image_path,
+        unitsPerBox: Number(product.units_per_box), image: productImageUrl(product),
       })),
       suppliers: suppliersResult.rows.map((supplier) => ({
         id: Number(supplier.supplier_id), name: supplier.name, productCount: Number(supplier.product_count),
       })),
     })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.put('/api/staff/products/:id/image', requireStaff, async (request, response, next) => {
+  try {
+    let image
+    try { image = decodeProductImage(request.body?.imageDataUrl) } catch (error) {
+      return response.status(400).json({ message: error.message })
+    }
+    const result = await pool.query(
+      `UPDATE products SET image_data=$1,image_mime=$2,image_path=NULL,image_hidden=FALSE,
+         image_updated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+       WHERE id=$3 AND active=TRUE
+       RETURNING id,image_updated_at`,
+      [image.data, image.mime, request.params.id],
+    )
+    if (!result.rows.length) return response.status(404).json({ message: 'Produto não encontrado ou inativo.' })
+    const version = new Date(result.rows[0].image_updated_at).getTime()
+    return response.json({ image: `/api/products/${result.rows[0].id}/image?v=${version}` })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.delete('/api/staff/products/:id/image', requireStaff, async (request, response, next) => {
+  try {
+    const result = await pool.query(
+      `UPDATE products SET image_data=NULL,image_mime=NULL,image_path=NULL,image_hidden=TRUE,
+         image_updated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+       WHERE id=$1 AND active=TRUE RETURNING id`,
+      [request.params.id],
+    )
+    if (!result.rows.length) return response.status(404).json({ message: 'Produto não encontrado ou inativo.' })
+    return response.json({ deleted: true })
   } catch (error) {
     return next(error)
   }

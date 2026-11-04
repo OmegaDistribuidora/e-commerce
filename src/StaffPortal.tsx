@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, CheckSquare, ClipboardCheck, ImageOff, ImagePlus, KeyRound, LayoutDashboard, LoaderCircle, LogOut, PackageCheck, Plus, Save, Search, ShieldCheck, Tag, Trash2, UserCheck, Users } from 'lucide-react'
+import { ArrowLeft, Camera, CheckSquare, ClipboardCheck, ImageOff, ImagePlus, KeyRound, LayoutDashboard, LoaderCircle, LogOut, PackageCheck, Plus, Save, Search, ShieldCheck, Tag, Trash2, UserCheck, Users } from 'lucide-react'
 import { authenticatedFetch } from './api'
 import { money } from './data'
 import { orderStatusLabel } from './orderStatus'
@@ -7,7 +7,7 @@ import { supabase } from './supabase'
 import type { Banner, CatalogCategory, CatalogSupplier, Customer, Order, StaffCatalogProduct, StaffUser } from './types'
 import { formatDocument, formatPhone, formatPostalCode } from './validation'
 
-type Tab = 'orders' | 'customers' | 'banners' | 'categories' | 'users' | 'settings'
+type Tab = 'orders' | 'customers' | 'banners' | 'photos' | 'categories' | 'users' | 'settings'
 
 async function api<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await authenticatedFetch(url, options)
@@ -39,6 +39,35 @@ function fromBrasiliaInput(value: string) {
   return value ? new Date(`${value}:00-03:00`).toISOString() : null
 }
 
+async function productImageAsWebp(file: File) {
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error('Selecione uma imagem PNG, JPG ou WEBP.')
+  const objectUrl = URL.createObjectURL(file)
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image()
+      element.onload = () => resolve(element)
+      element.onerror = () => reject(new Error('Não foi possível abrir esta imagem.'))
+      element.src = objectUrl
+    })
+    const maxDimension = 1600
+    const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Seu navegador não conseguiu processar a imagem.')
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+    const dataUrl = canvas.toDataURL('image/webp', .84)
+    if (!dataUrl.startsWith('data:image/webp')) throw new Error('Este navegador não oferece conversão para WEBP.')
+    if ((dataUrl.length * 3) / 4 > 5 * 1024 * 1024) throw new Error('A imagem continua maior que 5 MB após a otimização.')
+    return dataUrl
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
 export default function StaffPortal() {
   const [user, setUser] = useState<StaffUser | null>(null)
   const [ready, setReady] = useState(false)
@@ -55,6 +84,8 @@ export default function StaffPortal() {
   const [selectedProductIds, setSelectedProductIds] = useState<Set<number>>(new Set())
   const [productSearch, setProductSearch] = useState('')
   const [supplierFilter, setSupplierFilter] = useState('')
+  const [photoSearch, setPhotoSearch] = useState('')
+  const [photoSupplierFilter, setPhotoSupplierFilter] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(false)
@@ -105,6 +136,14 @@ export default function StaffPortal() {
   }, [catalogProducts, productSearch, supplierFilter])
 
   const selectedCategory = categories.find((category) => category.id === selectedCategoryId)
+  const filteredPhotoProducts = useMemo(() => {
+    const search = normalizeSearch(photoSearch.trim())
+    return catalogProducts.filter((product) => {
+      const matchesSupplier = !photoSupplierFilter || String(product.supplierId) === photoSupplierFilter
+      const text = normalizeSearch(`${product.code} ${product.name} ${product.brand}`)
+      return matchesSupplier && (!search || text.includes(search))
+    })
+  }, [catalogProducts, photoSearch, photoSupplierFilter])
 
   async function login(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -283,6 +322,33 @@ export default function StaffPortal() {
     finally { setLoading(false) }
   }
 
+  async function uploadProductPhoto(product: StaffCatalogProduct, file?: File) {
+    if (!file) return
+    setLoading(true); setError(''); setNotice('')
+    try {
+      const imageDataUrl = await productImageAsWebp(file)
+      const data = await api<{ image: string }>(`/api/staff/products/${product.id}/image`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageDataUrl }),
+      })
+      setCatalogProducts((current) => current.map((item) => item.id === product.id ? { ...item, image: data.image } : item))
+      setNotice(`Foto do produto ${product.code} atualizada em WEBP.`)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar a foto.')
+    } finally { setLoading(false) }
+  }
+
+  async function deleteProductPhoto(product: StaffCatalogProduct) {
+    if (!product.image || !window.confirm(`Excluir a foto do produto ${product.code} · ${product.name}?`)) return
+    setLoading(true); setError(''); setNotice('')
+    try {
+      await api(`/api/staff/products/${product.id}/image`, { method: 'DELETE' })
+      setCatalogProducts((current) => current.map((item) => item.id === product.id ? { ...item, image: null } : item))
+      setNotice(`Foto do produto ${product.code} excluída.`)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível excluir a foto.')
+    } finally { setLoading(false) }
+  }
+
   async function linkWinthorOrder(event: React.FormEvent<HTMLFormElement>, order: Order) {
     event.preventDefault(); setLoading(true); setError(''); setNotice('')
     const form = new FormData(event.currentTarget)
@@ -340,11 +406,12 @@ export default function StaffPortal() {
   if (!user) return <main className="staff-login"><a href="/" className="account-back"><ArrowLeft size={18} /> Voltar para a loja</a><form onSubmit={login}><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /><span className="staff-login-icon"><ShieldCheck /></span><h1>Gestão do e-Commerce</h1><p>Acesso exclusivo para Administradores e equipe Comercial.</p><label>E-mail<input name="email" type="email" autoComplete="username" required /></label><label>Senha<input name="password" type="password" autoComplete="current-password" required /></label>{error && <span className="field-error">{error}</span>}<button className="checkout-button" disabled={loading}>{loading ? <LoaderCircle className="spin" /> : 'Entrar'}</button></form></main>
 
   return <div className="staff-shell">
-    <aside className="staff-sidebar"><a href="/"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /></a><div className="staff-identity"><strong>{user.name}</strong><span>{user.role === 'ADMIN' ? 'Administrador' : 'Comercial'}</span></div><nav><button className={tab === 'orders' ? 'active' : ''} onClick={() => changeTab('orders')}><PackageCheck /> Pedidos</button><button className={tab === 'customers' ? 'active' : ''} onClick={() => changeTab('customers')}><UserCheck /> Clientes pendentes{pendingCustomers.length > 0 && <b className="nav-count">{pendingCustomers.length}</b>}</button><button className={tab === 'categories' ? 'active' : ''} onClick={() => changeTab('categories')}><Tag /> Categorias</button><button className={tab === 'banners' ? 'active' : ''} onClick={() => changeTab('banners')}><ImagePlus /> Banners</button>{user.role === 'ADMIN' && <button className={tab === 'users' ? 'active' : ''} onClick={() => changeTab('users')}><Users /> Usuários</button>}<button className={tab === 'settings' ? 'active' : ''} onClick={() => changeTab('settings')}><KeyRound /> Configurações</button></nav><button className="staff-logout" onClick={logout}><LogOut /> Sair</button></aside>
-    <main className="staff-main"><header><div><span className="eyebrow">PAINEL INTERNO</span><h1>{({ orders: 'Pedidos do e-Commerce', customers: 'Clientes pendentes', categories: 'Categorias de produtos', banners: 'Banners da loja', users: 'Usuários internos', settings: 'Configurações da conta' } as Record<Tab, string>)[tab]}</h1></div><span className="staff-role"><LayoutDashboard /> {user.role}</span></header>{error && <div className="staff-alert error">{error}</div>}{notice && <div className="staff-alert success">{notice}</div>}
+    <aside className="staff-sidebar"><a href="/"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /></a><div className="staff-identity"><strong>{user.name}</strong><span>{user.role === 'ADMIN' ? 'Administrador' : 'Comercial'}</span></div><nav><button className={tab === 'orders' ? 'active' : ''} onClick={() => changeTab('orders')}><PackageCheck /> Pedidos</button><button className={tab === 'customers' ? 'active' : ''} onClick={() => changeTab('customers')}><UserCheck /> Clientes pendentes{pendingCustomers.length > 0 && <b className="nav-count">{pendingCustomers.length}</b>}</button><button className={tab === 'categories' ? 'active' : ''} onClick={() => changeTab('categories')}><Tag /> Categorias</button><button className={tab === 'photos' ? 'active' : ''} onClick={() => changeTab('photos')}><Camera /> Fotos dos produtos</button><button className={tab === 'banners' ? 'active' : ''} onClick={() => changeTab('banners')}><ImagePlus /> Banners</button>{user.role === 'ADMIN' && <button className={tab === 'users' ? 'active' : ''} onClick={() => changeTab('users')}><Users /> Usuários</button>}<button className={tab === 'settings' ? 'active' : ''} onClick={() => changeTab('settings')}><KeyRound /> Configurações</button></nav><button className="staff-logout" onClick={logout}><LogOut /> Sair</button></aside>
+    <main className="staff-main"><header><div><span className="eyebrow">PAINEL INTERNO</span><h1>{({ orders: 'Pedidos do e-Commerce', customers: 'Clientes pendentes', categories: 'Categorias de produtos', photos: 'Fotos dos produtos', banners: 'Banners da loja', users: 'Usuários internos', settings: 'Configurações da conta' } as Record<Tab, string>)[tab]}</h1></div><span className="staff-role"><LayoutDashboard /> {user.role}</span></header>{error && <div className="staff-alert error">{error}</div>}{notice && <div className="staff-alert success">{notice}</div>}
       {tab === 'orders' && <section className="staff-orders">{orders.length ? orders.map((order) => <StaffOrderCard key={order.id} order={order} loading={loading} onLink={linkWinthorOrder} />) : <div className="staff-empty">Nenhum pedido recebido até agora.</div>}</section>}
       {tab === 'customers' && <section className="pending-customers">{pendingCustomers.length ? pendingCustomers.map((customer) => <article key={customer.id} className="pending-customer-card"><header><div className="pending-customer-avatar">{(customer.tradeName || customer.legalName).slice(0, 1).toUpperCase()}</div><div><span className="eyebrow">AGUARDANDO VALIDAÇÃO</span><h2>{customer.tradeName || customer.legalName}</h2><p>{customer.legalName}</p></div><span className="pending-date">Cadastrado em<br /><strong>{customer.createdAt ? new Date(customer.createdAt).toLocaleString('pt-BR') : '—'}</strong></span></header><div className="pending-customer-data"><p><b>CPF/CNPJ</b>{formatDocument(customer.document)}</p><p><b>Contato</b>{customer.email}<br />{formatPhone(customer.phone)}</p><p><b>Endereço</b>{customer.addressLine}, {customer.addressNumber}{customer.addressComplement ? ` · ${customer.addressComplement}` : ''}<br />{customer.neighborhood} · {customer.city}/{customer.state}<br />CEP {formatPostalCode(customer.postalCode)}</p></div><footer><span>A aprovação consultará este documento diretamente no WinThor e salvará o CODCLI encontrado.</span><button className="primary-button" disabled={loading} onClick={() => approveCustomer(customer)}>{loading ? <LoaderCircle className="spin" /> : <><UserCheck /> Validar e aprovar</>}</button></footer></article>) : <div className="staff-empty"><UserCheck /><h2>Nenhum cadastro pendente</h2><p>Novos clientes aguardando validação aparecerão aqui.</p></div>}</section>}
       {tab === 'categories' && <section className="category-manager"><aside className="category-manager-list"><form onSubmit={createCategory}><input name="name" placeholder="Nova categoria" required minLength={2} maxLength={80} /><button disabled={loading} aria-label="Criar categoria"><Plus /></button></form><div>{categories.map((category) => <button key={category.id} className={selectedCategoryId === category.id ? 'active' : ''} onClick={() => selectCategory(category)}><span><Tag /><b>{category.name}</b><small>{category.productIds?.length || 0} produtos</small></span><i role="button" tabIndex={0} aria-label={`Excluir ${category.name}`} onClick={(event) => { event.stopPropagation(); deleteCategory(category) }} onKeyDown={(event) => { if (event.key === 'Enter') deleteCategory(category) }}><Trash2 /></i></button>)}</div></aside><div className="category-product-picker">{selectedCategory ? <><div className="category-picker-heading"><div><span className="eyebrow">EDITANDO CATEGORIA</span><h2>{selectedCategory.name}</h2><p>Pesquise e marque todos os produtos que devem aparecer nesta categoria.</p></div><strong>{selectedProductIds.size} selecionados</strong></div><div className="category-product-filters"><label><Search /><input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Nome, EAN, marca ou códigos separados por vírgula" /></label><select value={supplierFilter} onChange={(event) => setSupplierFilter(event.target.value)}><option value="">Todos os fornecedores</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name} ({supplier.productCount})</option>)}</select><button onClick={toggleVisibleProducts}><CheckSquare /> {filteredCatalogProducts.length && filteredCatalogProducts.every((product) => selectedProductIds.has(product.id)) ? 'Desmarcar resultados' : 'Marcar resultados'}</button></div><div className="category-results-summary"><span>{filteredCatalogProducts.length} produtos encontrados</span><span>A seleção é mantida ao trocar a busca ou fornecedor.</span></div><div className="category-product-list">{filteredCatalogProducts.map((product) => <label key={product.id} className={selectedProductIds.has(product.id) ? 'selected' : ''}><input type="checkbox" checked={selectedProductIds.has(product.id)} onChange={() => toggleProduct(product.id)} />{product.image ? <img src={product.image} alt="" /> : <span className="category-no-image"><ImageOff /></span>}<span><b>{product.name}</b><small>Cód. {product.code} · {product.brand}</small><small>{product.package} · {product.unitsPerBox} un./caixa</small></span></label>)}</div><div className="category-save-bar"><span>{selectedProductIds.size} produtos nesta categoria</span><button className="primary-button" onClick={saveCategoryProducts} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar categoria</>}</button></div></> : <div className="staff-empty">Crie uma categoria para começar a selecionar produtos.</div>}</div></section>}
+      {tab === 'photos' && <section className="product-photo-manager"><div className="staff-section-heading"><div><h2>Acervo de fotos</h2><span>Envios são otimizados em WEBP e ficam armazenados com segurança no banco.</span></div><strong>{catalogProducts.filter((product) => product.image).length} de {catalogProducts.length} produtos com foto</strong></div><div className="photo-manager-filters"><label><Search /><input value={photoSearch} onChange={(event) => setPhotoSearch(event.target.value)} placeholder="Buscar por código, produto ou fornecedor" /></label><select value={photoSupplierFilter} onChange={(event) => setPhotoSupplierFilter(event.target.value)}><option value="">Todos os fornecedores</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name} ({supplier.productCount})</option>)}</select></div><div className="photo-results-summary"><span>{filteredPhotoProducts.length} produtos encontrados</span>{filteredPhotoProducts.length > 200 && <span>Exibindo os primeiros 200. Use a busca para localizar outro produto.</span>}</div><div className="product-photo-grid">{filteredPhotoProducts.slice(0, 200).map((product) => <article key={product.id}><div className="product-photo-preview">{product.image ? <img src={product.image} alt={product.name} /> : <span><ImageOff /><b>Produto sem foto</b></span>}</div><div className="product-photo-info"><small>CÓD. {product.code} · {product.brand}</small><strong>{product.name}</strong></div><div className="product-photo-actions"><label className="secondary-button"><Camera /> {product.image ? 'Substituir' : 'Adicionar'}<input type="file" accept="image/png,image/jpeg,image/webp" disabled={loading} onChange={(event) => { void uploadProductPhoto(product, event.target.files?.[0]); event.currentTarget.value = '' }} /></label>{product.image && <button className="photo-delete" disabled={loading} onClick={() => deleteProductPhoto(product)} aria-label={`Excluir foto de ${product.name}`}><Trash2 /> Excluir</button>}</div></article>)}</div></section>}
       {tab === 'banners' && <section><div className="staff-section-heading banner-manager-heading"><div><h2>Banners cadastrados</h2><span>Edite tudo o que precisar e salve as alterações de uma só vez. Horários em Brasília.</span></div><button className="secondary-button" onClick={addBanner}><Plus /> Adicionar banner</button></div><div className="banner-admin-grid">{banners.map((banner) => <BannerEditor key={banner.id} banner={banner} onChange={updateBanner} onImage={selectBannerImage} onDelete={deleteBanner} />)}</div><div className="banner-save-all"><span>{banners.length} {banners.length === 1 ? 'banner configurado' : 'banners configurados'}{deletedBannerIds.length > 0 && ` · ${deletedBannerIds.length} aguardando exclusão`}</span><button className="primary-button" onClick={saveBanners} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar todas as alterações</>}</button></div></section>}
       {tab === 'users' && user.role === 'ADMIN' && <section className="users-admin"><form className="staff-form create-user-form" onSubmit={createUser}><h2><Plus /> Novo usuário</h2><label>Nome<input name="name" required minLength={3} /></label><label>E-mail<input name="email" type="email" required /></label><label>Senha inicial<input name="password" type="password" minLength={8} required /></label><label>Perfil<select name="role" defaultValue="COMERCIAL"><option value="COMERCIAL">Comercial</option><option value="ADMIN">Administrador</option></select></label><button className="primary-button" disabled={loading}>Criar usuário</button></form><div className="staff-user-list">{users.map((item) => <article key={item.id}><span>{item.name.slice(0, 1).toUpperCase()}</span><div><strong>{item.name}</strong><small>{item.email}</small></div><b>{item.role}</b></article>)}</div></section>}
       {tab === 'settings' && <section className="staff-settings"><form className="staff-form" onSubmit={changeStaffPassword}><h2><KeyRound /> Alterar senha</h2><p>Atualize a senha utilizada para acessar a gestão do e-Commerce.</p>{user.authProvider !== 'supabase' && <label>Senha atual<input name="currentPassword" type="password" autoComplete="current-password" required /></label>}<label>Nova senha<input name="newPassword" type="password" autoComplete="new-password" minLength={8} required /></label><label>Confirmar nova senha<input name="confirmPassword" type="password" autoComplete="new-password" minLength={8} required /></label><small>Use ao menos 8 caracteres, com maiúscula, minúscula e número.</small><button className="primary-button" disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar nova senha</>}</button></form></section>}
