@@ -330,7 +330,7 @@ function ProductCard({ product, rank, addToCart, changeQuantity, quantity, authe
       <div className="product-content">
         <span className="product-brand">{product.brand} · cód. {product.code}</span>
         <h3>{product.name}</h3>
-        {authenticated && product.unitPrice !== null && <div className="price-row unit-price-row"><div><strong>{money.format(product.unitPrice)}</strong><small>por unidade · {product.priceChannel}</small></div></div>}
+        {authenticated && product.unitPrice !== null && <div className="price-row unit-price-row"><div><strong>{money.format(product.unitPrice)}</strong><small>por unidade</small></div></div>}
         {quantity > 0 && authenticated && canOrder ? <div className="product-quantity-control"><button onClick={() => changeQuantity(product.id, -product.salesMultiple)} aria-label={`Remover ${product.salesMultiple} unidades`}><Minus size={18} /></button><span><strong>{quantity}</strong><small>unidades</small></span><button onClick={() => changeQuantity(product.id, product.salesMultiple)} aria-label={`Adicionar ${product.salesMultiple} unidades`}><Plus size={18} /></button></div> : <button className={`buy-button ${!authenticated || !canOrder ? 'login-to-buy' : ''}`} onClick={() => addToCart(product)}>{!authenticated ? <><LockKeyhole size={17} />Entrar para ver preço</> : !canOrder ? <><LoaderCircle size={17} />Cadastro em análise</> : <><ShoppingCart size={18} />Adicionar {product.salesMultiple} {product.salesMultiple === 1 ? 'unidade' : 'unidades'}</>}</button>}
       </div>
     </article>

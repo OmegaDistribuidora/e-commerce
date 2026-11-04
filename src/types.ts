@@ -15,7 +15,6 @@ export type Product = {
   minBoxes: number
   unitPrice: number | null
   listUnitPrice: number | null
-  priceChannel: 'Varejo' | 'Redes' | null
   image: string | null
   department: string
   section: string

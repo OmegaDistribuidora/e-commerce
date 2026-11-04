@@ -994,7 +994,6 @@ app.get('/api/products', async (request, response, next) => {
         minBoxes: Number(row.min_boxes),
         unitPrice: authenticated ? Number(channelPrice ?? row.unit_price) : null,
         listUnitPrice: authenticated ? Number(row.list_unit_price ?? channelPrice ?? row.unit_price) : null,
-        priceChannel: authenticated ? request.customer.sales_channel : null,
         category: categoryMap.get(Number(row.id))?.[0] || 'Sem categoria',
         categories: categoryMap.get(Number(row.id)) || [],
         department: row.department,
