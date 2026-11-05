@@ -39,6 +39,8 @@ export async function initializeDatabase() {
   await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_plan VARCHAR(30) NOT NULL DEFAULT 'avista'")
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS retail_unit_price NUMERIC(14,2)')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS network_unit_price NUMERIC(14,2)')
+  await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS department_code INTEGER')
+  await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS section_code INTEGER')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS sales_multiple INTEGER NOT NULL DEFAULT 1')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS manufacturer_code TEXT')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS ncm_code TEXT')
@@ -82,6 +84,8 @@ export async function initializeDatabase() {
   await pool.query("UPDATE orders SET status='analysis' WHERE status='received'")
   await pool.query('UPDATE products SET retail_unit_price = unit_price WHERE retail_unit_price IS NULL')
   await pool.query('UPDATE products SET network_unit_price = unit_price WHERE network_unit_price IS NULL')
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_products_department_section ON products(active, department_code, section_code)')
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_products_supplier ON products(active, supplier_id)')
   await pool.query('DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP')
   await pool.query('DELETE FROM staff_sessions WHERE expires_at <= CURRENT_TIMESTAMP')
   if (process.env.SUPABASE_URL) {

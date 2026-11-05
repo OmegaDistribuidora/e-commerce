@@ -23,7 +23,9 @@ SELECT
     p.qtunit,
     p.qtunitcx,
     NVL(p.multiplo, 1) AS multiplo,
+    NVL(p.codepto, 0) AS codigo_departamento,
     NVL(d.descricao, '') AS departamento,
+    NVL(p.codsec, 0) AS codigo_secao,
     NVL(s.descricao, '') AS secao,
     p.codauxiliar AS ean,
     p.codfab AS codigo_fabricante,
@@ -131,7 +133,8 @@ def main() -> None:
     for row in rows:
         (
             code, supplier_id, supplier, name, package, master_package,
-            unit_quantity, units_per_box, sales_multiple, department, section, ean,
+            unit_quantity, units_per_box, sales_multiple,
+            department_code, department, section_code, section, ean,
             manufacturer_code, ncm,
             retail_price, network_price, price_date,
         ) = row
@@ -149,7 +152,9 @@ def main() -> None:
             "minBoxes": 1,
             "retailUnitPrice": retail,
             "networkUnitPrice": network,
+            "departmentCode": int(department_code or 0),
             "department": text(department),
+            "sectionCode": int(section_code or 0),
             "section": text(section),
             "ean": text(ean),
             "manufacturerCode": text(manufacturer_code),

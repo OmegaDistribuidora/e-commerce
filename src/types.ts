@@ -16,7 +16,9 @@ export type Product = {
   unitPrice: number | null
   listUnitPrice: number | null
   image: string | null
+  departmentCode: number
   department: string
+  sectionCode: number
   section: string
   stockUnits: number
   weeklySales: number
@@ -24,6 +26,26 @@ export type Product = {
   manufacturerCode: string
   ncm: string
   ean: string
+}
+
+export type CatalogSection = {
+  code: number
+  name: string
+  productCount: number
+}
+
+export type CatalogDepartment = {
+  code: number
+  name: string
+  productCount: number
+  sections: CatalogSection[]
+}
+
+export type Partner = {
+  supplierId: number
+  name: string
+  logo: string
+  productCount: number
 }
 
 export type CartItem = Product & { quantity: number }

@@ -13,7 +13,7 @@ import ProductPage from './ProductPage'
 import { authenticatedFetch } from './api'
 import { money } from './data'
 import { supabase } from './supabase'
-import type { Banner, CartItem, Category, CommercialConditions, Customer, Product, StaffUser } from './types'
+import type { Banner, CartItem, CatalogDepartment, Category, CommercialConditions, Customer, Partner, Product, StaffUser } from './types'
 import { formatDocument } from './validation'
 
 const defaultCategories: Category[] = ['Limpeza', 'Higiene', 'Utilidades', 'Alimentos']
@@ -30,15 +30,6 @@ function categoryIcon(name: string) {
 const fallbackSlides: Banner[] = [
   { id: 1, title: 'Institucional Ômega', imageUrl: '/assets/banner-omega.png', altText: 'Tudo que o seu negócio precisa, em um só lugar', targetUrl: '#produtos', position: 1, active: true, placement: 'hero', startsAt: null, endsAt: null },
   { id: 2, title: 'Linha Bombril', imageUrl: '/assets/banner-bombril.png', altText: 'Linha Bombril: mais limpeza para o seu dia a dia', targetUrl: '#produtos', position: 2, active: true, placement: 'hero', startsAt: null, endsAt: null },
-]
-
-const partners = [
-  { supplierId: 117, name: 'Bombril', logo: '/assets/brands/bombril-117.webp' },
-  { supplierId: 967, name: 'Maratá', logo: '/assets/brands/marata-967.webp' },
-  { supplierId: 3609, name: 'Mili', logo: '/assets/brands/mili-3609.jpg' },
-  { supplierId: 1481, name: 'Realeza', logo: '/assets/brands/realeza-1481.png' },
-  { supplierId: 5569, name: 'Gallo', logo: '/assets/brands/gallo-5569.webp' },
-  { supplierId: 1968, name: 'JDE / Café Puro', logo: '/assets/brands/jde-1968.webp' },
 ]
 
 const whatsappUrl = `https://wa.me/558592020207?text=${encodeURIComponent('Olá! Venho do e-Commerce da Ômega Distribuidora e preciso de atendimento!')}`
@@ -60,13 +51,15 @@ function App() {
   const supplierId = Number(parameters.get('fornecedor'))
   return <StorePage
     initialSupplierId={Number.isFinite(supplierId) && supplierId > 0 ? supplierId : null}
+    initialDepartment={parameters.get('departamento') || ''}
+    initialSection={parameters.get('secao') || ''}
     initialQuery={parameters.get('busca') || ''}
     initialCartOpen={parameters.get('carrinho') === '1'}
     initialMode={parameters.get('modo') === 'mais-vendidos' ? 'bestsellers' : 'featured'}
   />
 }
 
-function StorePage({ initialSupplierId, initialQuery, initialCartOpen, initialMode }: { initialSupplierId: number | null; initialQuery: string; initialCartOpen: boolean; initialMode: 'featured' | 'bestsellers' }) {
+function StorePage({ initialSupplierId, initialDepartment, initialSection, initialQuery, initialCartOpen, initialMode }: { initialSupplierId: number | null; initialDepartment: string; initialSection: string; initialQuery: string; initialCartOpen: boolean; initialMode: 'featured' | 'bestsellers' }) {
   const [products, setProducts] = useState<Product[]>([])
   const [catalogCategories, setCatalogCategories] = useState<Category[]>(defaultCategories)
   const [loadingProducts, setLoadingProducts] = useState(true)
@@ -74,7 +67,11 @@ function StorePage({ initialSupplierId, initialQuery, initialCartOpen, initialMo
   const [query, setQuery] = useState(initialQuery)
   const [category, setCategory] = useState<Category>('Todos')
   const [supplierFilter, setSupplierFilter] = useState(initialSupplierId ? String(initialSupplierId) : '')
-  const [departmentFilter, setDepartmentFilter] = useState('')
+  const [departmentFilter, setDepartmentFilter] = useState(initialDepartment)
+  const [sectionFilter, setSectionFilter] = useState(initialSection)
+  const [departments, setDepartments] = useState<CatalogDepartment[]>([])
+  const [partnerLogos, setPartnerLogos] = useState<Partner[]>([])
+  const [expandedDepartment, setExpandedDepartment] = useState(initialDepartment)
   const [catalogMode, setCatalogMode] = useState<'featured' | 'bestsellers'>(initialMode)
   const [visibleCount, setVisibleCount] = useState(25)
   const [cart, setCart] = useState<CartItem[]>([])
@@ -114,7 +111,7 @@ function StorePage({ initialSupplierId, initialQuery, initialCartOpen, initialMo
     if (!authReady) return
     const controller = new AbortController()
     setLoadingProducts(true)
-    authenticatedFetch(`/api/products?limit=180&sort=${catalogMode}`, { signal: controller.signal })
+    authenticatedFetch(`/api/products?limit=5000&sort=${catalogMode}`, { signal: controller.signal })
       .then(async (response) => {
         const data = await response.json()
         if (!response.ok) throw new Error(data.message)
@@ -141,6 +138,10 @@ function StorePage({ initialSupplierId, initialQuery, initialCartOpen, initialMo
     fetch('/api/categories').then((response) => response.json()).then((data) => {
       if (Array.isArray(data.categories)) setCatalogCategories(data.categories.map((item: { name: string }) => item.name))
     }).catch(() => undefined)
+    fetch('/api/catalog/navigation').then((response) => response.json()).then((data) => {
+      if (Array.isArray(data.departments)) setDepartments(data.departments)
+      if (Array.isArray(data.partners)) setPartnerLogos(data.partners)
+    }).catch(() => undefined)
   }, [])
   useEffect(() => {
     const timer = window.setInterval(() => setSlide((current) => (current + 1) % slides.length), 6500)
@@ -159,14 +160,17 @@ function StorePage({ initialSupplierId, initialQuery, initialCartOpen, initialMo
       const matchesCategory = category === 'Todos' || product.categories?.includes(category) || product.category === category
       const matchesSupplier = !supplierFilter || String(product.supplierId) === supplierFilter
       const matchesDepartment = !departmentFilter || product.department === departmentFilter
+      const matchesSection = !sectionFilter || product.section === sectionFilter
       const matchesQuery = !normalized || `${product.name} ${product.brand} ${product.category} ${product.code}`.toLocaleLowerCase('pt-BR').includes(normalized)
-      return matchesCategory && matchesSupplier && matchesDepartment && matchesQuery
+      return matchesCategory && matchesSupplier && matchesDepartment && matchesSection && matchesQuery
     })
-  }, [category, departmentFilter, products, query, supplierFilter])
+  }, [category, departmentFilter, products, query, sectionFilter, supplierFilter])
 
   const supplierOptions = useMemo(() => [...new Map(products.map((product) => [product.supplierId, product.brand])).entries()].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR')), [products])
-  const departmentOptions = useMemo(() => [...new Set(products.map((product) => product.department).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')), [products])
   const selectedSupplierName = supplierOptions.find(([id]) => String(id) === supplierFilter)?.[1]
+  const selectedDepartment = departments.find((department) => department.name === departmentFilter)
+  const selectedSection = selectedDepartment?.sections.find((section) => section.name === sectionFilter)
+  const headerDepartments = useMemo(() => [...departments].sort((a, b) => b.productCount - a.productCount || a.name.localeCompare(b.name, 'pt-BR')).slice(0, 6), [departments])
 
   const visibleProducts = filteredProducts.slice(0, visibleCount)
   const productRows = Array.from({ length: Math.ceil(visibleProducts.length / 5) }, (_, index) => visibleProducts.slice(index * 5, index * 5 + 5))
@@ -213,8 +217,41 @@ function StorePage({ initialSupplierId, initialQuery, initialCartOpen, initialMo
     setCategory('Todos')
     setSupplierFilter('')
     setDepartmentFilter('')
+    setSectionFilter('')
     setCatalogMode('featured')
     if (window.location.search) window.history.replaceState({}, '', '/')
+  }
+
+  function selectDepartment(name: string) {
+    setCatalogMode('featured')
+    setCategory('Todos')
+    setDepartmentFilter(name)
+    setSectionFilter('')
+    setExpandedDepartment(name)
+    setVisibleCount(25)
+    setMenuOpen(false)
+    window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }
+
+  function selectSection(departmentName: string, sectionName: string) {
+    setCatalogMode('featured')
+    setCategory('Todos')
+    setDepartmentFilter(departmentName)
+    setSectionFilter(sectionName)
+    setVisibleCount(25)
+    setMenuOpen(false)
+    window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }
+
+  function selectPartner(partner: Partner) {
+    setSupplierFilter(String(partner.supplierId))
+    setDepartmentFilter('')
+    setSectionFilter('')
+    setCategory('Todos')
+    setCatalogMode('featured')
+    setVisibleCount(25)
+    window.history.replaceState({}, '', `/?fornecedor=${partner.supplierId}#produtos`)
+    window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
   }
 
   function changeQuantity(id: number, delta: number) {
@@ -303,7 +340,20 @@ function StorePage({ initialSupplierId, initialQuery, initialCartOpen, initialMo
           {(customer || staffUser) && <button className="logout-button" onClick={logout} aria-label="Sair da conta" title="Sair da conta"><LogOut size={19} /><span>Sair</span></button>}
           <button className="cart-button" onClick={() => setCartOpen(true)} aria-label={`Abrir carrinho com ${cartCount} unidades`}><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{cartCount ? `${cartCount} ${cartCount === 1 ? 'unidade' : 'unidades'}` : 'Está vazio'}</strong></span></button>
         </div>
-        <nav className="main-nav" aria-label="Navegação principal"><div className="container nav-inner"><button className="categories-button" onClick={() => setMenuOpen(true)}><Menu size={19} /> Todas as categorias <ChevronDown size={17} /></button><a href="#produtos" onClick={() => setCatalogMode('featured')}>Destaques</a><a href="#produtos" onClick={showBestSellers}>Mais vendidos</a><a href="#produtos">Ofertas</a><a href="#marcas">Marcas</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a></div></nav>
+        <nav className="main-nav" aria-label="Departamentos e seções">
+          <div className="container nav-inner department-nav">
+            <button className="categories-button" onClick={() => setMenuOpen(true)}><Menu size={19} /> Departamentos <ChevronDown size={17} /></button>
+            {headerDepartments.map((department) => <div className="department-nav-item" key={department.code || department.name}>
+              <button className={departmentFilter === department.name ? 'active' : ''} onClick={() => selectDepartment(department.name)}>{department.name}<ChevronDown size={14} /></button>
+              <div className="department-dropdown">
+                <button className="department-all" onClick={() => selectDepartment(department.name)}>Ver todos em {department.name}</button>
+                <div>{department.sections.map((section) => <button key={`${department.name}-${section.code || section.name}`} onClick={() => selectSection(department.name, section.name)}>{section.name}<small>{section.productCount}</small></button>)}</div>
+              </div>
+            </div>)}
+            <div className="partners-nav-item"><a href="#parceiros">Parceiros</a>{partnerLogos.length > 0 && <div className="partners-dropdown">{partnerLogos.map((partner) => <button key={partner.supplierId} onClick={() => selectPartner(partner)}><img src={partner.logo} alt="" /><span>{partner.name}</span></button>)}</div>}</div>
+            <a className="nav-support" href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a>
+          </div>
+        </nav>
       </header>
 
       {customer && !customer.canOrder && <div className="store-pending-banner"><LoaderCircle /><div><strong>Cadastro em análise</strong><span>Você já pode consultar o catálogo e os preços. A compra será liberada após a validação do seu cadastro.</span></div><a href="/pedidos">Ver meu cadastro</a></div>}
@@ -311,24 +361,33 @@ function StorePage({ initialSupplierId, initialQuery, initialCartOpen, initialMo
       <main id="top">
         <section className="hero" aria-label="Destaques" style={{ aspectRatio: slideRatios[slide] || 2.5 }}><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item, index) => <a key={item.id} className="hero-slide" href={item.targetUrl || '#produtos'}><img src={item.imageUrl} alt={item.altText} onLoad={(event) => { const image = event.currentTarget; if (image.naturalWidth && image.naturalHeight) setSlideRatios((current) => ({ ...current, [index]: image.naturalWidth / image.naturalHeight })) }} /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => setSlide((slide - 1 + slides.length) % slides.length)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => setSlide((slide + 1) % slides.length)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => setSlide(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section>
 
-        <section className="container category-strip" aria-label="Categorias">{['Todos', ...catalogCategories].map((name) => { const Icon = categoryIcon(name); return <button key={name} className={category === name && catalogMode === 'featured' ? 'active' : ''} onClick={() => { setCatalogMode('featured'); selectCategory(name) }}><span><Icon size={24} /></span>{name}</button> })}<button className={catalogMode === 'bestsellers' ? 'active' : ''} onClick={showBestSellers}><span><BadgePercent size={24} /></span>Mais vendidos</button></section>
-
         <section className="container products-section" id="produtos" ref={productsRef}>
-          <div className="section-heading"><div><span className="eyebrow">CATÁLOGO REAL · PRODUTOS ATIVOS</span><h1>{selectedSupplierName ? `Produtos ${selectedSupplierName}` : query ? `Resultados para “${query}”` : catalogMode === 'bestsellers' ? 'Mais vendidos nos últimos 7 dias' : category === 'Todos' ? 'Produtos em destaque' : category}</h1></div><span className="result-count">{filteredProducts.length} {filteredProducts.length === 1 ? 'produto' : 'produtos'}</span></div>
-          <div className="catalog-filters"><span className="filter-title"><SlidersHorizontal size={18} /> Filtrar catálogo</span><label>Fornecedor<select value={supplierFilter} onChange={(event) => { setSupplierFilter(event.target.value); setVisibleCount(25) }}><option value="">Todos os fornecedores</option>{supplierOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Categoria<select value={category} onChange={(event) => { setCategory(event.target.value as Category); setVisibleCount(25) }}><option value="Todos">Todos</option>{catalogCategories.map((name) => <option value={name} key={name}>{name}</option>)}</select></label><label>Departamento<select value={departmentFilter} onChange={(event) => { setDepartmentFilter(event.target.value); setVisibleCount(25) }}><option value="">Todos os departamentos</option>{departmentOptions.map((department) => <option value={department} key={department}>{department}</option>)}</select></label><button onClick={clearFilters}>Limpar filtros</button></div>
+          <aside className="taxonomy-sidebar" aria-label="Departamentos e seções">
+            <div className="taxonomy-sidebar-title"><SlidersHorizontal size={18} /><div><strong>Departamentos</strong><span>Escolha uma seção</span></div></div>
+            <button className={!departmentFilter ? 'active taxonomy-all' : 'taxonomy-all'} onClick={() => { setDepartmentFilter(''); setSectionFilter(''); setVisibleCount(25) }}>Todos os produtos</button>
+            <div className="taxonomy-list">{departments.map((department) => {
+              const open = expandedDepartment === department.name || departmentFilter === department.name
+              return <div className={`taxonomy-department ${open ? 'open' : ''}`} key={department.code || department.name}>
+                <button className={departmentFilter === department.name && !sectionFilter ? 'active' : ''} onClick={() => selectDepartment(department.name)}><span>{department.name}<small>{department.productCount} produtos</small></span><ChevronDown size={17} /></button>
+                {open && <div className="taxonomy-sections">{department.sections.map((section) => <button className={sectionFilter === section.name ? 'active' : ''} key={`${department.name}-${section.code || section.name}`} onClick={() => selectSection(department.name, section.name)}><span>{section.name}</span><small>{section.productCount}</small></button>)}</div>}
+              </div>
+            })}</div>
+          </aside>
+          <div className="section-heading"><div><span className="eyebrow">DEPARTAMENTO → SEÇÃO → PRODUTOS</span><h1>{selectedSupplierName ? `Produtos ${selectedSupplierName}` : query ? `Resultados para “${query}”` : selectedSection?.name || selectedDepartment?.name || (catalogMode === 'bestsellers' ? 'Mais vendidos nos últimos 7 dias' : 'Todos os produtos')}</h1>{selectedDepartment && <p className="taxonomy-breadcrumb">{selectedDepartment.name}{selectedSection ? ` → ${selectedSection.name}` : ''}</p>}</div><span className="result-count">{filteredProducts.length} {filteredProducts.length === 1 ? 'produto' : 'produtos'}</span></div>
+          <div className="catalog-filters"><span className="filter-title"><SlidersHorizontal size={18} /> Refinar catálogo</span><label>Fornecedor<select value={supplierFilter} onChange={(event) => { setSupplierFilter(event.target.value); setVisibleCount(25) }}><option value="">Todos os fornecedores</option>{supplierOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Departamento<select value={departmentFilter} onChange={(event) => { setDepartmentFilter(event.target.value); setSectionFilter(''); setExpandedDepartment(event.target.value); setVisibleCount(25) }}><option value="">Todos os departamentos</option>{departments.map((department) => <option value={department.name} key={department.code || department.name}>{department.name}</option>)}</select></label><label>Seção<select value={sectionFilter} onChange={(event) => { setSectionFilter(event.target.value); setVisibleCount(25) }} disabled={!selectedDepartment}><option value="">Todas as seções</option>{selectedDepartment?.sections.map((section) => <option value={section.name} key={section.code || section.name}>{section.name}</option>)}</select></label><button onClick={clearFilters}>Limpar filtros</button></div>
           {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : visibleProducts.length > 0 ? <><div className="catalog-flow">{productRows.map((row, rowIndex) => <div className="catalog-row-group" key={`row-${rowIndex}`}><div className="product-grid">{row.map((product, productIndex) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? rowIndex * 5 + productIndex + 1 : undefined} addToCart={addToCart} changeQuantity={changeQuantity} quantity={cart.find((item) => item.id === product.id)?.quantity ?? 0} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} />)}</div>{catalogBanners.length > 0 && rowIndex < productRows.length - 1 && <a className="catalog-banner" href={catalogBanners[rowIndex % catalogBanners.length].targetUrl || '#produtos'}><img src={catalogBanners[rowIndex % catalogBanners.length].imageUrl} alt={catalogBanners[rowIndex % catalogBanners.length].altText} /></a>}</div>)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 25)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={clearFilters}>Limpar filtros</button></div>}
         </section>
 
         <section className="container benefits" id="atendimento"><article><span><Truck /></span><div><strong>Entrega programada</strong><p>Agilidade e segurança no seu abastecimento</p></div></article><article><span><ShieldCheck /></span><div><strong>Compra segura</strong><p>Seus dados e seu pedido protegidos</p></div></article><article><span><PackageCheck /></span><div><strong>Quantidade sob medida</strong><p>Compre respeitando o múltiplo de cada produto</p></div></article><a className="benefit-card" href={whatsappUrl} target="_blank" rel="noreferrer" aria-label="Falar com o atendimento da Ômega pelo WhatsApp"><span><Headphones /></span><div><strong>Atendimento próximo</strong><p>Fale agora com nossa equipe pelo WhatsApp</p></div></a></section>
 
-        <section className="brands-section" id="marcas"><div className="container"><div className="section-heading"><div><span className="eyebrow">BONS NEGÓCIOS COMEÇAM COM BOAS MARCAS</span><h2>Nossos parceiros</h2></div></div><div className="brands-grid">{partners.map((partner) => <a className="brand-card" href={`/?fornecedor=${partner.supplierId}#produtos`} key={partner.supplierId} aria-label={`Filtrar produtos de ${partner.name}`}><img src={partner.logo} alt={`Logo ${partner.name}`} loading="lazy" /></a>)}</div></div></section>
+        <section className="brands-section" id="parceiros"><div className="container"><div className="section-heading"><div><span className="eyebrow">BONS NEGÓCIOS COMEÇAM COM BOAS PARCERIAS</span><h2>Nossos parceiros</h2><p>Selecione uma marca para ver todos os produtos desse fornecedor.</p></div></div><div className="brands-grid">{partnerLogos.map((partner) => <button className="brand-card" onClick={() => selectPartner(partner)} key={partner.supplierId} aria-label={`Filtrar produtos de ${partner.name}`}><img src={partner.logo} alt={`Logo ${partner.name}`} loading="lazy" /><span>{partner.productCount} produtos</span></button>)}</div></div></section>
       </main>
 
-      <footer><div className="container footer-grid"><div className="footer-brand"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /><p>Distribuindo mais do que produtos: parcerias de sucesso.</p></div><div><strong>Institucional</strong><a href="#top">Sobre a Ômega</a><a href="#marcas">Nossas marcas</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Fale conosco</a></div><div><strong>Atendimento</strong><span>Segunda a sexta, 8h às 17h</span><a href={whatsappUrl} target="_blank" rel="noreferrer">WhatsApp: (85) 9202-0207</a></div><div><strong>Compra protegida</strong><p className="security-copy"><LockKeyhole size={19} /> Ambiente seguro para seus pedidos.</p></div></div><div className="container footer-bottom"><span>© 2026 Ômega Distribuidora. Todos os direitos reservados.</span><span>Preços unitários sujeitos à confirmação comercial.</span></div></footer>
+      <footer><div className="container footer-grid"><div className="footer-brand"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /><p>Distribuindo mais do que produtos: parcerias de sucesso.</p></div><div><strong>Institucional</strong><a href="#top">Sobre a Ômega</a><a href="#parceiros">Nossos parceiros</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Fale conosco</a></div><div><strong>Atendimento</strong><span>Segunda a sexta, 8h às 17h</span><a href={whatsappUrl} target="_blank" rel="noreferrer">WhatsApp: (85) 9202-0207</a></div><div><strong>Compra protegida</strong><p className="security-copy"><LockKeyhole size={19} /> Ambiente seguro para seus pedidos.</p></div></div><div className="container footer-bottom"><span>© 2026 Ômega Distribuidora. Todos os direitos reservados.</span><span>Preços unitários sujeitos à confirmação comercial.</span></div></footer>
 
       {customer?.canOrder && <button className={`minimum-order-widget ${minimumRemaining === 0 ? 'complete' : ''}`} onClick={() => setCartOpen(true)} aria-label={`Carrinho em ${money.format(cartTotal)} de um pedido mínimo de ${money.format(minimumOrder)}`}><span><ShoppingCart size={18} /> Pedido mínimo</span><strong>{money.format(cartTotal)} <small>/ {money.format(minimumOrder)}</small></strong><i><b style={{ width: `${minimumProgress}%` }} /></i><em>{minimumRemaining > 0 ? `Faltam ${money.format(minimumRemaining)}` : 'Mínimo atingido'}</em></button>}
 
-      {menuOpen && <div className="overlay" onMouseDown={() => setMenuOpen(false)}><aside className="side-panel menu-panel" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><h2>Categorias</h2><button className="icon-btn" onClick={() => setMenuOpen(false)}><X /></button></div>{['Todos', ...catalogCategories].map((name) => { const Icon = categoryIcon(name); return <button key={name} className={category === name ? 'active' : ''} onClick={() => selectCategory(name)}><Icon size={21} />{name}<ChevronRight size={18} /></button> })}{(customer || staffUser) && <button className="menu-logout" onClick={logout}><LogOut size={20} />Sair da conta</button>}</aside></div>}
+      {menuOpen && <div className="overlay" onMouseDown={() => setMenuOpen(false)}><aside className="side-panel menu-panel department-drawer" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">CATÁLOGO</span><h2>Departamentos</h2></div><button className="icon-btn" onClick={() => setMenuOpen(false)}><X /></button></div><button className={!departmentFilter ? 'active drawer-all-products' : 'drawer-all-products'} onClick={() => { clearFilters(); setMenuOpen(false); window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth' }), 50) }}><Store size={20} />Todos os produtos<ChevronRight size={18} /></button><div className="drawer-taxonomy">{departments.map((department) => { const open = expandedDepartment === department.name || departmentFilter === department.name; return <div className="drawer-department" key={department.code || department.name}><button className={departmentFilter === department.name && !sectionFilter ? 'active' : ''} onClick={() => setExpandedDepartment(open ? '' : department.name)}><span>{department.name}<small>{department.productCount} produtos</small></span><ChevronDown className={open ? 'rotated' : ''} size={18} /></button>{open && <div>{<button className="drawer-department-all" onClick={() => selectDepartment(department.name)}>Todos em {department.name}</button>}{department.sections.map((section) => <button className={sectionFilter === section.name ? 'active' : ''} key={`${department.name}-${section.code || section.name}`} onClick={() => selectSection(department.name, section.name)}>{section.name}<small>{section.productCount}</small></button>)}</div>}</div> })}</div><a className="drawer-partners" href="#parceiros" onClick={() => setMenuOpen(false)}>Parceiros<ChevronRight size={18} /></a>{(customer || staffUser) && <button className="menu-logout" onClick={logout}><LogOut size={20} />Sair da conta</button>}</aside></div>}
 
       {cartOpen && <div className="overlay" onMouseDown={() => setCartOpen(false)}><aside className="side-panel cart-panel" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">SEU PEDIDO</span><h2>Meu carrinho</h2></div><button className="icon-btn" onClick={() => setCartOpen(false)}><X /></button></div>{cart.length === 0 ? <div className="empty-cart"><span><ShoppingCart /></span><h3>Seu carrinho está vazio</h3><p>Explore o catálogo e adicione os produtos que seu negócio precisa.</p><button className="primary-button" onClick={() => setCartOpen(false)}>Explorar produtos</button></div> : <><div className="cart-items">{cart.map((item) => <div className="cart-item" key={item.id}><div className="cart-product-image">{item.image ? <img src={item.image} alt="" /> : <ImageOff />}</div><div className="cart-product-info"><strong>{item.name}</strong><small>Vendido em múltiplos de {item.salesMultiple} unidades</small><span>{money.format(item.unitPrice ?? 0)} / unidade</span><div className="quantity-control"><button onClick={() => changeQuantity(item.id, -item.salesMultiple)} aria-label={`Remover ${item.salesMultiple} unidades`}><Minus size={15} /></button><b>{item.quantity} un.</b><button onClick={() => changeQuantity(item.id, item.salesMultiple)} aria-label={`Adicionar ${item.salesMultiple} unidades`}><Plus size={15} /></button><button className="remove-item" onClick={() => removeFromCart(item.id)} aria-label="Remover item"><Trash2 size={16} /></button></div></div></div>)}</div><div className="cart-summary"><div><span>Subtotal estimado</span><strong>{money.format(cartTotal)}</strong></div><div className={`cart-minimum ${minimumRemaining === 0 ? 'complete' : ''}`}><span>{minimumRemaining > 0 ? `Adicione mais ${money.format(minimumRemaining)} para atingir o mínimo.` : 'Pedido mínimo atingido.'}</span><i><b style={{ width: `${minimumProgress}%` }} /></i></div><p>Pedido para {customer?.tradeName || customer?.legalName}. Frete e condições comerciais serão confirmados pela equipe.</p><button className="checkout-button" onClick={beginCheckout} disabled={minimumRemaining > 0 || loadingConditions}>{loadingConditions ? <LoaderCircle className="spin" /> : minimumRemaining > 0 ? `Mínimo de ${money.format(minimumOrder)}` : 'Finalizar pedido'} {!loadingConditions && <ArrowRight size={19} />}</button>{orderError && <span className="field-error cart-condition-error">{orderError}</span>}<button className="keep-shopping" onClick={() => setCartOpen(false)}>Continuar comprando</button></div></>}</aside></div>}
 

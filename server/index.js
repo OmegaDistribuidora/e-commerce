@@ -839,7 +839,8 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
         package TEXT, master_package TEXT, units_per_box INTEGER, sales_multiple INTEGER, min_boxes INTEGER,
         unit_price NUMERIC(14,2), list_unit_price NUMERIC(14,2),
         retail_unit_price NUMERIC(14,2), network_unit_price NUMERIC(14,2),
-        department TEXT, section TEXT, ean TEXT, manufacturer_code TEXT, ncm_code TEXT,
+        department_code INTEGER, department TEXT, section_code INTEGER, section TEXT,
+        ean TEXT, manufacturer_code TEXT, ncm_code TEXT,
         active BOOLEAN, price_date DATE
       )`,
     )
@@ -848,8 +849,8 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
       'Filial', product.externalId, product.supplierId, product.brand, product.name,
       product.package, product.masterPackage, product.unitsPerBox, product.salesMultiple, product.minBoxes,
       product.retailUnitPrice, product.retailUnitPrice, product.retailUnitPrice,
-      product.networkUnitPrice || product.retailUnitPrice, product.department,
-      product.section, product.ean, product.manufacturerCode, product.ncm, true, product.priceDate || null,
+      product.networkUnitPrice || product.retailUnitPrice, product.departmentCode, product.department,
+      product.sectionCode, product.section, product.ean, product.manufacturerCode, product.ncm, true, product.priceDate || null,
     ])
     const batchSize = 250
     for (let offset = 0; offset < rows.length; offset += batchSize) {
@@ -880,7 +881,10 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
           OR p.unit_price<>s.unit_price OR COALESCE(p.list_unit_price,-1)<>COALESCE(s.list_unit_price,-1)
           OR COALESCE(p.retail_unit_price,-1)<>COALESCE(s.retail_unit_price,-1)
           OR COALESCE(p.network_unit_price,-1)<>COALESCE(s.network_unit_price,-1)
-          OR COALESCE(p.department,'')<>COALESCE(s.department,'') OR COALESCE(p.section,'')<>COALESCE(s.section,'')
+          OR COALESCE(p.department_code,-1)<>COALESCE(s.department_code,-1)
+          OR COALESCE(p.department,'')<>COALESCE(s.department,'')
+          OR COALESCE(p.section_code,-1)<>COALESCE(s.section_code,-1)
+          OR COALESCE(p.section,'')<>COALESCE(s.section,'')
           OR COALESCE(p.ean,'')<>COALESCE(s.ean,'')
           OR COALESCE(p.manufacturer_code,'')<>COALESCE(s.manufacturer_code,'')
           OR COALESCE(p.ncm_code,'')<>COALESCE(s.ncm_code,'') OR p.active<>s.active
@@ -896,11 +900,11 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
       `INSERT INTO products (
          company,external_id,supplier_id,brand,name,package,master_package,units_per_box,
          sales_multiple,min_boxes,unit_price,list_unit_price,retail_unit_price,network_unit_price,
-         department,section,ean,manufacturer_code,ncm_code,active,price_date,source_category,category
+         department_code,department,section_code,section,ean,manufacturer_code,ncm_code,active,price_date,source_category,category
        )
        SELECT company,external_id,supplier_id,brand,name,package,master_package,units_per_box,
               sales_multiple,min_boxes,unit_price,list_unit_price,retail_unit_price,network_unit_price,
-              department,section,ean,manufacturer_code,ncm_code,active,price_date,'','Sem categoria'
+              department_code,department,section_code,section,ean,manufacturer_code,ncm_code,active,price_date,'','Sem categoria'
        FROM ecommerce_product_stage
        ON CONFLICT (company,external_id) DO UPDATE SET
          supplier_id=EXCLUDED.supplier_id, brand=EXCLUDED.brand, name=EXCLUDED.name,
@@ -908,7 +912,8 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
          units_per_box=EXCLUDED.units_per_box, sales_multiple=EXCLUDED.sales_multiple, min_boxes=EXCLUDED.min_boxes,
          unit_price=EXCLUDED.unit_price, list_unit_price=EXCLUDED.list_unit_price,
          retail_unit_price=EXCLUDED.retail_unit_price, network_unit_price=EXCLUDED.network_unit_price,
-         department=EXCLUDED.department, section=EXCLUDED.section, ean=EXCLUDED.ean,
+         department_code=EXCLUDED.department_code, department=EXCLUDED.department,
+         section_code=EXCLUDED.section_code, section=EXCLUDED.section, ean=EXCLUDED.ean,
          manufacturer_code=EXCLUDED.manufacturer_code, ncm_code=EXCLUDED.ncm_code,
          active=TRUE, price_date=EXCLUDED.price_date, updated_at=CURRENT_TIMESTAMP
        WHERE COALESCE(products.supplier_id,-1)<>COALESCE(EXCLUDED.supplier_id,-1)
@@ -918,7 +923,10 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
           OR products.unit_price<>EXCLUDED.unit_price OR COALESCE(products.list_unit_price,-1)<>COALESCE(EXCLUDED.list_unit_price,-1)
           OR COALESCE(products.retail_unit_price,-1)<>COALESCE(EXCLUDED.retail_unit_price,-1)
           OR COALESCE(products.network_unit_price,-1)<>COALESCE(EXCLUDED.network_unit_price,-1)
-          OR COALESCE(products.department,'')<>COALESCE(EXCLUDED.department,'') OR COALESCE(products.section,'')<>COALESCE(EXCLUDED.section,'')
+          OR COALESCE(products.department_code,-1)<>COALESCE(EXCLUDED.department_code,-1)
+          OR COALESCE(products.department,'')<>COALESCE(EXCLUDED.department,'')
+          OR COALESCE(products.section_code,-1)<>COALESCE(EXCLUDED.section_code,-1)
+          OR COALESCE(products.section,'')<>COALESCE(EXCLUDED.section,'')
           OR COALESCE(products.ean,'')<>COALESCE(EXCLUDED.ean,'')
           OR COALESCE(products.manufacturer_code,'')<>COALESCE(EXCLUDED.manufacturer_code,'')
           OR COALESCE(products.ncm_code,'')<>COALESCE(EXCLUDED.ncm_code,'') OR products.active<>EXCLUDED.active
@@ -997,8 +1005,11 @@ app.get('/api/products', async (request, response, next) => {
   try {
     const search = String(request.query.search ?? '').trim()
     const category = String(request.query.category ?? '').trim()
+    const supplier = Number(request.query.supplier)
+    const department = Number(request.query.department)
+    const section = Number(request.query.section)
     const sort = request.query.sort === 'bestsellers' ? 'bestsellers' : 'featured'
-    const limit = Math.min(Math.max(Number(request.query.limit) || 180, 1), 200)
+    const limit = Math.min(Math.max(Number(request.query.limit) || 180, 1), 5000)
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - 6)
 
@@ -1015,6 +1026,18 @@ app.get('/api/products', async (request, response, next) => {
         JOIN catalog_categories cc ON cc.id = pc.category_id
         WHERE pc.product_id = p.id AND cc.active = TRUE AND cc.name = $${params.length}
       )`)
+    }
+    if (Number.isSafeInteger(supplier) && supplier > 0) {
+      params.push(supplier)
+      conditions.push(`p.supplier_id = $${params.length}`)
+    }
+    if (Number.isSafeInteger(department) && department > 0) {
+      params.push(department)
+      conditions.push(`p.department_code = $${params.length}`)
+    }
+    if (Number.isSafeInteger(section) && section > 0) {
+      params.push(section)
+      conditions.push(`p.section_code = $${params.length}`)
     }
     params.push(limit)
 
@@ -1033,7 +1056,7 @@ app.get('/api/products', async (request, response, next) => {
        SELECT p.id, p.external_id, p.supplier_id, p.brand, p.name, p.package, p.master_package,
               p.units_per_box, p.sales_multiple, p.min_boxes, p.unit_price, p.list_unit_price,
               p.retail_unit_price, p.network_unit_price,
-              p.category, p.department, p.section, p.stock_units, p.image_path,
+              p.category, p.department_code, p.department, p.section_code, p.section, p.stock_units, p.image_path,
               p.image_data IS NOT NULL AS image_uploaded, p.image_hidden, p.image_updated_at, p.ean,
               p.manufacturer_code, p.ncm_code,
               p.price_date, COALESCE(w.units, 0) AS weekly_sales
@@ -1084,7 +1107,9 @@ app.get('/api/products', async (request, response, next) => {
         listUnitPrice: authenticated ? Number(row.list_unit_price ?? channelPrice ?? row.unit_price) : null,
         category: categoryMap.get(Number(row.id))?.[0] || 'Sem categoria',
         categories: categoryMap.get(Number(row.id)) || [],
+        departmentCode: Number(row.department_code || 0),
         department: row.department,
+        sectionCode: Number(row.section_code || 0),
         section: row.section,
         stockUnits: Number(row.stock_units),
         image: productImageUrl(row),
@@ -1102,6 +1127,72 @@ app.get('/api/products', async (request, response, next) => {
   }
 })
 
+const partnerLogoBySupplier = new Map([
+  [117, '/assets/partners/117.png'],
+  [967, '/assets/partners/967.png'],
+  [1431, '/assets/partners/1431.png'],
+  [1630, '/assets/partners/1630.png'],
+  [4698, '/assets/partners/4698.png'],
+])
+
+app.get('/api/catalog/navigation', async (_request, response, next) => {
+  try {
+    const taxonomyResult = await pool.query(
+      `SELECT department_code, department, section_code, section, COUNT(*)::int AS product_count
+       FROM products
+       WHERE active=TRUE
+         AND COALESCE(department,'') <> '' AND COALESCE(section,'') <> ''
+       GROUP BY department_code, department, section_code, section
+       ORDER BY department, section`,
+    )
+    const departmentMap = new Map()
+    for (const row of taxonomyResult.rows) {
+      const code = Number(row.department_code || 0)
+      const productCount = Number(row.product_count)
+      const departmentKey = code > 0 ? `code:${code}` : `name:${row.department}`
+      const department = departmentMap.get(departmentKey) || {
+        code,
+        name: row.department,
+        productCount: 0,
+        sections: [],
+      }
+      department.productCount += productCount
+      department.sections.push({
+        code: Number(row.section_code),
+        name: row.section,
+        productCount,
+      })
+      departmentMap.set(departmentKey, department)
+    }
+    const departments = [...departmentMap.values()].sort((a, b) =>
+      a.name.localeCompare(b.name, 'pt-BR'),
+    )
+
+    const supplierIds = [...partnerLogoBySupplier.keys()]
+    const partnerResult = await pool.query(
+      `SELECT supplier_id, MIN(brand) AS name, COUNT(*)::int AS product_count
+       FROM products
+       WHERE active=TRUE AND supplier_id = ANY($1::int[])
+       GROUP BY supplier_id
+       ORDER BY MIN(brand)`,
+      [supplierIds],
+    )
+    const partnerData = new Map(partnerResult.rows.map((row) => [Number(row.supplier_id), row]))
+    const partners = supplierIds.map((supplierId) => {
+      const row = partnerData.get(supplierId)
+      return {
+        supplierId,
+        name: row?.name || `Fornecedor ${supplierId}`,
+        productCount: Number(row?.product_count || 0),
+        logo: partnerLogoBySupplier.get(supplierId),
+      }
+    })
+    return response.json({ departments, partners })
+  } catch (error) {
+    return next(error)
+  }
+})
+
 app.get('/api/products/:code', async (request, response, next) => {
   try {
     const code = Number(request.params.code)
@@ -1109,7 +1200,7 @@ app.get('/api/products/:code', async (request, response, next) => {
     const result = await pool.query(
       `SELECT id, external_id, supplier_id, brand, name, package, master_package, units_per_box,
               sales_multiple, min_boxes, unit_price, list_unit_price, retail_unit_price,
-              network_unit_price, category, department, section, stock_units, image_path,
+              network_unit_price, category, department_code, department, section_code, section, stock_units, image_path,
               image_data IS NOT NULL AS image_uploaded, image_hidden, image_updated_at,
               ean, manufacturer_code, ncm_code, price_date
        FROM products WHERE external_id=$1 AND active=TRUE LIMIT 1`,
@@ -1124,7 +1215,9 @@ app.get('/api/products/:code', async (request, response, next) => {
       unitsPerBox: Number(row.units_per_box), salesMultiple: Number(row.sales_multiple), minBoxes: Number(row.min_boxes),
       unitPrice: request.customer ? Number(channelPrice ?? row.unit_price) : null,
       listUnitPrice: request.customer ? Number(row.list_unit_price ?? channelPrice ?? row.unit_price) : null,
-      category: row.category || 'Sem categoria', categories: [], department: row.department || '', section: row.section || '',
+      category: row.category || 'Sem categoria', categories: [],
+      departmentCode: Number(row.department_code || 0), department: row.department || '',
+      sectionCode: Number(row.section_code || 0), section: row.section || '',
       stockUnits: Number(row.stock_units), image: productImageUrl(row), priceDate: row.price_date, weeklySales: 0,
       ean: row.ean || '', manufacturerCode: row.manufacturer_code || '', ncm: row.ncm_code || '',
     } })

@@ -6,7 +6,7 @@ import {
 import { authenticatedFetch } from './api'
 import { money } from './data'
 import { supabase } from './supabase'
-import type { CartItem, Customer, Product, StaffUser } from './types'
+import type { CartItem, CatalogDepartment, Customer, Partner, Product, StaffUser } from './types'
 
 const whatsappUrl = `https://wa.me/558592020207?text=${encodeURIComponent('Olá! Venho do e-Commerce da Ômega Distribuidora e preciso de atendimento!')}`
 
@@ -26,6 +26,8 @@ export default function ProductPage({ code }: { code: number }) {
   const [zoomed, setZoomed] = useState(false)
   const [quantity, setQuantity] = useState(0)
   const [search, setSearch] = useState('')
+  const [departments, setDepartments] = useState<CatalogDepartment[]>([])
+  const [partners, setPartners] = useState<Partner[]>([])
 
   useEffect(() => {
     Promise.all([
@@ -43,6 +45,13 @@ export default function ProductPage({ code }: { code: number }) {
     }).catch((requestError) => setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar o produto.'))
       .finally(() => setLoading(false))
   }, [code])
+
+  useEffect(() => {
+    fetch('/api/catalog/navigation').then((response) => response.json()).then((data) => {
+      if (Array.isArray(data.departments)) setDepartments(data.departments)
+      if (Array.isArray(data.partners)) setPartners(data.partners)
+    }).catch(() => undefined)
+  }, [])
 
   function updateCart(nextQuantity: number) {
     if (!product) return
@@ -83,7 +92,7 @@ export default function ProductPage({ code }: { code: number }) {
         {(customer || staffUser) && <button className="logout-button" onClick={logout} aria-label="Sair da conta"><LogOut size={19} /><span>Sair</span></button>}
         <a className="cart-button" href="/?carrinho=1"><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{cartCount ? `${cartCount} ${cartCount === 1 ? 'unidade' : 'unidades'}` : 'Está vazio'}</strong></span></a>
       </div>
-      <nav className="main-nav" aria-label="Navegação principal"><div className="container nav-inner"><a className="categories-button" href="/#produtos"><Menu size={19} /> Todas as categorias</a><a href="/#produtos">Destaques</a><a href="/?modo=mais-vendidos#produtos">Mais vendidos</a><a href="/#produtos">Ofertas</a><a href="/#marcas">Marcas</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a></div></nav>
+      <nav className="main-nav" aria-label="Departamentos e seções"><div className="container nav-inner department-nav"><a className="categories-button" href="/#produtos"><Menu size={19} /> Departamentos</a>{[...departments].sort((a, b) => b.productCount - a.productCount).slice(0, 6).map((department) => <div className="department-nav-item" key={department.code || department.name}><a className="product-department-link" href={`/?departamento=${encodeURIComponent(department.name)}#produtos`}>{department.name}</a><div className="department-dropdown"><a className="department-all" href={`/?departamento=${encodeURIComponent(department.name)}#produtos`}>Ver todos em {department.name}</a><div>{department.sections.map((section) => <a key={`${department.name}-${section.code || section.name}`} href={`/?departamento=${encodeURIComponent(department.name)}&secao=${encodeURIComponent(section.name)}#produtos`}>{section.name}<small>{section.productCount}</small></a>)}</div></div></div>)}<div className="partners-nav-item"><a href="/#parceiros">Parceiros</a>{partners.length > 0 && <div className="partners-dropdown">{partners.map((partner) => <a key={partner.supplierId} href={`/?fornecedor=${partner.supplierId}#produtos`}><img src={partner.logo} alt="" /><span>{partner.name}</span></a>)}</div>}</div><a className="nav-support" href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a></div></nav>
     </header>
 
     <main className="product-page-main">
