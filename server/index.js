@@ -1134,6 +1134,13 @@ const partnerLogoBySupplier = new Map([
   [1630, '/assets/partners/1630.png'],
   [4698, '/assets/partners/4698.png'],
 ])
+const partnerNameBySupplier = new Map([
+  [117, 'Bombril S.A.'],
+  [967, 'Maratá'],
+  [1431, 'Realeza'],
+  [1630, 'Panasonic'],
+  [4698, 'Assim'],
+])
 
 app.get('/api/catalog/navigation', async (_request, response, next) => {
   try {
@@ -1182,7 +1189,7 @@ app.get('/api/catalog/navigation', async (_request, response, next) => {
       const row = partnerData.get(supplierId)
       return {
         supplierId,
-        name: row?.name || `Fornecedor ${supplierId}`,
+        name: partnerNameBySupplier.get(supplierId) || row?.name || `Fornecedor ${supplierId}`,
         productCount: Number(row?.product_count || 0),
         logo: partnerLogoBySupplier.get(supplierId),
       }
