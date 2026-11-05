@@ -177,8 +177,6 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
     const remaining = [...filteredProducts]
     const rows: Array<{ products: Product[]; bannerAfter: Banner | null }> = []
     let displayed = 0
-    let bannerIndex = 0
-    let precedingBanner: Banner | null = null
     const takeMatching = (predicate: (product: Product) => boolean, limit: number) => {
       const selected: Product[] = []
       for (let index = 0; index < remaining.length && selected.length < limit;) {
@@ -187,35 +185,43 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
       }
       return selected
     }
-    const nextAvailableBanner = () => {
-      while (bannerIndex < catalogBanners.length) {
-        const candidate = catalogBanners[bannerIndex]
-        bannerIndex += 1
-        if (!candidate.sectionCode || remaining.some((product) => product.sectionCode === candidate.sectionCode)) return candidate
+    const productsPerPage = 25
+    const bannersPerPage = 2
+    for (let pageIndex = 0; remaining.length > 0 && displayed < visibleCount; pageIndex += 1) {
+      const pageProductLimit = Math.min(visibleCount, (pageIndex + 1) * productsPerPage)
+      const pageBanners = catalogBanners.slice(pageIndex * bannersPerPage, (pageIndex + 1) * bannersPerPage)
+      let pageBannerIndex = 0
+      let precedingBanner: Banner | null = null
+      const nextAvailableBanner = () => {
+        while (pageBannerIndex < pageBanners.length) {
+          const candidate = pageBanners[pageBannerIndex]
+          pageBannerIndex += 1
+          if (!candidate.sectionCode || remaining.some((product) => product.sectionCode === candidate.sectionCode)) return candidate
+        }
+        return null
       }
-      return null
-    }
-    while (remaining.length > 0 && displayed < visibleCount) {
-      const limit = Math.min(5, visibleCount - displayed)
-      const requiredSection = precedingBanner?.sectionCode
-      const upcomingBanner = catalogBanners.slice(bannerIndex).find((banner) => (
-        !banner.sectionCode || remaining.some((product) => product.sectionCode === banner.sectionCode)
-      )) ?? null
-      const reservedSection = requiredSection ? null : upcomingBanner?.sectionCode
-      const canReserve = Boolean(reservedSection && remaining.some((product) => product.sectionCode !== reservedSection))
-      const rowProducts = requiredSection
-        ? takeMatching((product) => product.sectionCode === requiredSection, limit)
-        : canReserve
-          ? takeMatching((product) => product.sectionCode !== reservedSection, limit)
-          : remaining.splice(0, limit)
-      if (!rowProducts.length) {
-        precedingBanner = null
-        continue
+      while (remaining.length > 0 && displayed < pageProductLimit) {
+        const limit = Math.min(5, pageProductLimit - displayed)
+        const requiredSection = precedingBanner?.sectionCode
+        const upcomingBanner = pageBanners.slice(pageBannerIndex).find((banner) => (
+          !banner.sectionCode || remaining.some((product) => product.sectionCode === banner.sectionCode)
+        )) ?? null
+        const reservedSection = requiredSection ? null : upcomingBanner?.sectionCode
+        const canReserve = Boolean(reservedSection && remaining.some((product) => product.sectionCode !== reservedSection))
+        const rowProducts = requiredSection
+          ? takeMatching((product) => product.sectionCode === requiredSection, limit)
+          : canReserve
+            ? takeMatching((product) => product.sectionCode !== reservedSection, limit)
+            : remaining.splice(0, limit)
+        if (!rowProducts.length) {
+          precedingBanner = null
+          continue
+        }
+        displayed += rowProducts.length
+        const bannerAfter = displayed < pageProductLimit && remaining.length ? nextAvailableBanner() : null
+        rows.push({ products: rowProducts, bannerAfter })
+        precedingBanner = bannerAfter
       }
-      displayed += rowProducts.length
-      const bannerAfter = displayed < visibleCount && remaining.length ? nextAvailableBanner() : null
-      rows.push({ products: rowProducts, bannerAfter })
-      precedingBanner = bannerAfter
     }
     return rows
   }, [catalogBanners, filteredProducts, visibleCount])
