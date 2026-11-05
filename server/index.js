@@ -1130,14 +1130,14 @@ app.get('/api/products', async (request, response, next) => {
 const partnerLogoBySupplier = new Map([
   [117, '/assets/partners/117.png'],
   [967, '/assets/partners/967.png'],
-  [1431, '/assets/partners/1431.png'],
+  [1481, '/assets/partners/1481.png'],
   [1630, '/assets/partners/1630.png'],
   [4698, '/assets/partners/4698.png'],
 ])
 const partnerNameBySupplier = new Map([
   [117, 'Bombril S.A.'],
   [967, 'Maratá'],
-  [1431, 'Realeza'],
+  [1481, 'Realeza'],
   [1630, 'Panasonic'],
   [4698, 'Assim'],
 ])
