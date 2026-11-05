@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS banners (
   image_data BYTEA,
   image_mime VARCHAR(50),
   target_url TEXT NOT NULL DEFAULT '#produtos',
+  section_code INTEGER,
   placement VARCHAR(20) NOT NULL DEFAULT 'hero' CHECK (placement IN ('hero', 'catalog')),
   position INTEGER NOT NULL DEFAULT 0,
   active BOOLEAN NOT NULL DEFAULT TRUE,

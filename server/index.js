@@ -363,6 +363,19 @@ function decodeBannerImage(dataUrl) {
   return { mime: match[1], data }
 }
 
+async function findMissingBannerSection(database, banners) {
+  const sectionCodes = [...new Set(banners.map((banner) => banner.sectionCode).filter(Boolean))]
+  if (!sectionCodes.length) return null
+  const result = await database.query(
+    `SELECT DISTINCT section_code
+     FROM products
+     WHERE active=TRUE AND section_code = ANY($1::int[])`,
+    [sectionCodes],
+  )
+  const availableCodes = new Set(result.rows.map((row) => Number(row.section_code)))
+  return sectionCodes.find((code) => !availableCodes.has(Number(code))) ?? null
+}
+
 function decodeProductImage(dataUrl) {
   const match = /^data:(image\/webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''))
   if (!match) throw new Error('Imagem inválida. A foto do produto deve estar no formato WEBP.')
@@ -718,13 +731,22 @@ app.get('/api/banners', async (request, response, next) => {
   try {
     const placement = request.query.placement === 'catalog' ? 'catalog' : 'hero'
     const result = await pool.query(
-      `SELECT id, title, alt_text, image_path, image_data IS NOT NULL AS uploaded,
-              target_url, position, active, placement, starts_at, ends_at, updated_at
-       FROM banners
-       WHERE active = TRUE AND placement = $1
-         AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP)
-         AND (ends_at IS NULL OR ends_at > CURRENT_TIMESTAMP)
-       ORDER BY position, id`,
+      `SELECT b.id, b.title, b.alt_text, b.image_path, b.image_data IS NOT NULL AS uploaded,
+              b.target_url, b.section_code, b.position, b.active, b.placement,
+              b.starts_at, b.ends_at, b.updated_at,
+              tx.section_name, tx.department_code, tx.department_name
+       FROM banners b
+       LEFT JOIN (
+         SELECT section_code, MIN(section) AS section_name,
+                MIN(department_code) AS department_code, MIN(department) AS department_name
+         FROM products
+         WHERE active=TRUE AND section_code IS NOT NULL
+         GROUP BY section_code
+       ) tx ON tx.section_code=b.section_code
+       WHERE b.active = TRUE AND b.placement = $1
+         AND (b.starts_at IS NULL OR b.starts_at <= CURRENT_TIMESTAMP)
+         AND (b.ends_at IS NULL OR b.ends_at > CURRENT_TIMESTAMP)
+       ORDER BY b.position, b.id`,
       [placement],
     )
     return response.json({ banners: result.rows.map((banner) => ({
@@ -733,6 +755,10 @@ app.get('/api/banners', async (request, response, next) => {
       altText: banner.alt_text,
       imageUrl: banner.uploaded ? `/api/banners/${banner.id}/image?v=${new Date(banner.updated_at).getTime()}` : banner.image_path,
       targetUrl: banner.target_url,
+      sectionCode: banner.section_code === null ? null : Number(banner.section_code),
+      sectionName: banner.section_name || '',
+      departmentCode: banner.department_code === null ? null : Number(banner.department_code),
+      departmentName: banner.department_name || '',
       position: Number(banner.position),
       active: banner.active,
       placement: banner.placement,
@@ -1650,14 +1676,27 @@ app.delete('/api/staff/products/:id/image', requireStaff, async (request, respon
 app.get('/api/staff/banners', requireStaff, async (_request, response, next) => {
   try {
     const result = await pool.query(
-      `SELECT id, title, alt_text, image_path, image_data IS NOT NULL AS uploaded,
-              target_url, position, active, placement, starts_at, ends_at, updated_at
-       FROM banners ORDER BY position, id`,
+      `SELECT b.id, b.title, b.alt_text, b.image_path, b.image_data IS NOT NULL AS uploaded,
+              b.target_url, b.section_code, b.position, b.active, b.placement,
+              b.starts_at, b.ends_at, b.updated_at,
+              tx.section_name, tx.department_code, tx.department_name
+       FROM banners b
+       LEFT JOIN (
+         SELECT section_code, MIN(section) AS section_name,
+                MIN(department_code) AS department_code, MIN(department) AS department_name
+         FROM products
+         WHERE active=TRUE AND section_code IS NOT NULL
+         GROUP BY section_code
+       ) tx ON tx.section_code=b.section_code
+       ORDER BY b.position, b.id`,
     )
     return response.json({ banners: result.rows.map((banner) => ({
       id: Number(banner.id), title: banner.title, altText: banner.alt_text,
       imageUrl: banner.uploaded ? `/api/banners/${banner.id}/image?v=${new Date(banner.updated_at).getTime()}` : banner.image_path,
       targetUrl: banner.target_url, position: Number(banner.position), active: banner.active, placement: banner.placement,
+      sectionCode: banner.section_code === null ? null : Number(banner.section_code),
+      sectionName: banner.section_name || '', departmentCode: banner.department_code === null ? null : Number(banner.department_code),
+      departmentName: banner.department_name || '',
       startsAt: banner.starts_at, endsAt: banner.ends_at,
     })) })
   } catch (error) {
@@ -1671,6 +1710,11 @@ app.put('/api/staff/banners', requireStaff, async (request, response, next) => {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+    const missingSection = await findMissingBannerSection(client, parsed.data.banners)
+    if (missingSection) {
+      await client.query('ROLLBACK')
+      return response.status(400).json({ message: `A seção ${missingSection} não está disponível no catálogo ativo.` })
+    }
     if (parsed.data.deletedIds.length) {
       await client.query('DELETE FROM banners WHERE id = ANY($1::bigint[])', [parsed.data.deletedIds])
     }
@@ -1682,13 +1726,15 @@ app.put('/api/staff/banners', requireStaff, async (request, response, next) => {
       }
       if (banner.id) {
         const result = await client.query(
-          `UPDATE banners SET title=$1, alt_text=$2, target_url=$3, position=$4, active=$5, placement=$6,
-             starts_at=$7, ends_at=$8, image_data=COALESCE($9, image_data), image_mime=COALESCE($10, image_mime),
-             image_path=CASE WHEN $9::bytea IS NOT NULL THEN NULL ELSE image_path END,
+          `UPDATE banners SET title=$1, alt_text=$2, target_url=$3, section_code=$4,
+             position=$5, active=$6, placement=$7,
+             starts_at=$8, ends_at=$9, image_data=COALESCE($10, image_data), image_mime=COALESCE($11, image_mime),
+             image_path=CASE WHEN $10::bytea IS NOT NULL THEN NULL ELSE image_path END,
              updated_at=CURRENT_TIMESTAMP
-           WHERE id=$11 RETURNING id`,
-          [banner.title, banner.altText, banner.targetUrl || '#produtos', banner.position, banner.active,
-            banner.placement, banner.startsAt || null, banner.endsAt || null, image?.data ?? null, image?.mime ?? null, banner.id],
+           WHERE id=$12 RETURNING id`,
+          [banner.title, banner.altText, banner.targetUrl || '#produtos', banner.sectionCode,
+            banner.position, banner.active, banner.placement, banner.startsAt || null, banner.endsAt || null,
+            image?.data ?? null, image?.mime ?? null, banner.id],
         )
         if (!result.rows.length) throw new Error('Um dos banners editados nÃ£o existe mais.')
       } else {
@@ -1697,10 +1743,10 @@ app.put('/api/staff/banners', requireStaff, async (request, response, next) => {
           return response.status(400).json({ message: `Selecione uma imagem para o banner â€œ${banner.title}â€.` })
         }
         await client.query(
-          `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, position, active, placement, starts_at, ends_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-          [banner.title, banner.altText, image.data, image.mime, banner.targetUrl || '#produtos', banner.position,
-            banner.active, banner.placement, banner.startsAt || null, banner.endsAt || null],
+          `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, section_code, position, active, placement, starts_at, ends_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [banner.title, banner.altText, image.data, image.mime, banner.targetUrl || '#produtos', banner.sectionCode,
+            banner.position, banner.active, banner.placement, banner.startsAt || null, banner.endsAt || null],
         )
       }
     }
@@ -1718,21 +1764,25 @@ app.put('/api/staff/banners/:id', requireStaff, async (request, response, next) 
   try {
     const parsed = bannerSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+    const missingSection = await findMissingBannerSection(pool, [parsed.data])
+    if (missingSection) return response.status(400).json({ message: `A seção ${missingSection} não está disponível no catálogo ativo.` })
     let image = null
     try { image = decodeBannerImage(parsed.data.imageDataUrl) } catch (error) {
       return response.status(400).json({ message: error.message })
     }
     const values = [
       parsed.data.title, parsed.data.altText, parsed.data.targetUrl || '#produtos',
-      parsed.data.position, parsed.data.active, parsed.data.placement, image?.data ?? null, image?.mime ?? null,
+      parsed.data.sectionCode, parsed.data.position, parsed.data.active, parsed.data.placement,
+      image?.data ?? null, image?.mime ?? null,
       request.params.id,
     ]
     const result = await pool.query(
-      `UPDATE banners SET title=$1, alt_text=$2, target_url=$3, position=$4, active=$5, placement=$6,
-         image_data=COALESCE($7, image_data), image_mime=COALESCE($8, image_mime),
-         image_path=CASE WHEN $7::bytea IS NOT NULL THEN NULL ELSE image_path END,
+      `UPDATE banners SET title=$1, alt_text=$2, target_url=$3, section_code=$4,
+         position=$5, active=$6, placement=$7,
+         image_data=COALESCE($8, image_data), image_mime=COALESCE($9, image_mime),
+         image_path=CASE WHEN $8::bytea IS NOT NULL THEN NULL ELSE image_path END,
          updated_at=CURRENT_TIMESTAMP
-       WHERE id=$9 RETURNING id`,
+       WHERE id=$10 RETURNING id`,
       values,
     )
     if (!result.rows.length) return response.status(404).json({ message: 'Banner não encontrado.' })
@@ -1746,15 +1796,18 @@ app.post('/api/staff/banners', requireStaff, async (request, response, next) => 
   try {
     const parsed = bannerSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+    const missingSection = await findMissingBannerSection(pool, [parsed.data])
+    if (missingSection) return response.status(400).json({ message: `A seção ${missingSection} não está disponível no catálogo ativo.` })
     let image
     try { image = decodeBannerImage(parsed.data.imageDataUrl) } catch (error) {
       return response.status(400).json({ message: error.message })
     }
     if (!image) return response.status(400).json({ message: 'Selecione uma imagem para o novo banner.' })
     const result = await pool.query(
-      `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, position, active, placement)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-      [parsed.data.title, parsed.data.altText, image.data, image.mime, parsed.data.targetUrl || '#produtos', parsed.data.position, parsed.data.active, parsed.data.placement],
+      `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, section_code, position, active, placement)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      [parsed.data.title, parsed.data.altText, image.data, image.mime, parsed.data.targetUrl || '#produtos',
+        parsed.data.sectionCode, parsed.data.position, parsed.data.active, parsed.data.placement],
     )
     return response.status(201).json({ id: Number(result.rows[0].id), saved: true })
   } catch (error) {

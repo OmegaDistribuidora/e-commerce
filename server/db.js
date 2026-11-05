@@ -68,9 +68,11 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE order_items ADD COLUMN IF NOT EXISTS units INTEGER')
   await pool.query('UPDATE order_items SET units = boxes * units_per_box WHERE units IS NULL')
   await pool.query("ALTER TABLE banners ADD COLUMN IF NOT EXISTS placement VARCHAR(20) NOT NULL DEFAULT 'hero'")
+  await pool.query('ALTER TABLE banners ADD COLUMN IF NOT EXISTS section_code INTEGER')
   await pool.query('ALTER TABLE banners ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ')
   await pool.query('ALTER TABLE banners ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_plan_label VARCHAR(160)')
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_banners_section_code ON banners(section_code)')
   if (process.env.DATABASE_URL) {
     await pool.query(`CREATE TABLE IF NOT EXISTS customer_commercial_conditions (
       customer_id BIGINT PRIMARY KEY REFERENCES customers(id) ON DELETE CASCADE,

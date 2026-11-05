@@ -29,8 +29,8 @@ function categoryIcon(name: string) {
 }
 
 const fallbackSlides: Banner[] = [
-  { id: 1, title: 'Institucional Ômega', imageUrl: '/assets/banner-omega.png', altText: 'Tudo que o seu negócio precisa, em um só lugar', targetUrl: '#produtos', position: 1, active: true, placement: 'hero', startsAt: null, endsAt: null },
-  { id: 2, title: 'Linha Bombril', imageUrl: '/assets/banner-bombril.png', altText: 'Linha Bombril: mais limpeza para o seu dia a dia', targetUrl: '#produtos', position: 2, active: true, placement: 'hero', startsAt: null, endsAt: null },
+  { id: 1, title: 'Institucional Ômega', imageUrl: '/assets/banner-omega.png', altText: 'Tudo que o seu negócio precisa, em um só lugar', targetUrl: '#produtos', sectionCode: null, position: 1, active: true, placement: 'hero', startsAt: null, endsAt: null },
+  { id: 2, title: 'Linha Bombril', imageUrl: '/assets/banner-bombril.png', altText: 'Linha Bombril: mais limpeza para o seu dia a dia', targetUrl: '#produtos', sectionCode: null, position: 2, active: true, placement: 'hero', startsAt: null, endsAt: null },
 ]
 
 const whatsappUrl = `https://wa.me/558592020207?text=${encodeURIComponent('Olá! Venho do e-Commerce da Ômega Distribuidora e preciso de atendimento!')}`
@@ -173,8 +173,45 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
   const selectedSection = selectedDepartment?.sections.find((section) => section.name === sectionFilter)
   const headerDepartments = useMemo(() => [...departments].sort((a, b) => b.productCount - a.productCount || a.name.localeCompare(b.name, 'pt-BR')).slice(0, 6), [departments])
 
-  const visibleProducts = filteredProducts.slice(0, visibleCount)
-  const productRows = Array.from({ length: Math.ceil(visibleProducts.length / 5) }, (_, index) => visibleProducts.slice(index * 5, index * 5 + 5))
+  const catalogRows = useMemo(() => {
+    const remaining = [...filteredProducts]
+    const rows: Array<{ products: Product[]; bannerAfter: Banner | null }> = []
+    let displayed = 0
+    let bannerIndex = 0
+    const takeMatching = (predicate: (product: Product) => boolean, limit: number) => {
+      const selected: Product[] = []
+      for (let index = 0; index < remaining.length && selected.length < limit;) {
+        if (predicate(remaining[index])) selected.push(...remaining.splice(index, 1))
+        else index += 1
+      }
+      return selected
+    }
+    while (remaining.length > 0 && displayed < visibleCount) {
+      const candidateBanner: Banner | null = catalogBanners[bannerIndex] ?? null
+      bannerIndex += candidateBanner ? 1 : 0
+      const associatedSection = candidateBanner?.sectionCode
+      const hasAssociatedProducts = Boolean(associatedSection && remaining.some((product) => product.sectionCode === associatedSection))
+      const hasOtherProducts = Boolean(associatedSection && remaining.some((product) => product.sectionCode !== associatedSection))
+      const rowProducts = hasAssociatedProducts && hasOtherProducts
+        ? takeMatching((product) => product.sectionCode !== associatedSection, Math.min(5, visibleCount - displayed))
+        : remaining.splice(0, Math.min(5, visibleCount - displayed))
+      displayed += rowProducts.length
+      const bannerAfter = candidateBanner && displayed < visibleCount
+        && (!associatedSection || (hasAssociatedProducts && hasOtherProducts)) ? candidateBanner : null
+      rows.push({ products: rowProducts, bannerAfter })
+      if (bannerAfter?.sectionCode && displayed < visibleCount) {
+        const sectionProducts = takeMatching(
+          (product) => product.sectionCode === bannerAfter?.sectionCode,
+          Math.min(5, visibleCount - displayed),
+        )
+        if (sectionProducts.length) {
+          rows.push({ products: sectionProducts, bannerAfter: null })
+          displayed += sectionProducts.length
+        }
+      }
+    }
+    return rows
+  }, [catalogBanners, filteredProducts, visibleCount])
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0)
   const cartTotal = cart.reduce((sum, item) => sum + (item.unitPrice ?? 0) * item.quantity, 0)
   const minimumOrder = 200
@@ -253,6 +290,13 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
     setVisibleCount(25)
     window.history.replaceState({}, '', `/?fornecedor=${partner.supplierId}#produtos`)
     window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }
+
+  function bannerTarget(banner: Banner) {
+    if (banner.sectionCode && banner.departmentName && banner.sectionName) {
+      return `/?departamento=${encodeURIComponent(banner.departmentName)}&secao=${encodeURIComponent(banner.sectionName)}#produtos`
+    }
+    return banner.targetUrl || '#produtos'
   }
 
   function changeQuantity(id: number, delta: number) {
@@ -360,7 +404,7 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
       {customer && !customer.canOrder && <div className="store-pending-banner"><LoaderCircle /><div><strong>Cadastro em análise</strong><span>Você já pode consultar o catálogo e os preços. A compra será liberada após a validação do seu cadastro.</span></div><a href="/pedidos">Ver meu cadastro</a></div>}
 
       <main id="top">
-        <section className="hero" aria-label="Destaques" style={{ aspectRatio: slideRatios[slide] || 2.5 }}><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item, index) => <a key={item.id} className="hero-slide" href={item.targetUrl || '#produtos'}><img src={item.imageUrl} alt={item.altText} onLoad={(event) => { const image = event.currentTarget; if (image.naturalWidth && image.naturalHeight) setSlideRatios((current) => ({ ...current, [index]: image.naturalWidth / image.naturalHeight })) }} /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => setSlide((slide - 1 + slides.length) % slides.length)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => setSlide((slide + 1) % slides.length)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => setSlide(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section>
+        <section className="hero" aria-label="Destaques" style={{ aspectRatio: slideRatios[slide] || 2.5 }}><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item, index) => <a key={item.id} className="hero-slide" href={bannerTarget(item)}><img src={item.imageUrl} alt={item.altText} onLoad={(event) => { const image = event.currentTarget; if (image.naturalWidth && image.naturalHeight) setSlideRatios((current) => ({ ...current, [index]: image.naturalWidth / image.naturalHeight })) }} /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => setSlide((slide - 1 + slides.length) % slides.length)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => setSlide((slide + 1) % slides.length)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => setSlide(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section>
 
         <section className={`container products-section ${selectedDepartment ? 'has-taxonomy' : 'catalog-home'}`} id="produtos" ref={productsRef}>
           {selectedDepartment && <aside className="taxonomy-sidebar" aria-label="Departamentos e seções">
@@ -376,7 +420,7 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
           </aside>}
           <div className="section-heading"><div><span className="eyebrow">DEPARTAMENTO → SEÇÃO → PRODUTOS</span><h1>{selectedSupplierName ? `Produtos ${selectedSupplierName}` : query ? `Resultados para “${query}”` : selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : catalogMode === 'bestsellers' ? 'Mais vendidos nos últimos 7 dias' : 'Todos os produtos'}</h1>{selectedDepartment && <p className="taxonomy-breadcrumb">{formatCatalogName(selectedDepartment.name)}{selectedSection ? ` → ${formatCatalogName(selectedSection.name)}` : ''}</p>}</div><span className="result-count">{filteredProducts.length} {filteredProducts.length === 1 ? 'produto' : 'produtos'}</span></div>
           <div className="catalog-filters"><span className="filter-title"><SlidersHorizontal size={18} /> Refinar catálogo</span><label>Fornecedor<select value={supplierFilter} onChange={(event) => { setSupplierFilter(event.target.value); setVisibleCount(25) }}><option value="">Todos os fornecedores</option>{supplierOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Departamento<select value={departmentFilter} onChange={(event) => { setDepartmentFilter(event.target.value); setSectionFilter(''); setExpandedDepartment(event.target.value); setVisibleCount(25) }}><option value="">Todos os departamentos</option>{departments.map((department) => <option value={department.name} key={department.code || department.name}>{formatCatalogName(department.name)}</option>)}</select></label><label>Seção<select value={sectionFilter} onChange={(event) => { setSectionFilter(event.target.value); setVisibleCount(25) }} disabled={!selectedDepartment}><option value="">Todas as seções</option>{selectedDepartment?.sections.map((section) => <option value={section.name} key={section.code || section.name}>{formatCatalogName(section.name)}</option>)}</select></label><button onClick={clearFilters}>Limpar filtros</button></div>
-          {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : visibleProducts.length > 0 ? <><div className="catalog-flow">{productRows.map((row, rowIndex) => <div className="catalog-row-group" key={`row-${rowIndex}`}><div className="product-grid">{row.map((product, productIndex) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? rowIndex * 5 + productIndex + 1 : undefined} addToCart={addToCart} changeQuantity={changeQuantity} quantity={cart.find((item) => item.id === product.id)?.quantity ?? 0} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} />)}</div>{catalogBanners.length > 0 && rowIndex < productRows.length - 1 && <a className="catalog-banner" href={catalogBanners[rowIndex % catalogBanners.length].targetUrl || '#produtos'}><img src={catalogBanners[rowIndex % catalogBanners.length].imageUrl} alt={catalogBanners[rowIndex % catalogBanners.length].altText} /></a>}</div>)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 25)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={clearFilters}>Limpar filtros</button></div>}
+          {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : catalogRows.length > 0 ? <><div className="catalog-flow">{catalogRows.map((row, rowIndex) => <div className="catalog-row-group" key={`row-${rowIndex}`}><div className="product-grid">{row.products.map((product, productIndex) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? rowIndex * 5 + productIndex + 1 : undefined} addToCart={addToCart} changeQuantity={changeQuantity} quantity={cart.find((item) => item.id === product.id)?.quantity ?? 0} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} />)}</div>{row.bannerAfter && <a className="catalog-banner" href={bannerTarget(row.bannerAfter)}><img src={row.bannerAfter.imageUrl} alt={row.bannerAfter.altText} /></a>}</div>)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 25)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={clearFilters}>Limpar filtros</button></div>}
         </section>
 
         <section className="container benefits" id="atendimento"><article><span><Truck /></span><div><strong>Entrega programada</strong><p>Agilidade e segurança no seu abastecimento</p></div></article><article><span><ShieldCheck /></span><div><strong>Compra segura</strong><p>Seus dados e seu pedido protegidos</p></div></article><article><span><PackageCheck /></span><div><strong>Quantidade sob medida</strong><p>Compre respeitando o múltiplo de cada produto</p></div></article><a className="benefit-card" href={whatsappUrl} target="_blank" rel="noreferrer" aria-label="Falar com o atendimento da Ômega pelo WhatsApp"><span><Headphones /></span><div><strong>Atendimento próximo</strong><p>Fale agora com nossa equipe pelo WhatsApp</p></div></a></section>

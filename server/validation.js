@@ -106,6 +106,7 @@ export const bannerSchema = z.object({
   title: z.string().trim().min(2, 'Informe o título').max(160),
   altText: z.string().trim().min(3, 'Informe o texto alternativo').max(240),
   targetUrl: z.string().trim().max(500).default('#produtos'),
+  sectionCode: z.coerce.number().int().positive().nullable().optional().default(null),
   position: z.coerce.number().int().min(0).max(1000),
   active: z.boolean(),
   placement: z.enum(['hero', 'catalog']).default('hero'),

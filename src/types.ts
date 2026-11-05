@@ -89,6 +89,10 @@ export type Banner = {
   altText: string
   imageUrl: string
   targetUrl: string
+  sectionCode: number | null
+  sectionName?: string
+  departmentCode?: number | null
+  departmentName?: string
   position: number
   active: boolean
   placement: 'hero' | 'catalog'
