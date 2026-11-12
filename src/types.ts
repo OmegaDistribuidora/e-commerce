@@ -26,6 +26,15 @@ export type Product = {
   manufacturerCode: string
   ncm: string
   ean: string
+  planPrices?: Array<{ code: string; label: string; unitPrice: number }>
+}
+
+export type PricePlan = { code: string; label: string }
+
+export type OrderQuote = {
+  paymentPlan: PricePlan
+  items: Array<{ productId: number; units: number; unitPrice: number; lineTotal: number }>
+  total: number
 }
 
 export type CatalogSection = {
@@ -106,7 +115,11 @@ export type Banner = {
 
 export type CommercialConditions = {
   creditLimit: number
-  paymentPlans: Array<{ code: string; label: string }>
+  openTitlesAmount: number
+  openOrdersAmount: number
+  pendingOrdersAmount: number
+  availableCredit: number
+  paymentPlans: Array<{ code: string; label: string; priceTable?: number }>
   updatedAt: string | null
 }
 
@@ -164,6 +177,9 @@ export type Order = {
   notes: string
   createdAt: string
   updatedAt: string
+  cancelledAt?: string | null
+  cancelledBy?: string
+  canCancel?: boolean
   customer: Pick<Customer, 'id' | 'legalName' | 'tradeName' | 'document' | 'email' | 'phone'>
   items: OrderItem[]
 }

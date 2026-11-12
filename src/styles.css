@@ -406,6 +406,12 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .order-status { width: fit-content; padding: 6px 10px; border-radius: 20px; background: #e8f2ff; color: #0758ad; font-size: 10px; font-weight: 850; text-transform: uppercase; white-space: nowrap; }
 .order-status.released { background: #fff3d8; color: #926000; }
 .order-status.sent { background: #e4f7ec; color: #18713c; }
+.order-status.cancelled { background: #f1f3f6; color: #66758b; }
+.order-cancel-button { width: fit-content; min-height: 36px; margin-top: 10px; padding: 0 12px; border: 1px solid #efb7b7; border-radius: 7px; background: #fff; color: #9c2525; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; cursor: pointer; }
+.order-cancel-button:hover:not(:disabled) { background: #fff2f2; }
+.order-cancel-button:disabled { opacity: .6; cursor: default; }
+.order-cancel-button svg { width: 15px; height: 15px; }
+.order-cancelled-note { color: #9c2525; font-size: 12px; }
 .winthor-order-box { min-width: 0; }
 .winthor-order-box form { margin: 5px 0; display: flex; gap: 6px; }
 .winthor-order-box input { min-width: 0; width: 145px; height: 37px; padding: 0 9px; border: 1px solid #cbd8e7; border-radius: 7px; outline: 0; background: #fff; }
@@ -665,6 +671,10 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .product-detail-price { margin-bottom: 18px; display: flex; align-items: baseline; gap: 8px; }
 .product-detail-price strong { font-size: 32px; }
 .product-detail-price span { color: #718198; font-size: 11px; }
+.product-detail-unavailable { margin-bottom: 18px; color: #9c2525; font-size: 13px; font-weight: 700; }
+.product-plan-prices { margin: -6px 0 18px; padding: 0; list-style: none; display: grid; gap: 4px; max-width: 340px; }
+.product-plan-prices li { padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); }
+.product-plan-prices strong { color: var(--navy); }
 .product-detail-login, .product-detail-add { width: 100%; min-height: 50px; margin-bottom: 24px; border: 0; border-radius: 8px; background: var(--blue); color: #fff; display: flex; align-items: center; justify-content: center; gap: 9px; font-weight: 800; }
 .product-detail-add { background: var(--orange); }
 .product-detail-quantity { height: 52px; margin-bottom: 24px; border: 1px solid #b9cce2; border-radius: 8px; overflow: hidden; display: grid; grid-template-columns: 56px 1fr 56px; }

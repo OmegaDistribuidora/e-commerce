@@ -87,6 +87,25 @@ export const orderSchema = z.object({
   })).min(1, 'O pedido precisa ter ao menos um item').max(200),
 })
 
+export const orderQuoteSchema = z.object({
+  paymentPlan: z.string().trim().min(1, 'Selecione um plano de pagamento').max(30),
+  items: z.array(z.object({
+    productId: z.coerce.number().int().positive(),
+    quantity: z.coerce.number().int().positive().max(100000),
+  })).min(1, 'O carrinho está vazio').max(200),
+})
+
+const priceValue = z.coerce.number().nonnegative().max(99999999).nullable()
+
+// Linhas compactas: [região, CODPROD, PTABELA1..PTABELA7].
+export const regionPricesSyncSchema = z.object({
+  regions: z.array(z.coerce.number().int().nonnegative()).min(1).max(500),
+  prices: z.array(z.tuple([
+    z.coerce.number().int().nonnegative(), z.coerce.number().int().positive(),
+    priceValue, priceValue, priceValue, priceValue, priceValue, priceValue, priceValue,
+  ])).max(500000),
+})
+
 export const staffOrderLinkSchema = z.object({
   winthorOrderNumber: z.coerce.number().int('Informe um NUMPED válido').positive('Informe um NUMPED válido').max(999999999999),
 })
@@ -117,7 +136,7 @@ export const bannerSchema = z.object({
   startsAt: z.string().datetime({ offset: true }).nullable().optional(),
   endsAt: z.string().datetime({ offset: true }).nullable().optional(),
 }).refine((value) => !value.startsAt || !value.endsAt || new Date(value.endsAt) > new Date(value.startsAt), {
-  message: 'O encerramento deve ser posterior ao inÃ­cio.', path: ['endsAt'],
+  message: 'O encerramento deve ser posterior ao início.', path: ['endsAt'],
 }).refine((value) => value.destinationType === 'navigation' || value.destinationValues.length > 0, {
   message: 'Selecione pelo menos um destino para o banner.', path: ['destinationValues'],
 })
@@ -157,12 +176,16 @@ export const productSyncSchema = z.object({
 const paymentPlanSyncSchema = z.object({
   code: z.coerce.string().trim().min(1).max(30),
   label: z.string().trim().min(1).max(160),
+  priceTable: z.coerce.number().int().min(1).max(7).optional(),
 })
 
 export const customerConditionsSyncSchema = z.object({
   customers: z.array(z.object({
     externalId: z.coerce.number().int().positive(),
     creditLimit: z.coerce.number().nonnegative().max(999999999999),
+    openTitlesAmount: z.coerce.number().nonnegative().max(999999999999).default(0),
+    openOrdersAmount: z.coerce.number().nonnegative().max(999999999999).default(0),
+    priceRegion: z.coerce.number().int().nonnegative().nullable().optional(),
     paymentPlans: z.array(paymentPlanSyncSchema).max(100),
     sourceUpdatedAt: z.string().datetime({ offset: true }).nullable().optional(),
   })).max(50000),

@@ -4,7 +4,7 @@ import {
   MapPin, Menu, Minus, Plus, Search, ShoppingCart, X, ZoomIn,
 } from 'lucide-react'
 import { authenticatedFetch } from './api'
-import { money } from './data'
+import { unitMoney } from './data'
 import { formatCatalogName } from './catalog'
 import { supabase } from './supabase'
 import type { CartItem, CatalogDepartment, Customer, Partner, Product, StaffUser } from './types'
@@ -106,7 +106,7 @@ export default function ProductPage({ code }: { code: number }) {
           <span className="eyebrow">CÓDIGO {product.code}</span>
           <h1>{product.name}</h1>
           <p className="product-detail-brand">{product.brand}</p>
-          {customer && product.unitPrice !== null ? <div className="product-detail-price"><strong>{money.format(product.unitPrice)}</strong><span>por unidade</span></div> : <a className="product-detail-login" href="/conta"><LockKeyhole /> Entrar para ver preço</a>}
+          {customer && product.unitPrice !== null ? <div className="product-detail-price"><strong>{unitMoney.format(product.unitPrice)}</strong><span>por unidade{product.planPrices?.[0] ? ` · ${product.planPrices[0].label}` : ''}</span></div> : customer ? <p className="product-detail-unavailable">Preço indisponível para o seu cadastro. Fale com a equipe Ômega.</p> : <a className="product-detail-login" href="/conta"><LockKeyhole /> Entrar para ver preço</a>}{customer && product.planPrices && product.planPrices.length > 1 && <ul className="product-plan-prices">{product.planPrices.map((plan) => <li key={plan.code}><span>{plan.label}</span><strong>{unitMoney.format(plan.unitPrice)}</strong></li>)}</ul>}
           {customer?.canOrder && product.unitPrice !== null && (quantity > 0 ? <div className="product-detail-quantity"><button onClick={() => updateCart(Math.max(0, quantity - product.salesMultiple))}><Minus /></button><span><strong>{quantity}</strong> unidades no carrinho</span><button onClick={() => updateCart(quantity + product.salesMultiple)}><Plus /></button></div> : <button className="product-detail-add" onClick={() => updateCart(product.salesMultiple)}><ShoppingCart /> Adicionar {product.salesMultiple} {product.salesMultiple === 1 ? 'unidade' : 'unidades'}</button>)}
           <div className="product-specifications">
             <h2>Detalhes do produto</h2>

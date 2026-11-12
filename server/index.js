@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
 import { findSupabaseUserByEmail, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
-import { bannerSchema, bannersBulkSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderSchema, productSyncSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema } from './validation.js'
+import { bannerSchema, bannersBulkSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productSyncSchema, regionPricesSyncSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema } from './validation.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -17,6 +17,13 @@ const currentDir = dirname(fileURLToPath(import.meta.url))
 const distDir = resolve(currentDir, '../dist')
 const orderStatusCacheMs = Math.max(1, Number(process.env.ORDER_STATUS_CACHE_MINUTES) || 15) * 60 * 1000
 const customerOrderStatuses = new Set(['analysis', 'released', 'sent'])
+
+class RequestError extends Error {
+  constructor(message, status = 400) {
+    super(message)
+    this.status = status
+  }
+}
 
 class OmegaApiError extends Error {
   constructor(message, status = 502) {
@@ -137,19 +144,19 @@ function requireAdmin(request, response, next) {
 }
 
 function requireCommercialAccess(request, response, next) {
-  if (request.authError) return response.status(401).json({ message: 'Sua sessÃ£o expirou. Entre novamente.' })
-  if (!request.staff) return response.status(401).json({ message: 'Entre na Ã¡rea de gestÃ£o para continuar.' })
+  if (request.authError) return response.status(401).json({ message: 'Sua sessão expirou. Entre novamente.' })
+  if (!request.staff) return response.status(401).json({ message: 'Entre na área de gestão para continuar.' })
   if (!['ADMIN', 'COMERCIAL'].includes(request.staff.role)) {
-    return response.status(403).json({ message: 'Este perfil nÃ£o possui acesso a pedidos ou clientes.' })
+    return response.status(403).json({ message: 'Este perfil não possui acesso a pedidos ou clientes.' })
   }
   return next()
 }
 
 function requireMarketingAccess(request, response, next) {
-  if (request.authError) return response.status(401).json({ message: 'Sua sessÃ£o expirou. Entre novamente.' })
-  if (!request.staff) return response.status(401).json({ message: 'Entre na Ã¡rea de gestÃ£o para continuar.' })
+  if (request.authError) return response.status(401).json({ message: 'Sua sessão expirou. Entre novamente.' })
+  if (!request.staff) return response.status(401).json({ message: 'Entre na área de gestão para continuar.' })
   if (!['ADMIN', 'COMERCIAL', 'MARKETING'].includes(request.staff.role)) {
-    return response.status(403).json({ message: 'Este perfil nÃ£o possui acesso ao conteÃºdo da loja.' })
+    return response.status(403).json({ message: 'Este perfil não possui acesso ao conteúdo da loja.' })
   }
   return next()
 }
@@ -320,6 +327,7 @@ async function listOrders(whereClause = '', params = []) {
     `SELECT o.id, o.status, o.winthor_order_number, o.winthor_status_code,
             o.winthor_status_label, o.winthor_status_checked_at,
             o.winthor_entered_at, o.payment_plan, o.payment_plan_label, o.total, o.notes, o.created_at, o.updated_at,
+            o.cancelled_at, o.cancelled_by,
             c.id AS customer_id, c.legal_name, c.trade_name, c.document, c.email, c.phone,
             su.name AS winthor_entered_by_name
      FROM orders o
@@ -360,6 +368,9 @@ async function listOrders(whereClause = '', params = []) {
     notes: order.notes || '',
     createdAt: order.created_at,
     updatedAt: order.updated_at,
+    cancelledAt: order.cancelled_at,
+    cancelledBy: order.cancelled_by || '',
+    canCancel: order.status === 'analysis' && order.winthor_order_number == null,
     customer: {
       id: Number(order.customer_id), legalName: order.legal_name, tradeName: order.trade_name,
       document: order.document, email: order.email, phone: order.phone,
@@ -430,6 +441,119 @@ function productImageUrl(row) {
     return `/api/products/${row.id}/image?v=${version}`
   }
   return row.image_path || null
+}
+
+const money2 = (value) => Math.round(Number(value || 0) * 100) / 100
+const PRICE_TABLES = [1, 2, 3, 4, 5, 6, 7]
+const priceTableOf = (value) => (PRICE_TABLES.includes(Number(value)) ? Number(value) : 1)
+// Coluna segura: o número é validado contra PRICE_TABLES antes de entrar no SQL.
+const priceColumn = (table) => `price_${priceTableOf(table)}`
+
+// Região de preço e planos do cliente vindos do WinThor. Sem sincronização (ex.: cadastro em análise),
+// usa a região do canal (Varejo=1, Redes=12) e PTABELA1.
+async function customerPricing(database, customer) {
+  if (!customer) return null
+  const result = await database.query(
+    'SELECT price_region, payment_plans FROM customer_commercial_conditions WHERE customer_id=$1',
+    [customer.id],
+  )
+  const row = result.rows[0]
+  const plans = (Array.isArray(row?.payment_plans) ? row.payment_plans : []).map((plan) => ({
+    code: String(plan.code),
+    label: String(plan.label),
+    priceTable: priceTableOf(plan.priceTable),
+  }))
+  const region = row?.price_region != null ? Number(row.price_region) : (customer.sales_channel === 'Redes' ? 12 : 1)
+  return { region, plans, defaultPlan: plans[0] || null }
+}
+
+// Calcula as linhas do carrinho com o preço da região do cliente na tabela do plano escolhido.
+async function priceCartItems(database, pricing, plan, items) {
+  const productIds = [...new Set(items.map((item) => item.productId))]
+  const placeholders = productIds.map((_, index) => `$${index + 2}`).join(',')
+  const result = await database.query(
+    `SELECT p.id, p.external_id, p.name, p.units_per_box, p.sales_multiple, CASE WHEN rp.${priceColumn(plan.priceTable)} > 0 THEN rp.${priceColumn(plan.priceTable)} END AS price
+     FROM products p
+     LEFT JOIN region_prices rp ON rp.product_id = p.id AND rp.region = $1
+     WHERE p.active = TRUE AND p.id IN (${placeholders})`,
+    [pricing.region, ...productIds],
+  )
+  const productMap = new Map(result.rows.map((product) => [Number(product.id), product]))
+  if (productMap.size !== productIds.length) throw new RequestError('Um ou mais produtos não estão disponíveis.')
+  const lines = items.map((item) => {
+    const product = productMap.get(item.productId)
+    if (product.price == null) {
+      throw new RequestError(`O produto ${product.external_id} - ${product.name} está sem preço para o seu cadastro. Remova-o do carrinho.`)
+    }
+    const units = item.quantity
+    const salesMultiple = Math.max(1, Number(product.sales_multiple))
+    if (units < salesMultiple || units % salesMultiple !== 0) {
+      throw new RequestError(`A quantidade do produto ${product.external_id} deve ser um múltiplo de ${salesMultiple} unidades.`)
+    }
+    const unitPrice = Number(product.price)
+    return {
+      product,
+      units,
+      boxes: Math.max(1, Math.ceil(units / Number(product.units_per_box))),
+      unitPrice,
+      lineTotal: money2(units * unitPrice),
+    }
+  })
+  return { lines, total: money2(lines.reduce((sum, line) => sum + line.lineTotal, 0)) }
+}
+
+// Só pedidos ainda em análise e sem NUMPED podem ser cancelados.
+async function cancelOrder(orderId, { customerId = null, cancelledBy }) {
+  const ownerClause = customerId ? ' AND customer_id=$3' : ''
+  const params = customerId ? [orderId, cancelledBy, customerId] : [orderId, cancelledBy]
+  const result = await pool.query(
+    `UPDATE orders SET status='cancelled', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=$2, updated_at=CURRENT_TIMESTAMP
+     WHERE id=$1${ownerClause} AND status='analysis' AND winthor_order_number IS NULL
+     RETURNING id`,
+    params,
+  )
+  if (result.rows.length) return
+  const current = await pool.query(
+    `SELECT status, winthor_order_number FROM orders WHERE id=$1${customerId ? ' AND customer_id=$2' : ''}`,
+    customerId ? [orderId, customerId] : [orderId],
+  )
+  if (!current.rows.length) throw new RequestError('Pedido não encontrado.', 404)
+  if (current.rows[0].status === 'cancelled') throw new RequestError('Este pedido já foi cancelado.', 409)
+  throw new RequestError(
+    `Este pedido já foi vinculado ao WinThor (NUMPED ${current.rows[0].winthor_order_number}) e não pode mais ser cancelado pelo e-commerce.`,
+    409,
+  )
+}
+
+// Crédito disponível = LIMCRED - títulos em aberto - pedidos não faturados no WinThor
+// - pedidos do e-commerce que ainda não estavam no WinThor na última leitura.
+async function customerCreditSummary(database, customerId, { lock = false } = {}) {
+  const conditionsResult = await database.query(
+    `SELECT credit_limit, open_titles_amount, open_orders_amount, payment_plans, source_updated_at, updated_at
+     FROM customer_commercial_conditions WHERE customer_id=$1${lock ? ' FOR UPDATE' : ''}`,
+    [customerId],
+  )
+  if (!conditionsResult.rows.length) return null
+  const row = conditionsResult.rows[0]
+  const pendingResult = await database.query(
+    `SELECT COALESCE(SUM(total),0) AS total FROM orders
+     WHERE customer_id=$1 AND status <> 'cancelled'
+       AND (winthor_order_number IS NULL OR $2::timestamptz IS NULL OR winthor_entered_at::timestamptz > $2::timestamptz)`,
+    [customerId, row.source_updated_at || null],
+  )
+  const creditLimit = money2(row.credit_limit)
+  const openTitlesAmount = money2(row.open_titles_amount)
+  const openOrdersAmount = money2(row.open_orders_amount)
+  const pendingOrdersAmount = money2(pendingResult.rows[0].total)
+  return {
+    creditLimit,
+    openTitlesAmount,
+    openOrdersAmount,
+    pendingOrdersAmount,
+    availableCredit: Math.max(0, money2(creditLimit - openTitlesAmount - openOrdersAmount - pendingOrdersAmount)),
+    paymentPlans: Array.isArray(row.payment_plans) ? row.payment_plans : [],
+    updatedAt: row.source_updated_at || row.updated_at,
+  }
 }
 
 function validIntegrationToken(request) {
@@ -1011,7 +1135,7 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
 })
 
 app.get('/api/integrations/customers', async (request, response) => {
-  if (!validIntegrationToken(request)) return response.status(401).json({ message: 'Credencial de integraÃ§Ã£o invÃ¡lida.' })
+  if (!validIntegrationToken(request)) return response.status(401).json({ message: 'Credencial de integração inválida.' })
   const result = await pool.query(
     `SELECT DISTINCT external_id FROM customers
      WHERE active=TRUE AND registration_status='approved' AND external_id IS NOT NULL
@@ -1021,7 +1145,7 @@ app.get('/api/integrations/customers', async (request, response) => {
 })
 
 app.post('/api/integrations/customers/conditions', async (request, response, next) => {
-  if (!validIntegrationToken(request)) return response.status(401).json({ message: 'Credencial de integraÃ§Ã£o invÃ¡lida.' })
+  if (!validIntegrationToken(request)) return response.status(401).json({ message: 'Credencial de integração inválida.' })
   const parsed = customerConditionsSyncSchema.safeParse(request.body)
   if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
   const client = await pool.connect()
@@ -1030,13 +1154,17 @@ app.post('/api/integrations/customers/conditions', async (request, response, nex
     let updatedCount = 0
     for (const condition of parsed.data.customers) {
       const result = await client.query(
-        `INSERT INTO customer_commercial_conditions (customer_id, credit_limit, payment_plans, source_updated_at)
-         SELECT id,$2::numeric,$3::jsonb,$4::timestamptz FROM customers WHERE external_id=$1 AND active=TRUE
+        `INSERT INTO customer_commercial_conditions
+           (customer_id, credit_limit, open_titles_amount, open_orders_amount, price_region, payment_plans, source_updated_at)
+         SELECT id,$2::numeric,$5::numeric,$6::numeric,$7::int,$3::jsonb,$4::timestamptz FROM customers WHERE external_id=$1 AND active=TRUE
          ON CONFLICT (customer_id) DO UPDATE SET credit_limit=EXCLUDED.credit_limit,
+           open_titles_amount=EXCLUDED.open_titles_amount, open_orders_amount=EXCLUDED.open_orders_amount,
+           price_region=COALESCE(EXCLUDED.price_region, customer_commercial_conditions.price_region),
            payment_plans=EXCLUDED.payment_plans, source_updated_at=EXCLUDED.source_updated_at,
            updated_at=CURRENT_TIMESTAMP
          RETURNING customer_id`,
-        [condition.externalId, condition.creditLimit, JSON.stringify(condition.paymentPlans), condition.sourceUpdatedAt || null],
+        [condition.externalId, condition.creditLimit, JSON.stringify(condition.paymentPlans), condition.sourceUpdatedAt || null,
+          condition.openTitlesAmount, condition.openOrdersAmount, condition.priceRegion ?? null],
       )
       updatedCount += result.rowCount
     }
@@ -1047,6 +1175,108 @@ app.post('/api/integrations/customers/conditions', async (request, response, nex
     return next(error)
   } finally {
     client.release()
+  }
+})
+
+app.post('/api/integrations/prices/sync', async (request, response, next) => {
+  if (!validIntegrationToken(request)) return response.status(401).json({ message: 'Credencial de integração inválida.' })
+  const parsed = regionPricesSyncSchema.safeParse(request.body)
+  if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+  const regions = [...new Set(parsed.data.regions)]
+  const regionSet = new Set(regions)
+  const rowMap = new Map()
+  for (const row of parsed.data.prices) {
+    if (regionSet.has(row[0])) rowMap.set(`${row[0]}:${row[1]}`, row)
+  }
+  const rows = [...rowMap.values()]
+  const minimum = Math.max(1, Number(process.env.PRODUCT_SYNC_MIN_COUNT) || 100)
+  if (rows.length < minimum) {
+    return response.status(409).json({ message: `Sincronização de preços cancelada: ${rows.length} preços recebidos, abaixo do mínimo de segurança (${minimum}).` })
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    if (process.env.DATABASE_URL) {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('omega_ecommerce_price_sync'))")
+    }
+    await client.query('DROP TABLE IF EXISTS ecommerce_price_stage')
+    await client.query(
+      `CREATE TABLE ecommerce_price_stage (
+        region INTEGER, external_id INTEGER,
+        price_1 NUMERIC(14,6), price_2 NUMERIC(14,6), price_3 NUMERIC(14,6), price_4 NUMERIC(14,6),
+        price_5 NUMERIC(14,6), price_6 NUMERIC(14,6), price_7 NUMERIC(14,6)
+      )`,
+    )
+    for (let offset = 0; offset < rows.length; offset += 500) {
+      const batch = rows.slice(offset, offset + 500)
+      const params = []
+      const values = batch.map((row) => `(${row.map((value) => { params.push(value); return `$${params.length}` }).join(',')})`)
+      await client.query(`INSERT INTO ecommerce_price_stage VALUES ${values.join(',')}`, params)
+    }
+    const columns = PRICE_TABLES.map((table) => `price_${table}`)
+    // Grava somente preços novos ou alterados.
+    const changed = await client.query(
+      `INSERT INTO region_prices (region, product_id, ${columns.join(', ')})
+       SELECT s.region, p.id, ${columns.map((column) => `s.${column}`).join(', ')}
+       FROM ecommerce_price_stage s
+       JOIN products p ON p.company='Filial' AND p.external_id=s.external_id
+       ON CONFLICT (region, product_id) DO UPDATE SET
+         ${columns.map((column) => `${column}=EXCLUDED.${column}`).join(', ')}, updated_at=CURRENT_TIMESTAMP
+       WHERE ${columns.map((column) => `COALESCE(region_prices.${column},-1)<>COALESCE(EXCLUDED.${column},-1)`).join(' OR ')}`,
+    )
+    // Remove regiões que nenhum cliente usa mais e preços excluídos no WinThor.
+    const productIds = new Map((await client.query(
+      "SELECT id, external_id FROM products WHERE company='Filial'",
+    )).rows.map((product) => [Number(product.external_id), Number(product.id)]))
+    const incoming = new Set(rows.map((row) => `${row[0]}:${productIds.get(row[1])}`))
+    const staleByRegion = new Map()
+    for (const current of (await client.query('SELECT region, product_id FROM region_prices')).rows) {
+      const region = Number(current.region)
+      const productId = Number(current.product_id)
+      if (incoming.has(`${region}:${productId}`)) continue
+      staleByRegion.set(region, [...(staleByRegion.get(region) || []), productId])
+    }
+    let removedCount = 0
+    for (const [region, staleIds] of staleByRegion) {
+      for (let offset = 0; offset < staleIds.length; offset += 1000) {
+        const removed = await client.query(
+          'DELETE FROM region_prices WHERE region=$1 AND product_id = ANY($2::bigint[])',
+          [region, staleIds.slice(offset, offset + 1000)],
+        )
+        removedCount += removed.rowCount
+      }
+    }
+    await client.query('DROP TABLE ecommerce_price_stage')
+    await client.query('COMMIT')
+    return response.json({ regions: regions.length, sourceCount: rows.length, changedCount: changed.rowCount, removedCount })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    return next(error)
+  } finally {
+    client.release()
+  }
+})
+
+app.post('/api/customer/quote', async (request, response, next) => {
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para calcular o pedido.' })
+  const parsed = orderQuoteSchema.safeParse(request.body)
+  if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+  try {
+    const pricing = await customerPricing(pool, request.customer)
+    if (!pricing.plans.length) {
+      return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda estão sendo atualizadas pelo WinThor.' })
+    }
+    const plan = pricing.plans.find((item) => item.code === parsed.data.paymentPlan)
+    if (!plan) return response.status(400).json({ message: 'O plano de pagamento selecionado não está liberado para este cliente.' })
+    const { lines, total } = await priceCartItems(pool, pricing, plan, parsed.data.items)
+    return response.json({
+      paymentPlan: { code: plan.code, label: plan.label },
+      items: lines.map((line) => ({ productId: Number(line.product.id), units: line.units, unitPrice: line.unitPrice, lineTotal: line.lineTotal })),
+      total,
+    })
+  } catch (error) {
+    if (error instanceof RequestError) return response.status(error.status).json({ message: error.message })
+    return next(error)
   }
 })
 
@@ -1079,6 +1309,11 @@ app.get('/api/products', async (request, response, next) => {
       params.push(section)
       conditions.push(`p.section_code = $${params.length}`)
     }
+    const pricing = await customerPricing(pool, request.customer)
+    params.push(pricing ? pricing.region : -1)
+    const regionParam = params.length
+    const defaultPriceColumn = `rp.${priceColumn(pricing?.defaultPlan?.priceTable)}`
+    const priceExpression = `CASE WHEN ${defaultPriceColumn} > 0 THEN ${defaultPriceColumn} END`
     params.push(limit)
 
     const hasImage = `(p.image_hidden=FALSE AND (p.image_data IS NOT NULL OR p.image_path IS NOT NULL))`
@@ -1099,9 +1334,10 @@ app.get('/api/products', async (request, response, next) => {
               p.category, p.department_code, p.department, p.section_code, p.section, p.stock_units, p.image_path,
               p.image_data IS NOT NULL AS image_uploaded, p.image_hidden, p.image_updated_at, p.ean,
               p.manufacturer_code, p.ncm_code,
-              p.price_date, COALESCE(w.units, 0) AS weekly_sales
+              p.price_date, COALESCE(w.units, 0) AS weekly_sales, ${priceExpression} AS customer_price
        FROM products p
        LEFT JOIN weekly w ON w.product_id = p.id
+       LEFT JOIN region_prices rp ON rp.product_id = p.id AND rp.region = $${regionParam}
        WHERE ${conditions.join(' AND ')}
        ORDER BY ${orderBy}
        LIMIT $${params.length}`,
@@ -1110,10 +1346,7 @@ app.get('/api/products', async (request, response, next) => {
 
     response.json({
       products: result.rows.map((row) => {
-        const authenticated = Boolean(request.customer)
-        const channelPrice = request.customer?.sales_channel === 'Redes'
-          ? row.network_unit_price
-          : row.retail_unit_price
+        const customerPrice = request.customer && row.customer_price != null ? Number(row.customer_price) : null
         return {
         id: row.id,
         code: row.external_id,
@@ -1125,9 +1358,9 @@ app.get('/api/products', async (request, response, next) => {
         unitsPerBox: Number(row.units_per_box),
         salesMultiple: Number(row.sales_multiple),
         minBoxes: Number(row.min_boxes),
-        unitPrice: authenticated ? Number(channelPrice ?? row.unit_price) : null,
-        listUnitPrice: authenticated ? Number(row.list_unit_price ?? channelPrice ?? row.unit_price) : null,
-        category: row.section || 'Sem seÃ§Ã£o',
+        unitPrice: customerPrice,
+        listUnitPrice: customerPrice,
+        category: row.section || 'Sem seção',
         categories: row.section ? [row.section] : [],
         departmentCode: Number(row.department_code || 0),
         department: row.department,
@@ -1143,6 +1376,7 @@ app.get('/api/products', async (request, response, next) => {
       }}),
       sort,
       count: result.rows.length,
+      pricePlan: pricing?.defaultPlan ? { code: pricing.defaultPlan.code, label: pricing.defaultPlan.label } : null,
     })
   } catch (error) {
     next(error)
@@ -1225,7 +1459,7 @@ app.get('/api/catalog/navigation', async (_request, response, next) => {
 app.get('/api/products/:code', async (request, response, next) => {
   try {
     const code = Number(request.params.code)
-    if (!Number.isSafeInteger(code) || code < 1) return response.status(400).json({ message: 'CÃ³digo de produto invÃ¡lido.' })
+    if (!Number.isSafeInteger(code) || code < 1) return response.status(400).json({ message: 'Código de produto inválido.' })
     const result = await pool.query(
       `SELECT id, external_id, supplier_id, brand, name, package, master_package, units_per_box,
               sales_multiple, min_boxes, unit_price, list_unit_price, retail_unit_price,
@@ -1235,15 +1469,28 @@ app.get('/api/products/:code', async (request, response, next) => {
        FROM products WHERE external_id=$1 AND active=TRUE LIMIT 1`,
       [code],
     )
-    if (!result.rows.length) return response.status(404).json({ message: 'Produto nÃ£o encontrado ou indisponÃ­vel.' })
+    if (!result.rows.length) return response.status(404).json({ message: 'Produto não encontrado ou indisponível.' })
     const row = result.rows[0]
-    const channelPrice = request.customer?.sales_channel === 'Redes' ? row.network_unit_price : row.retail_unit_price
+    const pricing = await customerPricing(pool, request.customer)
+    let unitPrice = null
+    let planPrices = []
+    if (pricing) {
+      const priceResult = await pool.query(
+        `SELECT ${PRICE_TABLES.map((table) => `price_${table}`).join(', ')} FROM region_prices WHERE region=$1 AND product_id=$2`,
+        [pricing.region, row.id],
+      )
+      const prices = priceResult.rows[0]
+      const priceFor = (table) => (prices && Number(prices[priceColumn(table)]) > 0 ? Number(prices[priceColumn(table)]) : null)
+      unitPrice = priceFor(pricing.defaultPlan?.priceTable)
+      planPrices = pricing.plans
+        .map((plan) => ({ code: plan.code, label: plan.label, unitPrice: priceFor(plan.priceTable) }))
+        .filter((plan) => plan.unitPrice !== null)
+    }
     return response.json({ product: {
       id: Number(row.id), code: Number(row.external_id), supplierId: Number(row.supplier_id || 0),
       brand: row.brand, name: row.name, package: row.package || '', masterPackage: row.master_package || '',
       unitsPerBox: Number(row.units_per_box), salesMultiple: Number(row.sales_multiple), minBoxes: Number(row.min_boxes),
-      unitPrice: request.customer ? Number(channelPrice ?? row.unit_price) : null,
-      listUnitPrice: request.customer ? Number(row.list_unit_price ?? channelPrice ?? row.unit_price) : null,
+      unitPrice, listUnitPrice: unitPrice, planPrices,
       category: row.category || 'Sem categoria', categories: [],
       departmentCode: Number(row.department_code || 0), department: row.department || '',
       sectionCode: Number(row.section_code || 0), section: row.section || '',
@@ -1256,22 +1503,13 @@ app.get('/api/products/:code', async (request, response, next) => {
 })
 
 app.get('/api/customer/commercial-conditions', async (request, response, next) => {
-  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para consultar as condiÃ§Ãµes comerciais.' })
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para consultar as condições comerciais.' })
   try {
-    const result = await pool.query(
-      `SELECT credit_limit, payment_plans, source_updated_at, updated_at
-       FROM customer_commercial_conditions WHERE customer_id=$1 LIMIT 1`,
-      [request.customer.id],
-    )
-    if (!result.rows.length) {
-      return response.status(503).json({ message: 'As condiÃ§Ãµes comerciais deste cadastro ainda estÃ£o sendo atualizadas pelo WinThor.' })
+    const summary = await customerCreditSummary(pool, request.customer.id)
+    if (!summary) {
+      return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda estão sendo atualizadas pelo WinThor.' })
     }
-    const row = result.rows[0]
-    return response.json({
-      creditLimit: Number(row.credit_limit),
-      paymentPlans: Array.isArray(row.payment_plans) ? row.payment_plans : [],
-      updatedAt: row.source_updated_at || row.updated_at,
-    })
+    return response.json(summary)
   } catch (error) {
     return next(error)
   }
@@ -1351,6 +1589,33 @@ app.get('/api/orders', async (request, response, next) => {
   try {
     return response.json({ orders: await listOrders('WHERE o.customer_id = $1', [request.customer.id]) })
   } catch (error) {
+    return next(error)
+  }
+})
+
+app.post('/api/orders/:id/cancel', async (request, response, next) => {
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para cancelar o pedido.' })
+  const orderId = Number(request.params.id)
+  if (!Number.isSafeInteger(orderId) || orderId < 1) return response.status(400).json({ message: 'Pedido inválido.' })
+  try {
+    await cancelOrder(orderId, { customerId: request.customer.id, cancelledBy: 'Cliente' })
+    const orders = await listOrders('WHERE o.id = $1', [orderId])
+    return response.json({ order: orders[0] })
+  } catch (error) {
+    if (error instanceof RequestError) return response.status(error.status).json({ message: error.message })
+    return next(error)
+  }
+})
+
+app.post('/api/staff/orders/:id/cancel', requireCommercialAccess, async (request, response, next) => {
+  const orderId = Number(request.params.id)
+  if (!Number.isSafeInteger(orderId) || orderId < 1) return response.status(400).json({ message: 'Pedido do e-commerce inválido.' })
+  try {
+    await cancelOrder(orderId, { cancelledBy: String(request.staff.name || 'Equipe Ômega').slice(0, 160) })
+    const orders = await listOrders('WHERE o.id = $1', [orderId])
+    return response.json({ order: orders[0] })
+  } catch (error) {
+    if (error instanceof RequestError) return response.status(error.status).json({ message: error.message })
     return next(error)
   }
 })
@@ -1446,10 +1711,15 @@ app.put('/api/staff/orders/:id/winthor', requireCommercialAccess, async (request
          winthor_entered_by_staff_user_id=$6,
          winthor_entered_at=CURRENT_TIMESTAMP,
          updated_at=CURRENT_TIMESTAMP
-       WHERE id=$1 RETURNING id`,
+       WHERE id=$1 AND status <> 'cancelled' RETURNING id`,
       [orderId, winthorOrderNumber, winthorStatus.status, winthorStatus.code, winthorStatus.label, request.staff.id],
     )
-    if (!result.rows.length) return response.status(404).json({ message: 'Pedido do e-commerce não encontrado.' })
+    if (!result.rows.length) {
+      const exists = await pool.query('SELECT 1 FROM orders WHERE id=$1', [orderId])
+      return exists.rows.length
+        ? response.status(409).json({ message: 'Este pedido foi cancelado e não pode ser vinculado ao WinThor.' })
+        : response.status(404).json({ message: 'Pedido do e-commerce não encontrado.' })
+    }
     const orders = await listOrders('WHERE o.id = $1', [orderId])
     return response.json({ order: orders[0] })
   } catch (error) {
@@ -1503,7 +1773,7 @@ app.post('/api/staff/users', requireAdmin, async (request, response, next) => {
 })
 
 app.all(/^\/api\/staff\/categories(?:\/.*)?$/, requireStaff, (_request, response) => (
-  response.status(410).json({ message: 'As categorias manuais foram desativadas. Use os departamentos e seÃ§Ãµes sincronizados do WinThor.' })
+  response.status(410).json({ message: 'As categorias manuais foram desativadas. Use os departamentos e seções sincronizados do WinThor.' })
 ))
 
 app.get('/api/staff/categories', requireStaff, async (_request, response, next) => {
@@ -1743,7 +2013,7 @@ app.put('/api/staff/banners', requireMarketingAccess, async (request, response, 
             banner.position, banner.active, banner.placement, banner.startsAt || null, banner.endsAt || null,
             image?.data ?? null, image?.mime ?? null, banner.id],
         )
-        if (!result.rows.length) throw new Error('Um dos banners editados nÃ£o existe mais.')
+        if (!result.rows.length) throw new Error('Um dos banners editados não existe mais.')
       } else {
         if (!image) {
           await client.query('ROLLBACK')
@@ -1859,64 +2129,27 @@ app.post('/api/orders', async (request, response, next) => {
       return response.status(403).json({ message: 'O cliente do pedido não corresponde à sessão atual.' })
     }
 
-    const uniqueProductIds = [...new Set(parsed.data.items.map((item) => item.productId))]
-    const placeholders = uniqueProductIds.map((_, index) => `$${index + 1}`).join(',')
-    const productsResult = await client.query(
-      `SELECT id, unit_price, retail_unit_price, network_unit_price, units_per_box, sales_multiple
-       FROM products WHERE active = TRUE AND id IN (${placeholders})`,
-      uniqueProductIds,
-    )
-    const productMap = new Map(productsResult.rows.map((product) => [Number(product.id), product]))
-    if (productMap.size !== uniqueProductIds.length) {
+    const conditions = await customerCreditSummary(client, request.customer.id, { lock: true })
+    if (!conditions) {
       await client.query('ROLLBACK')
-      return response.status(400).json({ message: 'Um ou mais produtos não estão disponíveis.' })
+      return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda não foram sincronizadas com o WinThor.' })
     }
-
-    let total = 0
-    const lines = []
-    for (const item of parsed.data.items) {
-      const product = productMap.get(item.productId)
-      const units = item.quantity
-      const salesMultiple = Math.max(1, Number(product.sales_multiple))
-      if (units < salesMultiple || units % salesMultiple !== 0) {
-        await client.query('ROLLBACK')
-        return response.status(400).json({ message: `A quantidade do produto deve ser um múltiplo de ${salesMultiple} unidades.` })
-      }
-      const boxes = Math.max(1, Math.ceil(units / Number(product.units_per_box)))
-      const unitPrice = Number(request.customer.sales_channel === 'Redes'
-        ? product.network_unit_price ?? product.unit_price
-        : product.retail_unit_price ?? product.unit_price)
-      const lineTotal = units * unitPrice
-      total += lineTotal
-      lines.push({ product, boxes, units, unitPrice, lineTotal })
+    const pricing = await customerPricing(client, request.customer)
+    const selectedPlan = pricing.plans.find((plan) => plan.code === parsed.data.paymentPlan)
+    if (!selectedPlan) {
+      await client.query('ROLLBACK')
+      return response.status(400).json({ message: 'O plano de pagamento selecionado não está liberado para este cliente.' })
     }
+    const { lines, total } = await priceCartItems(client, pricing, selectedPlan, parsed.data.items)
 
     if (total < 200) {
       await client.query('ROLLBACK')
       return response.status(400).json({ message: `O pedido mínimo é R$ 200,00. Adicione mais R$ ${(200 - total).toFixed(2).replace('.', ',')}.` })
     }
-
-    const conditionsResult = await client.query(
-      `SELECT credit_limit, payment_plans FROM customer_commercial_conditions
-       WHERE customer_id=$1 FOR UPDATE`,
-      [request.customer.id],
-    )
-    if (!conditionsResult.rows.length) {
-      await client.query('ROLLBACK')
-      return response.status(503).json({ message: 'As condiÃ§Ãµes comerciais deste cadastro ainda nÃ£o foram sincronizadas com o WinThor.' })
-    }
-    const conditions = conditionsResult.rows[0]
-    const paymentPlans = Array.isArray(conditions.payment_plans) ? conditions.payment_plans : []
-    const selectedPlan = paymentPlans.find((plan) => String(plan.code) === parsed.data.paymentPlan)
-    if (!selectedPlan) {
-      await client.query('ROLLBACK')
-      return response.status(400).json({ message: 'O plano de pagamento selecionado nÃ£o estÃ¡ liberado para este cliente.' })
-    }
-    const creditLimit = Number(conditions.credit_limit)
-    if (total > creditLimit) {
+    if (total > conditions.availableCredit) {
       await client.query('ROLLBACK')
       return response.status(400).json({
-        message: `O total do pedido excede o limite de crÃ©dito disponÃ­vel de R$ ${creditLimit.toFixed(2).replace('.', ',')}.`,
+        message: `O total do pedido excede o limite de crédito disponível de R$ ${conditions.availableCredit.toFixed(2).replace('.', ',')}.`,
       })
     }
 
@@ -1945,6 +2178,7 @@ app.post('/api/orders', async (request, response, next) => {
     })
   } catch (error) {
     await client.query('ROLLBACK')
+    if (error instanceof RequestError) return response.status(error.status).json({ message: error.message })
     next(error)
   } finally {
     client.release()

@@ -150,9 +150,28 @@ CREATE TABLE IF NOT EXISTS banners (
 CREATE TABLE IF NOT EXISTS customer_commercial_conditions (
   customer_id BIGINT PRIMARY KEY REFERENCES customers(id) ON DELETE CASCADE,
   credit_limit NUMERIC(14,2) NOT NULL DEFAULT 0,
+  open_titles_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+  open_orders_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+  price_region INTEGER,
   payment_plans JSONB NOT NULL DEFAULT '[]'::jsonb,
   source_updated_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Preços da PCTABPR por região (NUMREGIAO). price_1..price_7 = PTABELA1..PTABELA7;
+-- a coluna usada em cada pedido vem do NUMPR do plano de pagamento (PCPLPAG).
+CREATE TABLE IF NOT EXISTS region_prices (
+  region INTEGER NOT NULL,
+  product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  price_1 NUMERIC(14,6),
+  price_2 NUMERIC(14,6),
+  price_3 NUMERIC(14,6),
+  price_4 NUMERIC(14,6),
+  price_5 NUMERIC(14,6),
+  price_6 NUMERIC(14,6),
+  price_7 NUMERIC(14,6),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (region, product_id)
 );
 
 CREATE TABLE IF NOT EXISTS product_sync_runs (

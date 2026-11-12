@@ -96,6 +96,21 @@ export async function initializeDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`)
   }
+  await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS open_titles_amount NUMERIC(14,2) NOT NULL DEFAULT 0')
+  await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS open_orders_amount NUMERIC(14,2) NOT NULL DEFAULT 0')
+  await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS price_region INTEGER')
+  await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP')
+  await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_by VARCHAR(160)')
+  if (process.env.DATABASE_URL) {
+    // Preços da PCTABPR podem ter até 6 casas decimais.
+    const unitPriceScale = await pool.query(
+      `SELECT numeric_scale FROM information_schema.columns
+       WHERE table_name='order_items' AND column_name='unit_price' AND table_schema=current_schema()`,
+    )
+    if (Number(unitPriceScale.rows[0]?.numeric_scale) !== 6) {
+      await pool.query('ALTER TABLE order_items ALTER COLUMN unit_price TYPE NUMERIC(14,6)')
+    }
+  }
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_winthor_order_number ON orders(winthor_order_number)')
   await pool.query("UPDATE orders SET status='analysis' WHERE status='received'")
   await pool.query('UPDATE products SET retail_unit_price = unit_price WHERE retail_unit_price IS NULL')

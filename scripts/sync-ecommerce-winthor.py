@@ -56,6 +56,30 @@ WHERE p.codprod > 0
 ORDER BY p.codprod
 """
 
+# Cobrancas que nao representam divida do cliente e nao consomem limite.
+NON_DEBT_BILLING_CODES = ("DESD", "ESTR", "CANC", "DEVP", "DEVT", "BNF", "BNFT", "BNFR", "BNTR", "BNRP", "CRED")
+# Pedidos ainda nao faturados: L=liberado, M=montado, B=bloqueado, P=pendente.
+OPEN_ORDER_POSITIONS = ("L", "M", "B", "P")
+# CONDVENDA 5=bonificacao e 10=transferencia nao geram titulo a receber.
+NON_RECEIVABLE_SALE_CONDITIONS = (5, 10)
+
+# Regiões sempre enviadas: preço de referência para cadastros ainda sem condições sincronizadas
+# (Varejo usa a região 1 e Redes a região 12).
+DEFAULT_PRICE_REGIONS = (1, 12)
+
+# Preços PTABELA1..7 da PCTABPR somente para os produtos do catálogo e as regiões em uso.
+REGION_PRICE_QUERY = """
+SELECT t.numregiao, t.codprod,
+       t.ptabela1, t.ptabela2, t.ptabela3, t.ptabela4, t.ptabela5, t.ptabela6, t.ptabela7
+FROM pctabpr t
+JOIN pcprodut p ON p.codprod = t.codprod
+WHERE t.numregiao IN ({regions})
+  AND NVL(t.excluido, 'N') <> 'S'
+  AND p.codprod > 0
+  AND NVL(UPPER(TRIM(p.obs2)), 'ATIVO') <> 'FL'
+  AND NVL(UPPER(TRIM(p.enviarforcavendas)), 'N') = 'S'
+"""
+
 SUPPLIER_DISPLAY_NAMES = {
     117: "Bombril S.A.",
 }
@@ -181,6 +205,56 @@ def main() -> None:
     )
 
     token = required("ECOMMERCE_PRODUCT_SYNC_TOKEN")
+    customer_regions = sync_customer_conditions(dsn, token)
+    sync_region_prices(dsn, token, set(DEFAULT_PRICE_REGIONS) | customer_regions)
+
+
+def price_value(value):
+    if value is None:
+        return None
+    price = round(number(value), 6)
+    return price if price > 0 else None
+
+
+def sync_region_prices(dsn, token: str, regions: set[int]) -> None:
+    region_list = sorted(region for region in regions if region is not None)
+    binds = ",".join(f":r{index}" for index in range(len(region_list)))
+    with oracledb.connect(
+        user=required("ORACLE_FILIAL_USER"),
+        password=required("ORACLE_FILIAL_PASSWORD"),
+        dsn=dsn,
+    ) as connection:
+        with connection.cursor() as cursor:
+            cursor.arraysize = 5000
+            cursor.execute(
+                REGION_PRICE_QUERY.format(regions=binds),
+                {f"r{index}": region for index, region in enumerate(region_list)},
+            )
+            rows = [
+                [int(region), int(code), *(price_value(value) for value in prices)]
+                for region, code, *prices in cursor.fetchall()
+            ]
+
+    response = requests.post(
+        f"{required('ECOMMERCE_API_URL').rstrip('/')}/api/integrations/prices/sync",
+        json={"regions": region_list, "prices": rows},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=(15, 180),
+    )
+    if response.status_code == 404:
+        print("Preços por região: rota ainda não publicada na API; envio ignorado nesta execução.")
+        return
+    if not response.ok:
+        raise RuntimeError(f"Preços por região: API respondeu HTTP {response.status_code}: {response.text[:500]}")
+    result = response.json()
+    print(
+        "Preços por região concluídos: "
+        f"regiões={result.get('regions')}, fonte={result.get('sourceCount')}, "
+        f"alterados={result.get('changedCount')}, removidos={result.get('removedCount')}"
+    )
+
+
+def sync_customer_conditions(dsn, token: str) -> set[int]:
     customer_response = requests.get(
         f"{required('ECOMMERCE_API_URL').rstrip('/')}/api/integrations/customers",
         headers={"Authorization": f"Bearer {token}"},
@@ -189,9 +263,14 @@ def main() -> None:
     customer_response.raise_for_status()
     customer_codes = [int(value) for value in customer_response.json().get("externalIds", []) if int(value) > 0]
     if not customer_codes:
-        print("CondiÃ§Ãµes comerciais: nenhum cliente aprovado para sincronizar.")
-        return
+        print("Condições comerciais: nenhum cliente aprovado para sincronizar.")
+        return set()
 
+    # Instante da leitura: pedidos vinculados ao WinThor depois dele ainda não estão nos totais abaixo.
+    snapshot_at = datetime.now().astimezone().isoformat()
+    non_debt_codes = ",".join(f"'{code}'" for code in NON_DEBT_BILLING_CODES)
+    open_positions = ",".join(f"'{position}'" for position in OPEN_ORDER_POSITIONS)
+    non_receivable_conditions = ",".join(str(value) for value in NON_RECEIVABLE_SALE_CONDITIONS)
     with oracledb.connect(
         user=required("ORACLE_FILIAL_USER"),
         password=required("ORACLE_FILIAL_PASSWORD"),
@@ -199,35 +278,67 @@ def main() -> None:
     ) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                """SELECT codplpag, obsplpag, numdias,
+                """SELECT codplpag, obsplpag, numdias, numpr,
                           prazo1, prazo2, prazo3, prazo4, prazo5, prazo6,
                           prazo7, prazo8, prazo9, prazo10, prazo11, prazo12
                    FROM pcplpag"""
             )
             plan_rows = cursor.fetchall()
             customer_rows = []
+            open_titles = {}
+            open_orders = {}
             for offset in range(0, len(customer_codes), 500):
                 batch = customer_codes[offset:offset + 500]
                 binds = ",".join(f":c{index}" for index in range(len(batch)))
+                params = {f"c{index}": code for index, code in enumerate(batch)}
+                # Região de preço: NUMREGIAOCLI do cliente ou, se vazia, a região da praça.
                 cursor.execute(
-                    f"""SELECT codcli, NVL(limcred, 0), codplpag, codplpag2,
-                               codplpagpadrao, ultcodplpag, listaplpag
-                        FROM pcclient WHERE codcli IN ({binds})""",
-                    {f"c{index}": code for index, code in enumerate(batch)},
+                    f"""SELECT c.codcli, NVL(c.limcred, 0), c.codplpag, c.codplpag2,
+                               c.codplpagpadrao, c.ultcodplpag, c.listaplpag,
+                               NVL(NULLIF(c.numregiaocli, 0), pr.numregiao)
+                        FROM pcclient c
+                        LEFT JOIN pcpraca pr ON pr.codpraca = c.codpraca
+                        WHERE c.codcli IN ({binds})""",
+                    params,
                 )
                 customer_rows.extend(cursor.fetchall())
+                cursor.execute(
+                    f"""SELECT codcli, NVL(SUM(valor), 0)
+                        FROM pcprest
+                        WHERE codcli IN ({binds})
+                          AND dtpag IS NULL AND dtcancel IS NULL AND dtestorno IS NULL
+                          AND NVL(codcob, ' ') NOT IN ({non_debt_codes})
+                        GROUP BY codcli""",
+                    params,
+                )
+                open_titles.update({int(code): number(total) for code, total in cursor.fetchall()})
+                cursor.execute(
+                    f"""SELECT codcli, NVL(SUM(vltotal), 0)
+                        FROM pcpedc
+                        WHERE codcli IN ({binds})
+                          AND posicao IN ({open_positions}) AND dtcancel IS NULL
+                          AND NVL(condvenda, 1) NOT IN ({non_receivable_conditions})
+                        GROUP BY codcli""",
+                    params,
+                )
+                open_orders.update({int(code): number(total) for code, total in cursor.fetchall()})
 
     plan_map = {}
     for row in plan_rows:
-        code, description, num_days, *deadlines = row
+        code, description, num_days, price_table, *deadlines = row
         values = [int(number(value)) for value in deadlines if value is not None and number(value) > 0]
         if not values and number(num_days) >= 0:
             values = [int(number(num_days))]
-        automatic_label = "/".join(str(value) for value in values) + (" dias" if len(values) <= 1 else " dias")
-        plan_map[int(code)] = text(description) or automatic_label or f"Plano {int(code)}"
+        automatic_label = "/".join(str(value) for value in values) + " dias"
+        table = int(number(price_table)) if price_table is not None else 1
+        plan_map[int(code)] = {
+            "label": text(description) or automatic_label or f"Plano {int(code)}",
+            "priceTable": table if 1 <= table <= 7 else 1,
+        }
 
     conditions = []
-    for code, credit_limit, primary, secondary, default, latest, allowed_list in customer_rows:
+    regions = set()
+    for code, credit_limit, primary, secondary, default, latest, allowed_list, price_region in customer_rows:
         allowed_codes = []
         for value in (primary, secondary, default, latest):
             if value is not None and int(value) > 0:
@@ -235,11 +346,20 @@ def main() -> None:
         if allowed_list:
             allowed_codes.extend(int(value) for value in re.findall(r"\d+", str(allowed_list)))
         unique_codes = list(dict.fromkeys(value for value in allowed_codes if value in plan_map))
+        region = int(price_region) if price_region is not None else None
+        if region is not None:
+            regions.add(region)
         conditions.append({
             "externalId": int(code),
             "creditLimit": round(number(credit_limit), 2),
-            "paymentPlans": [{"code": str(value), "label": plan_map[value]} for value in unique_codes],
-            "sourceUpdatedAt": datetime.now().astimezone().isoformat(),
+            "openTitlesAmount": round(max(0.0, open_titles.get(int(code), 0.0)), 2),
+            "openOrdersAmount": round(max(0.0, open_orders.get(int(code), 0.0)), 2),
+            "priceRegion": region,
+            "paymentPlans": [
+                {"code": str(value), "label": plan_map[value]["label"], "priceTable": plan_map[value]["priceTable"]}
+                for value in unique_codes
+            ],
+            "sourceUpdatedAt": snapshot_at,
         })
 
     conditions_response = requests.post(
@@ -250,10 +370,11 @@ def main() -> None:
     )
     if not conditions_response.ok:
         raise RuntimeError(
-            f"CondiÃ§Ãµes comerciais: API respondeu HTTP {conditions_response.status_code}: "
+            f"Condições comerciais: API respondeu HTTP {conditions_response.status_code}: "
             f"{conditions_response.text[:500]}"
         )
-    print(f"CondiÃ§Ãµes comerciais atualizadas para {conditions_response.json().get('updatedCount', 0)} clientes.")
+    print(f"Condições comerciais atualizadas para {conditions_response.json().get('updatedCount', 0)} clientes.")
+    return regions
 
 
 if __name__ == "__main__":
