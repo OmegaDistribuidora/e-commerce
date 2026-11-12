@@ -15,7 +15,7 @@ Neste ambiente, a task usa o Python do Windows e o Oracle Client já instalado p
 
 A DAG `ecommerce_produtos_precos` executa a cada 30 minutos e:
 
-1. lê somente produtos ativos da `PCPRODUT`;
+1. lê somente produtos ativos da `PCPRODUT`, excluindo os itens fora de linha (`OBS2 = 'FL'`) e mantendo apenas `ENVIARFORCAVENDAS = 'S'`;
 2. lê Varejo na região 1 e Redes na região 12 da `PCTABPR`;
 3. insere produtos novos;
 4. a API atualiza somente colunas cujo valor mudou (`IS DISTINCT FROM`);

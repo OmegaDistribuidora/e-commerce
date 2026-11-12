@@ -225,7 +225,7 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
     }
     return rows
   }, [catalogBanners, filteredProducts, visibleCount])
-  const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0)
+  const cartCount = cart.length
   const cartTotal = cart.reduce((sum, item) => sum + (item.unitPrice ?? 0) * item.quantity, 0)
   const minimumOrder = 200
   const minimumRemaining = Math.max(0, minimumOrder - cartTotal)
@@ -396,7 +396,7 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
           <label className="search-box"><Search size={21} /><input value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(25) }} onFocus={() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} placeholder="Busque produtos, marcas ou código" aria-label="Buscar produtos" />{query && <button onClick={() => setQuery('')} aria-label="Limpar busca"><X size={18} /></button>}</label>
           <a className="account-button" href={staffUser ? '/gestao' : customer ? '/pedidos' : '/conta'}><CircleUserRound /><span><small>{staffUser ? 'Painel interno' : customer ? 'Meus pedidos' : 'Área do cliente'}</small><strong>{staffUser ? `${staffUser.name} · ${staffUser.role}` : customer ? `Bem-vindo(a), ${customer.tradeName || customer.legalName}` : 'Entrar ou cadastrar'}</strong></span></a>
           {(customer || staffUser) && <button className="logout-button" onClick={logout} aria-label="Sair da conta" title="Sair da conta"><LogOut size={19} /><span>Sair</span></button>}
-          <button className="cart-button" onClick={() => setCartOpen(true)} aria-label={`Abrir carrinho com ${cartCount} unidades`}><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{cartCount ? `${cartCount} ${cartCount === 1 ? 'unidade' : 'unidades'}` : 'Está vazio'}</strong></span></button>
+          <button className="cart-button" onClick={() => setCartOpen(true)} aria-label={`Abrir carrinho com ${cartCount} ${cartCount === 1 ? 'item' : 'itens'}`}><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{cartCount ? `${cartCount} ${cartCount === 1 ? 'item' : 'itens'}` : 'Está vazio'}</strong></span></button>
         </div>
         <nav className="main-nav" aria-label="Departamentos e seções">
           <div className="container nav-inner department-nav">

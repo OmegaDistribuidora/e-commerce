@@ -51,6 +51,8 @@ LEFT JOIN pctabpr r
 WHERE p.codprod > 0
   -- Nesta versao do WinThor, STATUSPROD e derivado de PCPRODUT.OBS2.
   AND NVL(UPPER(TRIM(p.obs2)), 'ATIVO') <> 'FL'
+  -- O catalogo deve conter somente itens liberados para o Forca de Vendas.
+  AND NVL(UPPER(TRIM(p.enviarforcavendas)), 'N') = 'S'
 ORDER BY p.codprod
 """
 
