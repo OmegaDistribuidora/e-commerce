@@ -62,6 +62,8 @@ NON_DEBT_BILLING_CODES = ("DESD", "ESTR", "CANC", "DEVP", "DEVT", "BNF", "BNFT",
 OPEN_ORDER_POSITIONS = ("L", "M", "B", "P")
 # CONDVENDA 5=bonificacao e 10=transferencia nao geram titulo a receber.
 NON_RECEIVABLE_SALE_CONDITIONS = (5, 10)
+# Planos oferecidos no e-commerce: ativos (STATUS = 'A') e que não são bonificação/troca (TIPOPRAZO = 'B').
+SELLABLE_PLAN_FILTER = "NVL(status, 'X') = 'A' AND NVL(tipoprazo, 'N') <> 'B'"
 
 # Regiões sempre enviadas: preço de referência para cadastros ainda sem condições sincronizadas
 # (Varejo usa a região 1 e Redes a região 12).
@@ -278,13 +280,15 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
     ) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                """SELECT codplpag, obsplpag, numdias, numpr,
-                          prazo1, prazo2, prazo3, prazo4, prazo5, prazo6,
-                          prazo7, prazo8, prazo9, prazo10, prazo11, prazo12
-                   FROM pcplpag"""
+                f"""SELECT codplpag, descricao, numdias, numpr,
+                           prazo1, prazo2, prazo3, prazo4, prazo5, prazo6,
+                           prazo7, prazo8, prazo9, prazo10, prazo11, prazo12
+                    FROM pcplpag
+                    WHERE {SELLABLE_PLAN_FILTER}"""
             )
             plan_rows = cursor.fetchall()
             customer_rows = []
+            customer_plans = {}
             open_titles = {}
             open_orders = {}
             for offset in range(0, len(customer_codes), 500):
@@ -293,8 +297,7 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
                 params = {f"c{index}": code for index, code in enumerate(batch)}
                 # Região de preço: NUMREGIAOCLI do cliente ou, se vazia, a região da praça.
                 cursor.execute(
-                    f"""SELECT c.codcli, NVL(c.limcred, 0), c.codplpag, c.codplpag2,
-                               c.codplpagpadrao, c.ultcodplpag, c.listaplpag,
+                    f"""SELECT c.codcli, NVL(c.limcred, 0), c.codplpag,
                                NVL(NULLIF(c.numregiaocli, 0), pr.numregiao)
                         FROM pcclient c
                         LEFT JOIN pcpraca pr ON pr.codpraca = c.codpraca
@@ -302,6 +305,13 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
                     params,
                 )
                 customer_rows.extend(cursor.fetchall())
+                # Planos liberados por cliente no WinThor.
+                cursor.execute(
+                    f"""SELECT codcli, codplpag FROM pcplpagcli WHERE codcli IN ({binds})""",
+                    params,
+                )
+                for customer_code, plan_code in cursor.fetchall():
+                    customer_plans.setdefault(int(customer_code), []).append(int(plan_code))
                 cursor.execute(
                     f"""SELECT codcli, NVL(SUM(valor), 0)
                         FROM pcprest
@@ -334,18 +344,18 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
         plan_map[int(code)] = {
             "label": text(description) or automatic_label or f"Plano {int(code)}",
             "priceTable": table if 1 <= table <= 7 else 1,
+            "days": int(number(num_days)) if num_days is not None else 0,
         }
 
     conditions = []
     regions = set()
-    for code, credit_limit, primary, secondary, default, latest, allowed_list, price_region in customer_rows:
-        allowed_codes = []
-        for value in (primary, secondary, default, latest):
-            if value is not None and int(value) > 0:
-                allowed_codes.append(int(value))
-        if allowed_list:
-            allowed_codes.extend(int(value) for value in re.findall(r"\d+", str(allowed_list)))
-        unique_codes = list(dict.fromkeys(value for value in allowed_codes if value in plan_map))
+    for code, credit_limit, primary_plan, price_region in customer_rows:
+        # PCPLPAGCLI define os planos do cliente; sem linhas nela, vale o plano do PCCLIENT.
+        allowed_codes = customer_plans.get(int(code)) or ([int(primary_plan)] if primary_plan is not None else [])
+        unique_codes = sorted(
+            {value for value in allowed_codes if value in plan_map},
+            key=lambda value: (plan_map[value]["days"], value),
+        )
         region = int(price_region) if price_region is not None else None
         if region is not None:
             regions.add(region)

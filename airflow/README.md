@@ -36,6 +36,7 @@ Execute a DAG manualmente uma vez e confira os totais do log antes de habilitar 
 Cada cliente aprovado compra pelo preço da própria região e do plano de pagamento escolhido:
 
 - região = `PCCLIENT.NUMREGIAOCLI` ou, se vazia, `PCPRACA.NUMREGIAO` da praça do cliente;
+- planos liberados = `PCPLPAGCLI` (CODCLI × CODPLPAG); sem linhas nela, vale o `PCCLIENT.CODPLPAG`. Só entram planos ativos (`PCPLPAG.STATUS = 'A'`) que não são bonificação/troca (`TIPOPRAZO <> 'B'`), com o nome de `PCPLPAG.DESCRICAO`;
 - coluna de preço = `PCPLPAG.NUMPR` do plano (1 a 7 → `PTABELA1` a `PTABELA7`);
 - o e-commerce guarda uma linha por região e produto (`region_prices`), e não por cliente, e só grava preços que mudaram;
 - cadastros ainda sem condições sincronizadas veem `PTABELA1` da região do canal (Varejo = 1, Redes = 12);
