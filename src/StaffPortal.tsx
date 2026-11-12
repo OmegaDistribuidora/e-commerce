@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Camera, CheckSquare, ClipboardCheck, ImageOff, ImagePlus, KeyRound, LayoutDashboard, LoaderCircle, LogOut, PackageCheck, Pencil, Plus, Save, Search, ShieldCheck, Tag, Trash2, UserCheck, Users, X } from 'lucide-react'
 import { authenticatedFetch } from './api'
 import { money } from './data'
@@ -90,6 +90,7 @@ export default function StaffPortal() {
   const [pendingCustomers, setPendingCustomers] = useState<Customer[]>([])
   const [banners, setBanners] = useState<Banner[]>([])
   const [editingBanner, setEditingBanner] = useState<Banner | null>(null)
+  const [bannerError, setBannerError] = useState('')
   const [catalogDepartments, setCatalogDepartments] = useState<CatalogDepartment[]>([])
   const [users, setUsers] = useState<StaffUser[]>([])
   const [categories, setCategories] = useState<CatalogCategory[]>([])
@@ -196,11 +197,12 @@ export default function StaffPortal() {
   function changeTab(nextTab: Tab) {
     setTab(nextTab)
     setError('')
+    setBannerError('')
     setNotice('')
   }
 
   function addBanner() {
-    setError(''); setNotice('')
+    setError(''); setBannerError(''); setNotice('')
     const nextPosition = Math.max(0, ...banners.filter((banner) => banner.placement === 'hero').map((banner) => banner.position)) + 1
     setEditingBanner({
       id: -Date.now(), title: '', altText: '', imageUrl: '', targetUrl: '#produtos',
@@ -212,27 +214,32 @@ export default function StaffPortal() {
   async function deleteBanner(banner: Banner) {
     if (!window.confirm(`Excluir o banner “${banner.title || 'novo banner'}”?`)) return
     if (banner.id < 0) { setEditingBanner(null); return }
-    setLoading(true); setError(''); setNotice('')
+    setLoading(true); setError(''); setBannerError(''); setNotice('')
     try {
       await api(`/api/staff/banners/${banner.id}`, { method: 'DELETE' })
       setBanners((current) => current.filter((item) => item.id !== banner.id))
       setEditingBanner(null)
       setNotice('Banner excluído com sucesso.')
-    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível excluir o banner.') }
+    } catch (requestError) { setBannerError(requestError instanceof Error ? requestError.message : 'Não foi possível excluir o banner.') }
     finally { setLoading(false) }
   }
 
   async function selectBannerImage(file?: File) {
     if (!file?.size) return
-    if (file.size > 5 * 1024 * 1024) { setError('A imagem deve ter no máximo 5 MB.'); return }
-    const imageDataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file)
-    })
-    setEditingBanner((current) => current ? { ...current, imageDataUrl, imageUrl: imageDataUrl } : current)
+    if (file.size > 5 * 1024 * 1024) { setBannerError('A imagem deve ter no máximo 5 MB.'); return }
+    try {
+      const imageDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file)
+      })
+      setBannerError('')
+      setEditingBanner((current) => current ? { ...current, imageDataUrl, imageUrl: imageDataUrl } : current)
+    } catch {
+      setBannerError('Não foi possível abrir a imagem selecionada.')
+    }
   }
 
   async function saveBanner(banner: Banner) {
-    setLoading(true); setError(''); setNotice('')
+    setLoading(true); setError(''); setBannerError(''); setNotice('')
     try {
       const payload = {
         title: banner.title, altText: banner.altText, targetUrl: banner.targetUrl,
@@ -248,7 +255,7 @@ export default function StaffPortal() {
       })
       const data = await api<{ banners: Banner[] }>('/api/staff/banners')
       setBanners(data.banners); setEditingBanner(null); setNotice('Banner salvo com sucesso.')
-    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível salvar o banner.') }
+    } catch (requestError) { setBannerError(requestError instanceof Error ? requestError.message : 'Não foi possível salvar o banner.') }
     finally { setLoading(false) }
   }
 
@@ -436,7 +443,7 @@ export default function StaffPortal() {
       {tab === 'customers' && <section className="pending-customers">{pendingCustomers.length ? pendingCustomers.map((customer) => <article key={customer.id} className="pending-customer-card"><header><div className="pending-customer-avatar">{(customer.tradeName || customer.legalName).slice(0, 1).toUpperCase()}</div><div><span className="eyebrow">AGUARDANDO VALIDAÇÃO</span><h2>{customer.tradeName || customer.legalName}</h2><p>{customer.legalName}</p></div><span className="pending-date">Cadastrado em<br /><strong>{customer.createdAt ? new Date(customer.createdAt).toLocaleString('pt-BR') : '—'}</strong></span></header><div className="pending-customer-data"><p><b>CPF/CNPJ</b>{formatDocument(customer.document)}</p><p><b>Contato</b>{customer.email}<br />{formatPhone(customer.phone)}</p><p><b>Endereço</b>{customer.addressLine}, {customer.addressNumber}{customer.addressComplement ? ` · ${customer.addressComplement}` : ''}<br />{customer.neighborhood} · {customer.city}/{customer.state}<br />CEP {formatPostalCode(customer.postalCode)}</p></div><footer><span>A aprovação consultará este documento diretamente no WinThor e salvará o CODCLI encontrado.</span><button className="primary-button" disabled={loading} onClick={() => approveCustomer(customer)}>{loading ? <LoaderCircle className="spin" /> : <><UserCheck /> Validar e aprovar</>}</button></footer></article>) : <div className="staff-empty"><UserCheck /><h2>Nenhum cadastro pendente</h2><p>Novos clientes aguardando validação aparecerão aqui.</p></div>}</section>}
       {tab === 'categories' && <section className="category-manager"><aside className="category-manager-list"><form onSubmit={createCategory}><input name="name" placeholder="Nova categoria" required minLength={2} maxLength={80} /><button disabled={loading} aria-label="Criar categoria"><Plus /></button></form><div>{categories.map((category) => <button key={category.id} className={selectedCategoryId === category.id ? 'active' : ''} onClick={() => selectCategory(category)}><span><Tag /><b>{category.name}</b><small>{category.productIds?.length || 0} produtos</small></span><i role="button" tabIndex={0} aria-label={`Excluir ${category.name}`} onClick={(event) => { event.stopPropagation(); deleteCategory(category) }} onKeyDown={(event) => { if (event.key === 'Enter') deleteCategory(category) }}><Trash2 /></i></button>)}</div></aside><div className="category-product-picker">{selectedCategory ? <><div className="category-picker-heading"><div><span className="eyebrow">EDITANDO CATEGORIA</span><h2>{selectedCategory.name}</h2><p>Pesquise e marque todos os produtos que devem aparecer nesta categoria.</p></div><strong>{selectedProductIds.size} selecionados</strong></div><div className="category-product-filters"><label><Search /><input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Nome, EAN, marca ou códigos separados por vírgula" /></label><select value={supplierFilter} onChange={(event) => setSupplierFilter(event.target.value)}><option value="">Todos os fornecedores</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name} ({supplier.productCount})</option>)}</select><button onClick={toggleVisibleProducts}><CheckSquare /> {filteredCatalogProducts.length && filteredCatalogProducts.every((product) => selectedProductIds.has(product.id)) ? 'Desmarcar resultados' : 'Marcar resultados'}</button></div><div className="category-results-summary"><span>{filteredCatalogProducts.length} produtos encontrados</span><span>A seleção é mantida ao trocar a busca ou fornecedor.</span></div><div className="category-product-list">{filteredCatalogProducts.map((product) => <label key={product.id} className={selectedProductIds.has(product.id) ? 'selected' : ''}><input type="checkbox" checked={selectedProductIds.has(product.id)} onChange={() => toggleProduct(product.id)} />{product.image ? <img src={product.image} alt="" /> : <span className="category-no-image"><ImageOff /></span>}<span><b>{product.name}</b><small>Cód. {product.code} · {product.brand}</small><small>{product.package} · {product.unitsPerBox} un./caixa</small></span></label>)}</div><div className="category-save-bar"><span>{selectedProductIds.size} produtos nesta categoria</span><button className="primary-button" onClick={saveCategoryProducts} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar categoria</>}</button></div></> : <div className="staff-empty">Crie uma categoria para começar a selecionar produtos.</div>}</div></section>}
       {tab === 'photos' && <section className="product-photo-manager"><div className="staff-section-heading"><div><h2>Acervo de fotos</h2><span>Envios são otimizados em WEBP e ficam armazenados com segurança no banco.</span></div><strong>{catalogProducts.filter((product) => product.image).length} de {catalogProducts.length} produtos com foto</strong></div><div className="photo-manager-filters"><label><Search /><input value={photoSearch} onChange={(event) => setPhotoSearch(event.target.value)} placeholder="Buscar por código, produto ou fornecedor" /></label><select value={photoSupplierFilter} onChange={(event) => setPhotoSupplierFilter(event.target.value)}><option value="">Todos os fornecedores</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name} ({supplier.productCount})</option>)}</select></div><div className="photo-results-summary"><span>{filteredPhotoProducts.length} produtos encontrados</span>{filteredPhotoProducts.length > 200 && <span>Exibindo os primeiros 200. Use a busca para localizar outro produto.</span>}</div><div className="product-photo-grid">{filteredPhotoProducts.slice(0, 200).map((product) => <article key={product.id}><div className="product-photo-preview">{product.image ? <img src={product.image} alt={product.name} /> : <span><ImageOff /><b>Produto sem foto</b></span>}</div><div className="product-photo-info"><small>CÓD. {product.code} · {product.brand}</small><strong>{product.name}</strong></div><div className="product-photo-actions"><label className="secondary-button"><Camera /> {product.image ? 'Substituir' : 'Adicionar'}<input type="file" accept="image/png,image/jpeg,image/webp" disabled={loading} onChange={(event) => { void uploadProductPhoto(product, event.target.files?.[0]); event.currentTarget.value = '' }} /></label>{product.image && <button className="photo-delete" disabled={loading} onClick={() => deleteProductPhoto(product)} aria-label={`Excluir foto de ${product.name}`}><Trash2 /> Excluir</button>}</div></article>)}</div></section>}
-      {tab === 'banners' && <section><div className="staff-section-heading banner-manager-heading"><div><h2>Banners cadastrados</h2><span>Clique em um banner para editar. A posição define a ordem apenas entre banners do mesmo tipo.</span></div><button className="secondary-button" onClick={addBanner}><Plus /> Adicionar banner</button></div><div className="banner-admin-grid">{banners.map((banner) => <BannerCard key={banner.id} banner={banner} onEdit={() => { setError(''); setNotice(''); setEditingBanner({ ...banner }) }} />)}</div>{editingBanner && <BannerEditorModal banner={editingBanner} departments={catalogDepartments} suppliers={suppliers} loading={loading} error={error} onChange={(values) => setEditingBanner((current) => current ? { ...current, ...values } : current)} onImage={selectBannerImage} onDelete={deleteBanner} onClose={() => setEditingBanner(null)} onSave={saveBanner} />}</section>}
+      {tab === 'banners' && <section><div className="staff-section-heading banner-manager-heading"><div><h2>Banners cadastrados</h2><span>Clique em um banner para editar. A posição define a ordem apenas entre banners do mesmo tipo.</span></div><button className="secondary-button" onClick={addBanner}><Plus /> Adicionar banner</button></div><div className="banner-admin-grid">{banners.map((banner) => <BannerCard key={banner.id} banner={banner} onEdit={() => { setError(''); setBannerError(''); setNotice(''); setEditingBanner({ ...banner }) }} />)}</div>{editingBanner && <BannerEditorModal banner={editingBanner} departments={catalogDepartments} suppliers={suppliers} loading={loading} error={bannerError} onChange={(values) => { setBannerError(''); setEditingBanner((current) => current ? { ...current, ...values } : current) }} onClearError={() => setBannerError('')} onImage={selectBannerImage} onDelete={deleteBanner} onClose={() => { setBannerError(''); setEditingBanner(null) }} onSave={saveBanner} />}</section>}
       {tab === 'users' && user.role === 'ADMIN' && <section className="users-admin"><form className="staff-form create-user-form" onSubmit={createUser}><h2><Plus /> Novo usuário</h2><label>Nome<input name="name" required minLength={3} /></label><label>E-mail<input name="email" type="email" required /></label><label>Senha inicial<input name="password" type="password" minLength={8} required /></label><label>Perfil<select name="role" defaultValue="COMERCIAL"><option value="COMERCIAL">Comercial</option><option value="MARKETING">Marketing</option><option value="ADMIN">Administrador</option></select></label><button className="primary-button" disabled={loading}>Criar usuário</button></form><div className="staff-user-list">{users.map((item) => <article key={item.id}><span>{item.name.slice(0, 1).toUpperCase()}</span><div><strong>{item.name}</strong><small>{item.email}</small></div><b>{item.role}</b></article>)}</div></section>}
       {tab === 'settings' && <section className="staff-settings"><form className="staff-form" onSubmit={changeStaffPassword}><h2><KeyRound /> Alterar senha</h2><p>Atualize a senha utilizada para acessar a gestão do e-Commerce.</p>{user.authProvider !== 'supabase' && <label>Senha atual<input name="currentPassword" type="password" autoComplete="current-password" required /></label>}<label>Nova senha<input name="newPassword" type="password" autoComplete="new-password" minLength={8} required /></label><label>Confirmar nova senha<input name="confirmPassword" type="password" autoComplete="new-password" minLength={8} required /></label><small>Use ao menos 8 caracteres, com maiúscula, minúscula e número.</small><button className="primary-button" disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar nova senha</>}</button></form></section>}
     </main>
@@ -456,11 +463,12 @@ function BannerCard({ banner, onEdit }: { banner: Banner; onEdit: () => void }) 
   </button>
 }
 
-function BannerEditorModal({ banner, departments, suppliers, loading, error, onChange, onImage, onDelete, onClose, onSave }: {
+function BannerEditorModal({ banner, departments, suppliers, loading, error, onChange, onClearError, onImage, onDelete, onClose, onSave }: {
   banner: Banner; departments: CatalogDepartment[]; suppliers: CatalogSupplier[]; loading: boolean; error: string
-  onChange: (values: Partial<Banner>) => void; onImage: (file?: File) => void
+  onChange: (values: Partial<Banner>) => void; onClearError: () => void; onImage: (file?: File) => void
   onDelete: (banner: Banner) => void; onClose: () => void; onSave: (banner: Banner) => void
 }) {
+  const modalRef = useRef<HTMLElement>(null)
   const [productCodesText, setProductCodesText] = useState(banner.destinationType === 'products' ? banner.destinationValues.join(', ') : '')
   const parsedProductCodes = [...new Set(productCodesText.split(/[\s,;]+/).map(Number).filter((code) => Number.isSafeInteger(code) && code > 0))]
   const destinationIsValid = banner.destinationType === 'navigation' || (banner.destinationType === 'products' ? parsedProductCodes.length > 0 : banner.destinationValues.length > 0)
@@ -471,13 +479,16 @@ function BannerEditorModal({ banner, departments, suppliers, loading, error, onC
     window.addEventListener('keydown', closeOnEscape)
     return () => { document.body.style.overflow = previousOverflow; window.removeEventListener('keydown', closeOnEscape) }
   }, [loading, onClose])
+  useEffect(() => {
+    if (error) modalRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [error])
 
   return <div className="banner-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !loading) onClose() }}>
-    <section className="banner-modal" role="dialog" aria-modal="true" aria-labelledby="banner-modal-title">
+    <section ref={modalRef} className="banner-modal" role="dialog" aria-modal="true" aria-labelledby="banner-modal-title">
       <header className="banner-modal-header"><div><span className="eyebrow">GESTÃO DE BANNERS</span><h2 id="banner-modal-title">{banner.id > 0 ? 'Editar banner' : 'Novo banner'}</h2></div><button type="button" onClick={onClose} disabled={loading} aria-label="Fechar"><X /></button></header>
       <form className="staff-form banner-form-fields" onSubmit={(event) => { event.preventDefault(); onSave({ ...banner, destinationValues: banner.destinationType === 'products' ? parsedProductCodes : banner.destinationValues }) }}>
         {banner.imageUrl && <div className="banner-modal-preview"><img src={banner.imageUrl} alt={banner.altText} /></div>}
-        {error && <div className="staff-alert error">{error}</div>}
+        {error && <div className="staff-alert error" role="alert" aria-live="assertive">{error}</div>}
         <div className="banner-form-grid">
           <label>Tipo<select value={banner.placement} onChange={(event) => onChange({ placement: event.target.value as Banner['placement'] })}><option value="hero">Banner principal</option><option value="catalog">Banner entre produtos</option></select></label>
           <label>Posição <small>Ordem entre banners deste mesmo tipo</small><input type="number" min="0" max="1000" value={banner.position} onChange={(event) => onChange({ position: Number(event.target.value) })} required /></label>
@@ -485,7 +496,7 @@ function BannerEditorModal({ banner, departments, suppliers, loading, error, onC
         <label>Tipo de destino<select value={banner.destinationType} onChange={(event) => { const destinationType = event.target.value as Banner['destinationType']; setProductCodesText(''); onChange({ destinationType, destinationValues: [], sectionCode: null }) }}>{Object.entries(bannerDestinationLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         {banner.destinationType === 'navigation' && <label>Página do e-commerce<select value={banner.navigationPath} onChange={(event) => onChange({ navigationPath: event.target.value })}>{bannerNavigationOptions.map(([path, label]) => <option value={path} key={path}>{label}</option>)}</select></label>}
         {banner.destinationType === 'sections' && <fieldset className="banner-destination-picker"><legend>Seções <small>Selecione uma ou mais seções</small></legend><div>{departments.flatMap((department) => department.sections.filter((section) => section.code > 0).map((section) => <label key={`${department.code}-${section.code}`}><input type="checkbox" checked={banner.destinationValues.includes(section.code)} onChange={() => onChange({ destinationValues: banner.destinationValues.includes(section.code) ? banner.destinationValues.filter((code) => code !== section.code) : [...banner.destinationValues, section.code] })} /><span><b>{formatCatalogName(section.name)}</b><small>{formatCatalogName(department.name)} · cód. {section.code}</small></span></label>))}</div></fieldset>}
-        {banner.destinationType === 'products' && <label>Códigos dos produtos <small>Digite um ou mais códigos, separados por vírgula</small><input value={productCodesText} onChange={(event) => setProductCodesText(event.target.value)} placeholder="Ex.: 16449, 16600, 18584" required /></label>}
+        {banner.destinationType === 'products' && <label>Códigos dos produtos <small>Digite um ou mais códigos, separados por vírgula</small><input value={productCodesText} onChange={(event) => { onClearError(); setProductCodesText(event.target.value) }} placeholder="Ex.: 16449, 16600, 18584" required /></label>}
         {banner.destinationType === 'suppliers' && <fieldset className="banner-destination-picker"><legend>Fornecedores <small>Selecione um ou mais fornecedores</small></legend><div>{suppliers.map((supplier) => <label key={supplier.id}><input type="checkbox" checked={banner.destinationValues.includes(supplier.id)} onChange={() => onChange({ destinationValues: banner.destinationValues.includes(supplier.id) ? banner.destinationValues.filter((code) => code !== supplier.id) : [...banner.destinationValues, supplier.id] })} /><span><b>{formatCatalogName(supplier.name)}</b><small>Cód. {supplier.id} · {supplier.productCount} produtos</small></span></label>)}</div></fieldset>}
         {!destinationIsValid && <span className="banner-destination-error">Selecione ou informe pelo menos um destino.</span>}
         <label>Título<input value={banner.title} onChange={(event) => onChange({ title: event.target.value })} required minLength={2} maxLength={160} /></label>
