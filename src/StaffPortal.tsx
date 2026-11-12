@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Camera, CheckSquare, ChevronDown, ClipboardCheck, ImageOff, ImagePlus, KeyRound, LayoutDashboard, LoaderCircle, LogOut, PackageCheck, Plus, Save, Search, ShieldCheck, Tag, Trash2, UserCheck, Users } from 'lucide-react'
+import { ArrowLeft, Camera, CheckSquare, ClipboardCheck, ImageOff, ImagePlus, KeyRound, LayoutDashboard, LoaderCircle, LogOut, PackageCheck, Pencil, Plus, Save, Search, ShieldCheck, Tag, Trash2, UserCheck, Users, X } from 'lucide-react'
 import { authenticatedFetch } from './api'
 import { money } from './data'
 import { formatCatalogName } from './catalog'
@@ -76,8 +76,8 @@ export default function StaffPortal() {
   const [orders, setOrders] = useState<Order[]>([])
   const [pendingCustomers, setPendingCustomers] = useState<Customer[]>([])
   const [banners, setBanners] = useState<Banner[]>([])
+  const [editingBanner, setEditingBanner] = useState<Banner | null>(null)
   const [catalogDepartments, setCatalogDepartments] = useState<CatalogDepartment[]>([])
-  const [deletedBannerIds, setDeletedBannerIds] = useState<number[]>([])
   const [users, setUsers] = useState<StaffUser[]>([])
   const [categories, setCategories] = useState<CatalogCategory[]>([])
   const [catalogProducts, setCatalogProducts] = useState<StaffCatalogProduct[]>([])
@@ -186,48 +186,53 @@ export default function StaffPortal() {
     setNotice('')
   }
 
-  function updateBanner(id: number, values: Partial<Banner>) {
-    setBanners((current) => current.map((banner) => banner.id === id ? { ...banner, ...values } : banner))
-  }
-
   function addBanner() {
-    setBanners((current) => [...current, {
+    setError(''); setNotice('')
+    const nextPosition = Math.max(0, ...banners.filter((banner) => banner.placement === 'hero').map((banner) => banner.position)) + 1
+    setEditingBanner({
       id: -Date.now(), title: '', altText: '', imageUrl: '', targetUrl: '#produtos',
-      sectionCode: null, position: current.length + 1, active: true, placement: 'hero', startsAt: null, endsAt: null,
-    }])
+      sectionCode: null, position: nextPosition, active: true, placement: 'hero', startsAt: null, endsAt: null,
+    })
   }
 
-  function deleteBanner(banner: Banner) {
-    if (!window.confirm(`Excluir o banner “${banner.title || 'novo banner'}”? A exclusão será efetivada ao salvar.`)) return
-    setBanners((current) => current.filter((item) => item.id !== banner.id))
-    if (banner.id > 0) setDeletedBannerIds((current) => [...new Set([...current, banner.id])])
+  async function deleteBanner(banner: Banner) {
+    if (!window.confirm(`Excluir o banner “${banner.title || 'novo banner'}”?`)) return
+    if (banner.id < 0) { setEditingBanner(null); return }
+    setLoading(true); setError(''); setNotice('')
+    try {
+      await api(`/api/staff/banners/${banner.id}`, { method: 'DELETE' })
+      setBanners((current) => current.filter((item) => item.id !== banner.id))
+      setEditingBanner(null)
+      setNotice('Banner excluído com sucesso.')
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível excluir o banner.') }
+    finally { setLoading(false) }
   }
 
-  async function selectBannerImage(banner: Banner, file?: File) {
+  async function selectBannerImage(file?: File) {
     if (!file?.size) return
     if (file.size > 5 * 1024 * 1024) { setError('A imagem deve ter no máximo 5 MB.'); return }
     const imageDataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file)
     })
-    updateBanner(banner.id, { imageDataUrl, imageUrl: imageDataUrl })
+    setEditingBanner((current) => current ? { ...current, imageDataUrl, imageUrl: imageDataUrl } : current)
   }
 
-  async function saveBanners() {
+  async function saveBanner(banner: Banner) {
     setLoading(true); setError(''); setNotice('')
     try {
-      await api('/api/staff/banners', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ banners: banners.map((banner) => ({
-          ...(banner.id > 0 ? { id: banner.id } : {}), title: banner.title, altText: banner.altText,
-          targetUrl: banner.targetUrl, position: banner.position, active: banner.active,
-          sectionCode: banner.sectionCode,
-          placement: banner.placement, imageDataUrl: banner.imageDataUrl || '',
-          startsAt: banner.startsAt, endsAt: banner.endsAt,
-        })), deletedIds: deletedBannerIds }),
+      const payload = {
+        title: banner.title, altText: banner.altText, targetUrl: banner.targetUrl,
+        position: banner.position, active: banner.active, sectionCode: banner.sectionCode,
+        placement: banner.placement, imageDataUrl: banner.imageDataUrl || '',
+        startsAt: banner.startsAt, endsAt: banner.endsAt,
+      }
+      await api(banner.id > 0 ? `/api/staff/banners/${banner.id}` : '/api/staff/banners', {
+        method: banner.id > 0 ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       })
       const data = await api<{ banners: Banner[] }>('/api/staff/banners')
-      setBanners(data.banners); setDeletedBannerIds([]); setNotice('Todas as alterações dos banners foram salvas.')
-    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível salvar os banners.') }
+      setBanners(data.banners); setEditingBanner(null); setNotice('Banner salvo com sucesso.')
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível salvar o banner.') }
     finally { setLoading(false) }
   }
 
@@ -415,7 +420,7 @@ export default function StaffPortal() {
       {tab === 'customers' && <section className="pending-customers">{pendingCustomers.length ? pendingCustomers.map((customer) => <article key={customer.id} className="pending-customer-card"><header><div className="pending-customer-avatar">{(customer.tradeName || customer.legalName).slice(0, 1).toUpperCase()}</div><div><span className="eyebrow">AGUARDANDO VALIDAÇÃO</span><h2>{customer.tradeName || customer.legalName}</h2><p>{customer.legalName}</p></div><span className="pending-date">Cadastrado em<br /><strong>{customer.createdAt ? new Date(customer.createdAt).toLocaleString('pt-BR') : '—'}</strong></span></header><div className="pending-customer-data"><p><b>CPF/CNPJ</b>{formatDocument(customer.document)}</p><p><b>Contato</b>{customer.email}<br />{formatPhone(customer.phone)}</p><p><b>Endereço</b>{customer.addressLine}, {customer.addressNumber}{customer.addressComplement ? ` · ${customer.addressComplement}` : ''}<br />{customer.neighborhood} · {customer.city}/{customer.state}<br />CEP {formatPostalCode(customer.postalCode)}</p></div><footer><span>A aprovação consultará este documento diretamente no WinThor e salvará o CODCLI encontrado.</span><button className="primary-button" disabled={loading} onClick={() => approveCustomer(customer)}>{loading ? <LoaderCircle className="spin" /> : <><UserCheck /> Validar e aprovar</>}</button></footer></article>) : <div className="staff-empty"><UserCheck /><h2>Nenhum cadastro pendente</h2><p>Novos clientes aguardando validação aparecerão aqui.</p></div>}</section>}
       {tab === 'categories' && <section className="category-manager"><aside className="category-manager-list"><form onSubmit={createCategory}><input name="name" placeholder="Nova categoria" required minLength={2} maxLength={80} /><button disabled={loading} aria-label="Criar categoria"><Plus /></button></form><div>{categories.map((category) => <button key={category.id} className={selectedCategoryId === category.id ? 'active' : ''} onClick={() => selectCategory(category)}><span><Tag /><b>{category.name}</b><small>{category.productIds?.length || 0} produtos</small></span><i role="button" tabIndex={0} aria-label={`Excluir ${category.name}`} onClick={(event) => { event.stopPropagation(); deleteCategory(category) }} onKeyDown={(event) => { if (event.key === 'Enter') deleteCategory(category) }}><Trash2 /></i></button>)}</div></aside><div className="category-product-picker">{selectedCategory ? <><div className="category-picker-heading"><div><span className="eyebrow">EDITANDO CATEGORIA</span><h2>{selectedCategory.name}</h2><p>Pesquise e marque todos os produtos que devem aparecer nesta categoria.</p></div><strong>{selectedProductIds.size} selecionados</strong></div><div className="category-product-filters"><label><Search /><input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Nome, EAN, marca ou códigos separados por vírgula" /></label><select value={supplierFilter} onChange={(event) => setSupplierFilter(event.target.value)}><option value="">Todos os fornecedores</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name} ({supplier.productCount})</option>)}</select><button onClick={toggleVisibleProducts}><CheckSquare /> {filteredCatalogProducts.length && filteredCatalogProducts.every((product) => selectedProductIds.has(product.id)) ? 'Desmarcar resultados' : 'Marcar resultados'}</button></div><div className="category-results-summary"><span>{filteredCatalogProducts.length} produtos encontrados</span><span>A seleção é mantida ao trocar a busca ou fornecedor.</span></div><div className="category-product-list">{filteredCatalogProducts.map((product) => <label key={product.id} className={selectedProductIds.has(product.id) ? 'selected' : ''}><input type="checkbox" checked={selectedProductIds.has(product.id)} onChange={() => toggleProduct(product.id)} />{product.image ? <img src={product.image} alt="" /> : <span className="category-no-image"><ImageOff /></span>}<span><b>{product.name}</b><small>Cód. {product.code} · {product.brand}</small><small>{product.package} · {product.unitsPerBox} un./caixa</small></span></label>)}</div><div className="category-save-bar"><span>{selectedProductIds.size} produtos nesta categoria</span><button className="primary-button" onClick={saveCategoryProducts} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar categoria</>}</button></div></> : <div className="staff-empty">Crie uma categoria para começar a selecionar produtos.</div>}</div></section>}
       {tab === 'photos' && <section className="product-photo-manager"><div className="staff-section-heading"><div><h2>Acervo de fotos</h2><span>Envios são otimizados em WEBP e ficam armazenados com segurança no banco.</span></div><strong>{catalogProducts.filter((product) => product.image).length} de {catalogProducts.length} produtos com foto</strong></div><div className="photo-manager-filters"><label><Search /><input value={photoSearch} onChange={(event) => setPhotoSearch(event.target.value)} placeholder="Buscar por código, produto ou fornecedor" /></label><select value={photoSupplierFilter} onChange={(event) => setPhotoSupplierFilter(event.target.value)}><option value="">Todos os fornecedores</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name} ({supplier.productCount})</option>)}</select></div><div className="photo-results-summary"><span>{filteredPhotoProducts.length} produtos encontrados</span>{filteredPhotoProducts.length > 200 && <span>Exibindo os primeiros 200. Use a busca para localizar outro produto.</span>}</div><div className="product-photo-grid">{filteredPhotoProducts.slice(0, 200).map((product) => <article key={product.id}><div className="product-photo-preview">{product.image ? <img src={product.image} alt={product.name} /> : <span><ImageOff /><b>Produto sem foto</b></span>}</div><div className="product-photo-info"><small>CÓD. {product.code} · {product.brand}</small><strong>{product.name}</strong></div><div className="product-photo-actions"><label className="secondary-button"><Camera /> {product.image ? 'Substituir' : 'Adicionar'}<input type="file" accept="image/png,image/jpeg,image/webp" disabled={loading} onChange={(event) => { void uploadProductPhoto(product, event.target.files?.[0]); event.currentTarget.value = '' }} /></label>{product.image && <button className="photo-delete" disabled={loading} onClick={() => deleteProductPhoto(product)} aria-label={`Excluir foto de ${product.name}`}><Trash2 /> Excluir</button>}</div></article>)}</div></section>}
-      {tab === 'banners' && <section><div className="staff-section-heading banner-manager-heading"><div><h2>Banners cadastrados</h2><span>Edite tudo o que precisar e salve as alterações de uma só vez. Horários em Brasília.</span></div><button className="secondary-button" onClick={addBanner}><Plus /> Adicionar banner</button></div><div className="banner-admin-grid">{banners.map((banner) => <BannerEditor key={banner.id} banner={banner} departments={catalogDepartments} onChange={updateBanner} onImage={selectBannerImage} onDelete={deleteBanner} />)}</div><div className="banner-save-all"><span>{banners.length} {banners.length === 1 ? 'banner configurado' : 'banners configurados'}{deletedBannerIds.length > 0 && ` · ${deletedBannerIds.length} aguardando exclusão`}</span><button className="primary-button" onClick={saveBanners} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar todas as alterações</>}</button></div></section>}
+      {tab === 'banners' && <section><div className="staff-section-heading banner-manager-heading"><div><h2>Banners cadastrados</h2><span>Clique em um banner para editar. A posição define a ordem apenas entre banners do mesmo tipo.</span></div><button className="secondary-button" onClick={addBanner}><Plus /> Adicionar banner</button></div><div className="banner-admin-grid">{banners.map((banner) => <BannerCard key={banner.id} banner={banner} onEdit={() => { setError(''); setNotice(''); setEditingBanner({ ...banner }) }} />)}</div>{editingBanner && <BannerEditorModal banner={editingBanner} departments={catalogDepartments} loading={loading} error={error} onChange={(values) => setEditingBanner((current) => current ? { ...current, ...values } : current)} onImage={selectBannerImage} onDelete={deleteBanner} onClose={() => setEditingBanner(null)} onSave={saveBanner} />}</section>}
       {tab === 'users' && user.role === 'ADMIN' && <section className="users-admin"><form className="staff-form create-user-form" onSubmit={createUser}><h2><Plus /> Novo usuário</h2><label>Nome<input name="name" required minLength={3} /></label><label>E-mail<input name="email" type="email" required /></label><label>Senha inicial<input name="password" type="password" minLength={8} required /></label><label>Perfil<select name="role" defaultValue="COMERCIAL"><option value="COMERCIAL">Comercial</option><option value="MARKETING">Marketing</option><option value="ADMIN">Administrador</option></select></label><button className="primary-button" disabled={loading}>Criar usuário</button></form><div className="staff-user-list">{users.map((item) => <article key={item.id}><span>{item.name.slice(0, 1).toUpperCase()}</span><div><strong>{item.name}</strong><small>{item.email}</small></div><b>{item.role}</b></article>)}</div></section>}
       {tab === 'settings' && <section className="staff-settings"><form className="staff-form" onSubmit={changeStaffPassword}><h2><KeyRound /> Alterar senha</h2><p>Atualize a senha utilizada para acessar a gestão do e-Commerce.</p>{user.authProvider !== 'supabase' && <label>Senha atual<input name="currentPassword" type="password" autoComplete="current-password" required /></label>}<label>Nova senha<input name="newPassword" type="password" autoComplete="new-password" minLength={8} required /></label><label>Confirmar nova senha<input name="confirmPassword" type="password" autoComplete="new-password" minLength={8} required /></label><small>Use ao menos 8 caracteres, com maiúscula, minúscula e número.</small><button className="primary-button" disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar nova senha</>}</button></form></section>}
     </main>
@@ -426,25 +431,47 @@ function StaffOrderCard({ order, loading, onLink }: { order: Order; loading: boo
   return <details className="staff-order"><summary><div><strong>{order.number}</strong><span>{order.customer.tradeName || order.customer.legalName}</span></div><div><span>{new Date(order.createdAt).toLocaleString('pt-BR')}</span><strong>{money.format(order.total)}</strong><b className={`order-status ${order.status}`}>{orderStatusLabel(order.status)}</b></div></summary><div className="order-detail-grid"><p><b>Cliente</b>{formatDocument(order.customer.document)}<br />{order.customer.email}<br />{formatPhone(order.customer.phone)}</p><p><b>Pagamento</b>{paymentLabel(order.paymentPlan)}<br /><b>Status para o cliente</b>{orderStatusLabel(order.status)}{order.winthorStatusLabel && <><b>Status real no WinThor</b>{order.winthorStatusLabel}{order.winthorStatusCode && ` (${order.winthorStatusCode})`}</>}{order.statusUpdatedAt && <small>Consultado em {new Date(order.statusUpdatedAt).toLocaleString('pt-BR')}</small>}</p><div className="winthor-order-box"><b>Liberação do pedido</b><form onSubmit={(event) => onLink(event, order)}><input name="winthorOrderNumber" inputMode="numeric" pattern="[0-9]+" defaultValue={order.winthorOrderNumber ?? ''} placeholder="Informe o NUMPED" required /><button disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><ClipboardCheck /> {order.winthorOrderNumber ? 'Atualizar NUMPED' : 'Liberar pedido'}</>}</button></form>{order.winthorOrderNumber && <small>NUMPED {order.winthorOrderNumber}{order.enteredBy ? ` · por ${order.enteredBy}` : ''}{order.enteredAt ? ` em ${new Date(order.enteredAt).toLocaleString('pt-BR')}` : ''}</small>}</div>{order.notes && <p><b>Observações</b>{order.notes}</p>}</div><div className="order-lines">{order.items.map((item) => <div key={item.id}><span>{item.code} · {item.name}</span><span>{item.units} {item.units === 1 ? 'unidade' : 'unidades'}</span><strong>{money.format(item.lineTotal)}</strong></div>)}</div></details>
 }
 
-function BannerEditor({ banner, departments, onChange, onImage, onDelete }: { banner: Banner; departments: CatalogDepartment[]; onChange: (id: number, values: Partial<Banner>) => void; onImage: (banner: Banner, file?: File) => void; onDelete: (banner: Banner) => void }) {
-  const [expanded, setExpanded] = useState(banner.id < 0)
-  return <details className={`banner-form ${banner.placement === 'catalog' ? 'catalog-format' : ''}`} open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
-    <summary>
-      <span className="banner-summary-image">{banner.imageUrl ? <img src={banner.imageUrl} alt={banner.altText} /> : <span><ImagePlus /></span>}</span>
-      <span className="banner-summary-text"><strong>{banner.title || 'Novo banner'}</strong><small>{banner.placement === 'hero' ? 'Banner principal' : 'Banner entre produtos'} · posição {banner.position}</small></span>
-      <span className={`banner-summary-status ${banner.active ? 'active' : ''}`}>{banner.active ? 'Ativo' : 'Inativo'}</span>
-      <ChevronDown className="banner-summary-chevron" />
-    </summary>
-    <div className="staff-form banner-form-fields">
-      <div className="banner-editor-title"><h3>Detalhes do banner</h3><button type="button" onClick={() => onDelete(banner)} aria-label="Excluir banner"><Trash2 /> Excluir</button></div>
-      <label>Tipo<select value={banner.placement} onChange={(event) => onChange(banner.id, { placement: event.target.value as Banner['placement'] })}><option value="hero">Banner principal</option><option value="catalog">Banner entre produtos</option></select></label>
-      <label>Seção associada <small>{banner.placement === 'hero' ? 'Ao clicar, abre os produtos da seção' : 'A próxima linha mostrará produtos desta seção'}</small><select value={banner.sectionCode ?? ''} onChange={(event) => onChange(banner.id, { sectionCode: event.target.value ? Number(event.target.value) : null })}><option value="">Nenhuma seção associada</option>{departments.map((department) => <optgroup key={department.code || department.name} label={formatCatalogName(department.name)}>{department.sections.filter((section) => section.code > 0).map((section) => <option key={`${department.code}-${section.code}`} value={section.code}>{formatCatalogName(section.name)} · cód. {section.code}</option>)}</optgroup>)}</select></label>
-      <label>Título<input value={banner.title} onChange={(event) => onChange(banner.id, { title: event.target.value })} required /></label>
-      <label>Texto alternativo<input value={banner.altText} onChange={(event) => onChange(banner.id, { altText: event.target.value })} required /></label>
-      <div className="staff-form-row"><label>Posição<input type="number" min="0" value={banner.position} onChange={(event) => onChange(banner.id, { position: Number(event.target.value) })} /></label><label>Destino<input value={banner.targetUrl} onChange={(event) => onChange(banner.id, { targetUrl: event.target.value })} /></label></div>
-      <div className="staff-form-row banner-schedule"><label>Início opcional <small>Data e hora de Brasília</small><input type="datetime-local" value={toBrasiliaInput(banner.startsAt)} onChange={(event) => onChange(banner.id, { startsAt: fromBrasiliaInput(event.target.value) })} /></label><label>Encerramento opcional <small>Sem data, não expira</small><input type="datetime-local" value={toBrasiliaInput(banner.endsAt)} onChange={(event) => onChange(banner.id, { endsAt: fromBrasiliaInput(event.target.value) })} /></label></div>
-      <label>Imagem <small>{banner.id > 0 ? 'Selecione apenas se quiser substituir a atual' : 'PNG, JPG ou WEBP · máximo 5 MB'}</small><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => onImage(banner, event.target.files?.[0])} /></label>
-      <label className="staff-check"><input type="checkbox" checked={banner.active} onChange={(event) => onChange(banner.id, { active: event.target.checked })} /> Exibir na loja</label>
-    </div>
-  </details>
+function BannerCard({ banner, onEdit }: { banner: Banner; onEdit: () => void }) {
+  return <button type="button" className="banner-card" onClick={onEdit}>
+    <span className="banner-summary-image">{banner.imageUrl ? <img src={banner.imageUrl} alt={banner.altText} /> : <span><ImagePlus /></span>}</span>
+    <span className="banner-summary-text"><strong>{banner.title || 'Novo banner'}</strong><small>{banner.placement === 'hero' ? 'Banner principal' : 'Banner entre produtos'} · posição {banner.position}</small></span>
+    <span className={`banner-summary-status ${banner.active ? 'active' : ''}`}>{banner.active ? 'Ativo' : 'Inativo'}</span>
+    <Pencil className="banner-card-edit" />
+  </button>
+}
+
+function BannerEditorModal({ banner, departments, loading, error, onChange, onImage, onDelete, onClose, onSave }: {
+  banner: Banner; departments: CatalogDepartment[]; loading: boolean; error: string
+  onChange: (values: Partial<Banner>) => void; onImage: (file?: File) => void
+  onDelete: (banner: Banner) => void; onClose: () => void; onSave: (banner: Banner) => void
+}) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !loading) onClose() }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => { document.body.style.overflow = previousOverflow; window.removeEventListener('keydown', closeOnEscape) }
+  }, [loading, onClose])
+
+  return <div className="banner-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !loading) onClose() }}>
+    <section className="banner-modal" role="dialog" aria-modal="true" aria-labelledby="banner-modal-title">
+      <header className="banner-modal-header"><div><span className="eyebrow">GESTÃO DE BANNERS</span><h2 id="banner-modal-title">{banner.id > 0 ? 'Editar banner' : 'Novo banner'}</h2></div><button type="button" onClick={onClose} disabled={loading} aria-label="Fechar"><X /></button></header>
+      <form className="staff-form banner-form-fields" onSubmit={(event) => { event.preventDefault(); onSave(banner) }}>
+        {banner.imageUrl && <div className="banner-modal-preview"><img src={banner.imageUrl} alt={banner.altText} /></div>}
+        {error && <div className="staff-alert error">{error}</div>}
+        <div className="banner-form-grid">
+          <label>Tipo<select value={banner.placement} onChange={(event) => onChange({ placement: event.target.value as Banner['placement'] })}><option value="hero">Banner principal</option><option value="catalog">Banner entre produtos</option></select></label>
+          <label>Posição <small>Ordem entre banners deste mesmo tipo</small><input type="number" min="0" max="1000" value={banner.position} onChange={(event) => onChange({ position: Number(event.target.value) })} required /></label>
+        </div>
+        <label>Seção associada <small>{banner.placement === 'hero' ? 'Ao clicar, abre os produtos da seção' : 'A próxima linha mostrará produtos desta seção'}</small><select value={banner.sectionCode ?? ''} onChange={(event) => onChange({ sectionCode: event.target.value ? Number(event.target.value) : null })}><option value="">Nenhuma seção associada</option>{departments.map((department) => <optgroup key={department.code || department.name} label={formatCatalogName(department.name)}>{department.sections.filter((section) => section.code > 0).map((section) => <option key={`${department.code}-${section.code}`} value={section.code}>{formatCatalogName(section.name)} · cód. {section.code}</option>)}</optgroup>)}</select></label>
+        <label>Título<input value={banner.title} onChange={(event) => onChange({ title: event.target.value })} required minLength={2} maxLength={160} /></label>
+        <label>Texto alternativo<input value={banner.altText} onChange={(event) => onChange({ altText: event.target.value })} required minLength={3} maxLength={240} /></label>
+        <label>Destino<input value={banner.targetUrl} onChange={(event) => onChange({ targetUrl: event.target.value })} maxLength={500} /></label>
+        <div className="staff-form-row banner-schedule"><label>Início opcional <small>Data e hora de Brasília</small><input type="datetime-local" value={toBrasiliaInput(banner.startsAt)} onChange={(event) => onChange({ startsAt: fromBrasiliaInput(event.target.value) })} /></label><label>Encerramento opcional <small>Sem data, não expira</small><input type="datetime-local" value={toBrasiliaInput(banner.endsAt)} onChange={(event) => onChange({ endsAt: fromBrasiliaInput(event.target.value) })} /></label></div>
+        <label>Imagem <small>{banner.id > 0 ? 'Selecione apenas se quiser substituir a atual' : 'PNG, JPG ou WEBP · máximo 5 MB'}</small><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => onImage(event.target.files?.[0])} /></label>
+        <label className="staff-check"><input type="checkbox" checked={banner.active} onChange={(event) => onChange({ active: event.target.checked })} /> Exibir na loja</label>
+        <footer className="banner-modal-actions"><button className="banner-delete-button" type="button" onClick={() => onDelete(banner)} disabled={loading}><Trash2 /> Excluir</button><span /><button className="secondary-button" type="button" onClick={onClose} disabled={loading}>Cancelar</button><button className="primary-button" disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar banner</>}</button></footer>
+      </form>
+    </section>
+  </div>
 }

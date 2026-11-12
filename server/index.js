@@ -1748,16 +1748,18 @@ app.put('/api/staff/banners/:id', requireMarketingAccess, async (request, respon
     const values = [
       parsed.data.title, parsed.data.altText, parsed.data.targetUrl || '#produtos',
       parsed.data.sectionCode, parsed.data.position, parsed.data.active, parsed.data.placement,
+      parsed.data.startsAt || null, parsed.data.endsAt || null,
       image?.data ?? null, image?.mime ?? null,
       request.params.id,
     ]
     const result = await pool.query(
       `UPDATE banners SET title=$1, alt_text=$2, target_url=$3, section_code=$4,
          position=$5, active=$6, placement=$7,
-         image_data=COALESCE($8, image_data), image_mime=COALESCE($9, image_mime),
-         image_path=CASE WHEN $8::bytea IS NOT NULL THEN NULL ELSE image_path END,
+         starts_at=$8, ends_at=$9,
+         image_data=COALESCE($10, image_data), image_mime=COALESCE($11, image_mime),
+         image_path=CASE WHEN $10::bytea IS NOT NULL THEN NULL ELSE image_path END,
          updated_at=CURRENT_TIMESTAMP
-       WHERE id=$10 RETURNING id`,
+       WHERE id=$12 RETURNING id`,
       values,
     )
     if (!result.rows.length) return response.status(404).json({ message: 'Banner não encontrado.' })
@@ -1779,12 +1781,23 @@ app.post('/api/staff/banners', requireMarketingAccess, async (request, response,
     }
     if (!image) return response.status(400).json({ message: 'Selecione uma imagem para o novo banner.' })
     const result = await pool.query(
-      `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, section_code, position, active, placement)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, section_code, position, active, placement, starts_at, ends_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
       [parsed.data.title, parsed.data.altText, image.data, image.mime, parsed.data.targetUrl || '#produtos',
-        parsed.data.sectionCode, parsed.data.position, parsed.data.active, parsed.data.placement],
+        parsed.data.sectionCode, parsed.data.position, parsed.data.active, parsed.data.placement,
+        parsed.data.startsAt || null, parsed.data.endsAt || null],
     )
     return response.status(201).json({ id: Number(result.rows[0].id), saved: true })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.delete('/api/staff/banners/:id', requireMarketingAccess, async (request, response, next) => {
+  try {
+    const result = await pool.query('DELETE FROM banners WHERE id=$1 RETURNING id', [request.params.id])
+    if (!result.rows.length) return response.status(404).json({ message: 'Banner não encontrado.' })
+    return response.status(204).end()
   } catch (error) {
     return next(error)
   }
