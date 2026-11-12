@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Camera, CheckSquare, ClipboardCheck, ImageOff, ImagePlus, KeyRound, LayoutDashboard, LoaderCircle, LogOut, PackageCheck, Plus, Save, Search, ShieldCheck, Tag, Trash2, UserCheck, Users } from 'lucide-react'
+import { ArrowLeft, Camera, CheckSquare, ChevronDown, ClipboardCheck, ImageOff, ImagePlus, KeyRound, LayoutDashboard, LoaderCircle, LogOut, PackageCheck, Plus, Save, Search, ShieldCheck, Tag, Trash2, UserCheck, Users } from 'lucide-react'
 import { authenticatedFetch } from './api'
 import { money } from './data'
 import { formatCatalogName } from './catalog'
@@ -427,16 +427,24 @@ function StaffOrderCard({ order, loading, onLink }: { order: Order; loading: boo
 }
 
 function BannerEditor({ banner, departments, onChange, onImage, onDelete }: { banner: Banner; departments: CatalogDepartment[]; onChange: (id: number, values: Partial<Banner>) => void; onImage: (banner: Banner, file?: File) => void; onDelete: (banner: Banner) => void }) {
-  return <article className={`staff-form banner-form ${banner.placement === 'catalog' ? 'catalog-format' : ''}`}>
-    {banner.imageUrl ? <img src={banner.imageUrl} alt={banner.altText} /> : <div className="new-banner-placeholder"><ImagePlus /><span>Selecione a imagem</span></div>}
-    <div className="banner-editor-title"><h3>{banner.title || 'Novo banner'}</h3><button type="button" onClick={() => onDelete(banner)} aria-label="Excluir banner"><Trash2 /> Excluir</button></div>
-    <label>Tipo<select value={banner.placement} onChange={(event) => onChange(banner.id, { placement: event.target.value as Banner['placement'] })}><option value="hero">Banner principal</option><option value="catalog">Banner entre produtos</option></select></label>
-    <label>Seção associada <small>{banner.placement === 'hero' ? 'Ao clicar, abre os produtos da seção' : 'A próxima linha mostrará produtos desta seção'}</small><select value={banner.sectionCode ?? ''} onChange={(event) => onChange(banner.id, { sectionCode: event.target.value ? Number(event.target.value) : null })}><option value="">Nenhuma seção associada</option>{departments.map((department) => <optgroup key={department.code || department.name} label={formatCatalogName(department.name)}>{department.sections.filter((section) => section.code > 0).map((section) => <option key={`${department.code}-${section.code}`} value={section.code}>{formatCatalogName(section.name)} · cód. {section.code}</option>)}</optgroup>)}</select></label>
-    <label>Título<input value={banner.title} onChange={(event) => onChange(banner.id, { title: event.target.value })} required /></label>
-    <label>Texto alternativo<input value={banner.altText} onChange={(event) => onChange(banner.id, { altText: event.target.value })} required /></label>
-    <div className="staff-form-row"><label>Posição<input type="number" min="0" value={banner.position} onChange={(event) => onChange(banner.id, { position: Number(event.target.value) })} /></label><label>Destino<input value={banner.targetUrl} onChange={(event) => onChange(banner.id, { targetUrl: event.target.value })} /></label></div>
-    <div className="staff-form-row banner-schedule"><label>Início opcional <small>Data e hora de Brasília</small><input type="datetime-local" value={toBrasiliaInput(banner.startsAt)} onChange={(event) => onChange(banner.id, { startsAt: fromBrasiliaInput(event.target.value) })} /></label><label>Encerramento opcional <small>Sem data, não expira</small><input type="datetime-local" value={toBrasiliaInput(banner.endsAt)} onChange={(event) => onChange(banner.id, { endsAt: fromBrasiliaInput(event.target.value) })} /></label></div>
-    <label>Imagem <small>{banner.id > 0 ? 'Selecione apenas se quiser substituir a atual' : 'PNG, JPG ou WEBP · máximo 5 MB'}</small><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => onImage(banner, event.target.files?.[0])} /></label>
-    <label className="staff-check"><input type="checkbox" checked={banner.active} onChange={(event) => onChange(banner.id, { active: event.target.checked })} /> Exibir na loja</label>
-  </article>
+  const [expanded, setExpanded] = useState(banner.id < 0)
+  return <details className={`banner-form ${banner.placement === 'catalog' ? 'catalog-format' : ''}`} open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+    <summary>
+      <span className="banner-summary-image">{banner.imageUrl ? <img src={banner.imageUrl} alt={banner.altText} /> : <span><ImagePlus /></span>}</span>
+      <span className="banner-summary-text"><strong>{banner.title || 'Novo banner'}</strong><small>{banner.placement === 'hero' ? 'Banner principal' : 'Banner entre produtos'} · posição {banner.position}</small></span>
+      <span className={`banner-summary-status ${banner.active ? 'active' : ''}`}>{banner.active ? 'Ativo' : 'Inativo'}</span>
+      <ChevronDown className="banner-summary-chevron" />
+    </summary>
+    <div className="staff-form banner-form-fields">
+      <div className="banner-editor-title"><h3>Detalhes do banner</h3><button type="button" onClick={() => onDelete(banner)} aria-label="Excluir banner"><Trash2 /> Excluir</button></div>
+      <label>Tipo<select value={banner.placement} onChange={(event) => onChange(banner.id, { placement: event.target.value as Banner['placement'] })}><option value="hero">Banner principal</option><option value="catalog">Banner entre produtos</option></select></label>
+      <label>Seção associada <small>{banner.placement === 'hero' ? 'Ao clicar, abre os produtos da seção' : 'A próxima linha mostrará produtos desta seção'}</small><select value={banner.sectionCode ?? ''} onChange={(event) => onChange(banner.id, { sectionCode: event.target.value ? Number(event.target.value) : null })}><option value="">Nenhuma seção associada</option>{departments.map((department) => <optgroup key={department.code || department.name} label={formatCatalogName(department.name)}>{department.sections.filter((section) => section.code > 0).map((section) => <option key={`${department.code}-${section.code}`} value={section.code}>{formatCatalogName(section.name)} · cód. {section.code}</option>)}</optgroup>)}</select></label>
+      <label>Título<input value={banner.title} onChange={(event) => onChange(banner.id, { title: event.target.value })} required /></label>
+      <label>Texto alternativo<input value={banner.altText} onChange={(event) => onChange(banner.id, { altText: event.target.value })} required /></label>
+      <div className="staff-form-row"><label>Posição<input type="number" min="0" value={banner.position} onChange={(event) => onChange(banner.id, { position: Number(event.target.value) })} /></label><label>Destino<input value={banner.targetUrl} onChange={(event) => onChange(banner.id, { targetUrl: event.target.value })} /></label></div>
+      <div className="staff-form-row banner-schedule"><label>Início opcional <small>Data e hora de Brasília</small><input type="datetime-local" value={toBrasiliaInput(banner.startsAt)} onChange={(event) => onChange(banner.id, { startsAt: fromBrasiliaInput(event.target.value) })} /></label><label>Encerramento opcional <small>Sem data, não expira</small><input type="datetime-local" value={toBrasiliaInput(banner.endsAt)} onChange={(event) => onChange(banner.id, { endsAt: fromBrasiliaInput(event.target.value) })} /></label></div>
+      <label>Imagem <small>{banner.id > 0 ? 'Selecione apenas se quiser substituir a atual' : 'PNG, JPG ou WEBP · máximo 5 MB'}</small><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => onImage(banner, event.target.files?.[0])} /></label>
+      <label className="staff-check"><input type="checkbox" checked={banner.active} onChange={(event) => onChange(banner.id, { active: event.target.checked })} /> Exibir na loja</label>
+    </div>
+  </details>
 }
