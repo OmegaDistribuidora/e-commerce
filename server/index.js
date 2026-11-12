@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
-import { findSupabaseUserByEmail, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
-import { bannerSchema, bannersBulkSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productSyncSchema, regionPricesSyncSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema } from './validation.js'
+import { createConfirmedSupabaseUser, deleteSupabaseUser, findSupabaseUserByEmail, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
+import { bannerSchema, bannersBulkSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerCreateSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema } from './validation.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -449,8 +449,8 @@ const priceTableOf = (value) => (PRICE_TABLES.includes(Number(value)) ? Number(v
 // Coluna segura: o número é validado contra PRICE_TABLES antes de entrar no SQL.
 const priceColumn = (table) => `price_${priceTableOf(table)}`
 
-// Região de preço e planos do cliente vindos do WinThor. Sem sincronização (ex.: cadastro em análise),
-// usa a região do canal (Varejo=1, Redes=12) e PTABELA1.
+// Região de preço e planos do cliente vindos do WinThor. Sem condições sincronizadas
+// (cadastro em análise ou ainda sem CODCLI), o cliente não tem região e não vê preço.
 async function customerPricing(database, customer) {
   if (!customer) return null
   const result = await database.query(
@@ -463,8 +463,14 @@ async function customerPricing(database, customer) {
     label: String(plan.label),
     priceTable: priceTableOf(plan.priceTable),
   }))
-  const region = row?.price_region != null ? Number(row.price_region) : (customer.sales_channel === 'Redes' ? 12 : 1)
-  return { region, plans, defaultPlan: plans[0] || null }
+  const region = row?.price_region != null ? Number(row.price_region) : null
+  return { region, plans, priceTables: [...new Set(plans.map((plan) => plan.priceTable))] }
+}
+
+// Menor preço positivo entre as tabelas dos planos liberados para o cliente.
+function lowestPlanPrice(row, priceTables) {
+  const prices = priceTables.map((table) => Number(row?.[priceColumn(table)])).filter((price) => price > 0)
+  return prices.length ? Math.min(...prices) : null
 }
 
 // Calcula as linhas do carrinho com o preço da região do cliente na tabela do plano escolhido.
@@ -1263,16 +1269,30 @@ app.post('/api/customer/quote', async (request, response, next) => {
   if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
   try {
     const pricing = await customerPricing(pool, request.customer)
-    if (!pricing.plans.length) {
+    if (pricing.region == null || !pricing.plans.length) {
       return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda estão sendo atualizadas pelo WinThor.' })
     }
-    const plan = pricing.plans.find((item) => item.code === parsed.data.paymentPlan)
-    if (!plan) return response.status(400).json({ message: 'O plano de pagamento selecionado não está liberado para este cliente.' })
-    const { lines, total } = await priceCartItems(pool, pricing, plan, parsed.data.items)
+    const requested = parsed.data.paymentPlan
+    if (requested && !pricing.plans.some((item) => item.code === requested)) {
+      return response.status(400).json({ message: 'O plano de pagamento selecionado não está liberado para este cliente.' })
+    }
+    const quotes = []
+    for (const plan of pricing.plans) {
+      try {
+        quotes.push({ plan, ...(await priceCartItems(pool, pricing, plan, parsed.data.items)) })
+      } catch (error) {
+        if (!(error instanceof RequestError)) throw error
+        quotes.push({ plan, error })
+      }
+    }
+    const available = quotes.filter((quote) => !quote.error).sort((a, b) => a.total - b.total)
+    const selected = requested ? quotes.find((quote) => quote.plan.code === requested) : available[0] || quotes[0]
+    if (selected.error) return response.status(selected.error.status).json({ message: selected.error.message })
     return response.json({
-      paymentPlan: { code: plan.code, label: plan.label },
-      items: lines.map((line) => ({ productId: Number(line.product.id), units: line.units, unitPrice: line.unitPrice, lineTotal: line.lineTotal })),
-      total,
+      paymentPlan: { code: selected.plan.code, label: selected.plan.label },
+      items: selected.lines.map((line) => ({ productId: Number(line.product.id), units: line.units, unitPrice: line.unitPrice, lineTotal: line.lineTotal })),
+      total: selected.total,
+      planTotals: quotes.map((quote) => ({ code: quote.plan.code, label: quote.plan.label, total: quote.error ? null : quote.total })),
     })
   } catch (error) {
     if (error instanceof RequestError) return response.status(error.status).json({ message: error.message })
@@ -1310,10 +1330,10 @@ app.get('/api/products', async (request, response, next) => {
       conditions.push(`p.section_code = $${params.length}`)
     }
     const pricing = await customerPricing(pool, request.customer)
-    params.push(pricing ? pricing.region : -1)
+    const priceTables = pricing?.region != null ? pricing.priceTables : []
+    params.push(priceTables.length ? pricing.region : -1)
     const regionParam = params.length
-    const defaultPriceColumn = `rp.${priceColumn(pricing?.defaultPlan?.priceTable)}`
-    const priceExpression = `CASE WHEN ${defaultPriceColumn} > 0 THEN ${defaultPriceColumn} END`
+    const priceColumns = priceTables.map((table) => `, rp.${priceColumn(table)}`).join('')
     params.push(limit)
 
     const hasImage = `(p.image_hidden=FALSE AND (p.image_data IS NOT NULL OR p.image_path IS NOT NULL))`
@@ -1334,7 +1354,7 @@ app.get('/api/products', async (request, response, next) => {
               p.category, p.department_code, p.department, p.section_code, p.section, p.stock_units, p.image_path,
               p.image_data IS NOT NULL AS image_uploaded, p.image_hidden, p.image_updated_at, p.ean,
               p.manufacturer_code, p.ncm_code,
-              p.price_date, COALESCE(w.units, 0) AS weekly_sales, ${priceExpression} AS customer_price
+              p.price_date, COALESCE(w.units, 0) AS weekly_sales${priceColumns}
        FROM products p
        LEFT JOIN weekly w ON w.product_id = p.id
        LEFT JOIN region_prices rp ON rp.product_id = p.id AND rp.region = $${regionParam}
@@ -1346,7 +1366,7 @@ app.get('/api/products', async (request, response, next) => {
 
     response.json({
       products: result.rows.map((row) => {
-        const customerPrice = request.customer && row.customer_price != null ? Number(row.customer_price) : null
+        const customerPrice = request.customer ? lowestPlanPrice(row, priceTables) : null
         return {
         id: row.id,
         code: row.external_id,
@@ -1376,7 +1396,6 @@ app.get('/api/products', async (request, response, next) => {
       }}),
       sort,
       count: result.rows.length,
-      pricePlan: pricing?.defaultPlan ? { code: pricing.defaultPlan.code, label: pricing.defaultPlan.label } : null,
     })
   } catch (error) {
     next(error)
@@ -1474,17 +1493,18 @@ app.get('/api/products/:code', async (request, response, next) => {
     const pricing = await customerPricing(pool, request.customer)
     let unitPrice = null
     let planPrices = []
-    if (pricing) {
+    if (pricing?.region != null && pricing.plans.length) {
       const priceResult = await pool.query(
         `SELECT ${PRICE_TABLES.map((table) => `price_${table}`).join(', ')} FROM region_prices WHERE region=$1 AND product_id=$2`,
         [pricing.region, row.id],
       )
       const prices = priceResult.rows[0]
       const priceFor = (table) => (prices && Number(prices[priceColumn(table)]) > 0 ? Number(prices[priceColumn(table)]) : null)
-      unitPrice = priceFor(pricing.defaultPlan?.priceTable)
       planPrices = pricing.plans
         .map((plan) => ({ code: plan.code, label: plan.label, unitPrice: priceFor(plan.priceTable) }))
         .filter((plan) => plan.unitPrice !== null)
+        .sort((a, b) => a.unitPrice - b.unitPrice)
+      unitPrice = planPrices[0]?.unitPrice ?? null
     }
     return response.json({ product: {
       id: Number(row.id), code: Number(row.external_id), supplierId: Number(row.supplier_id || 0),
@@ -1640,6 +1660,66 @@ app.get('/api/staff/customers', requireCommercialAccess, async (request, respons
       })),
     })
   } catch (error) {
+    return next(error)
+  }
+})
+
+// Cadastra cliente já aprovado e vinculado ao CODCLI do WinThor, com acesso confirmado.
+app.post('/api/staff/customers', requireCommercialAccess, async (request, response, next) => {
+  const parsed = staffCustomerCreateSchema.safeParse(request.body)
+  if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+  const data = parsed.data
+  let authUser = null
+  try {
+    const conflicts = await pool.query(
+      `SELECT 'customer' AS kind FROM customers WHERE active=TRUE AND (document=$1 OR LOWER(email)=LOWER($2))
+       UNION ALL
+       SELECT 'staff' AS kind FROM staff_users WHERE LOWER(email)=LOWER($2)
+       LIMIT 1`,
+      [data.document, data.email],
+    )
+    if (conflicts.rows.length) {
+      return response.status(409).json({
+        message: conflicts.rows[0].kind === 'staff'
+          ? 'Este e-mail pertence a um usuário da gestão.'
+          : 'Já existe um cliente com este CPF/CNPJ ou e-mail.',
+      })
+    }
+    const winthorCustomer = await fetchWinthorCustomerByDocument(data.document)
+    if (!winthorCustomer) return response.status(422).json({ message: 'CPF ou CNPJ não encontrado no WinThor.' })
+    const linked = await pool.query('SELECT id FROM customers WHERE external_id=$1 AND active=TRUE LIMIT 1', [winthorCustomer.code])
+    if (linked.rows.length) {
+      return response.status(409).json({ message: `O código WinThor ${winthorCustomer.code} já está vinculado a outro cliente do e-commerce.` })
+    }
+    authUser = await createConfirmedSupabaseUser({
+      email: data.email,
+      password: data.password,
+      metadata: { document: data.document, legal_name: data.legalName },
+    })
+    const result = await pool.query(
+      `INSERT INTO customers (
+         external_id, document, person_type, legal_name, trade_name, phone, email, supabase_user_id,
+         postal_code, address_line, address_number, address_complement, neighborhood, city, state,
+         registration_status, approved_at, approved_by_staff_user_id
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'approved',CURRENT_TIMESTAMP,$16)
+       RETURNING id, external_id, document, person_type, legal_name, trade_name, phone, email,
+                 postal_code, address_line, address_number, address_complement, neighborhood,
+                 city, state, sales_channel, registration_status, approved_at`,
+      [
+        winthorCustomer.code, data.document, data.document.length === 11 ? 'CPF' : 'CNPJ', data.legalName,
+        data.tradeName, data.phone, data.email, authUser.id, data.postalCode, data.addressLine,
+        data.addressNumber, data.addressComplement, data.neighborhood, data.city, data.state, request.staff.id,
+      ],
+    )
+    return response.status(201).json({
+      customer: { ...customerJson(result.rows[0]), approvedAt: result.rows[0].approved_at },
+      winthorCustomer,
+    })
+  } catch (error) {
+    if (authUser?.id) await deleteSupabaseUser(authUser.id)
+    if (error instanceof OmegaApiError) return response.status(error.status).json({ message: error.message })
+    if (error?.status === 409 || error?.status === 502) return response.status(error.status).json({ message: error.message })
+    if (error?.code === '23505') return response.status(409).json({ message: 'Já existe um cliente com estes dados.' })
     return next(error)
   }
 })
@@ -2135,6 +2215,10 @@ app.post('/api/orders', async (request, response, next) => {
       return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda não foram sincronizadas com o WinThor.' })
     }
     const pricing = await customerPricing(client, request.customer)
+    if (pricing.region == null) {
+      await client.query('ROLLBACK')
+      return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda não foram sincronizadas com o WinThor.' })
+    }
     const selectedPlan = pricing.plans.find((plan) => plan.code === parsed.data.paymentPlan)
     if (!selectedPlan) {
       await client.query('ROLLBACK')

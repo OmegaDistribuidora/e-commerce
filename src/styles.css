@@ -902,3 +902,13 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+.create-customer-form { margin-bottom: 18px; }
+.create-customer-form > summary { display: flex; align-items: center; gap: 8px; color: var(--navy); font-weight: 800; cursor: pointer; list-style: none; }
+.create-customer-form > summary::-webkit-details-marker { display: none; }
+.create-customer-form > summary svg { width: 18px; height: 18px; }
+.create-customer-form > p { margin: 8px 0 14px; color: var(--muted); font-size: 12px; }
+.create-customer-form form { display: grid; gap: 12px; }
+.create-customer-form .staff-form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.create-customer-form label small { color: var(--muted); font-weight: 500; }
+.create-customer-form .primary-button { justify-self: start; }

@@ -35,6 +35,7 @@ export type OrderQuote = {
   paymentPlan: PricePlan
   items: Array<{ productId: number; units: number; unitPrice: number; lineTotal: number }>
   total: number
+  planTotals: Array<{ code: string; label: string; total: number | null }>
 }
 
 export type CatalogSection = {

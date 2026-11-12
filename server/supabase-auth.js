@@ -63,3 +63,41 @@ export async function verifySupabaseAccessToken(request) {
     userMetadata: payload.user_metadata && typeof payload.user_metadata === 'object' ? payload.user_metadata : {},
   }
 }
+
+function adminHeaders() {
+  const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim()
+  if (!authConfig() || !serviceRoleKey) return null
+  return { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}`, 'Content-Type': 'application/json' }
+}
+
+// Cria um acesso já confirmado (usado pela gestão enquanto o envio de e-mails não está ativo).
+export async function createConfirmedSupabaseUser({ email, password, metadata = {} }) {
+  const headers = adminHeaders()
+  if (!headers) throw new Error('A autenticação de clientes não está configurada no servidor.')
+  const response = await fetch(`${authConfig().url}/auth/v1/admin/users`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: metadata }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const message = String(payload.msg || payload.message || payload.error_description || '')
+    const error = new Error(/already|registered|exists/i.test(message)
+      ? 'Este e-mail já possui uma conta de acesso.'
+      : 'Não foi possível criar o acesso do cliente.')
+    error.status = /already|registered|exists/i.test(message) ? 409 : 502
+    throw error
+  }
+  return payload
+}
+
+export async function deleteSupabaseUser(id) {
+  const headers = adminHeaders()
+  if (!headers || !id) return
+  await fetch(`${authConfig().url}/auth/v1/admin/users/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers,
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => undefined)
+}

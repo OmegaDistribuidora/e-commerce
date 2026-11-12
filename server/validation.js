@@ -56,6 +56,19 @@ export const customerProfileSchema = z.object({
 
 export const customerUpdateSchema = customerProfileSchema.omit({ document: true, email: true })
 
+// Cadastro feito pela gestão: telefone e CEP podem ficar para o cliente completar depois.
+export const staffCustomerCreateSchema = customerProfileSchema.extend({
+  phone: z.string().optional().default('').transform((value) => digits(value, 11))
+    .refine((value) => value === '' || value.length === 10 || value.length === 11, 'Telefone inválido'),
+  postalCode: z.string().optional().default('').transform((value) => digits(value, 8))
+    .refine((value) => value === '' || value.length === 8, 'Informe um CEP válido'),
+  email: z.string().trim().email('E-mail inválido').max(180).transform((value) => value.toLowerCase()),
+  password: z.string().min(8, 'A senha precisa ter pelo menos 8 caracteres').max(72)
+    .regex(/[A-Z]/, 'Inclua uma letra maiúscula na senha')
+    .regex(/[a-z]/, 'Inclua uma letra minúscula na senha')
+    .regex(/\d/, 'Inclua um número na senha'),
+})
+
 export const staffPasswordSchema = z.object({
   currentPassword: z.string().min(1, 'Informe a senha atual').max(72),
   newPassword: z.string().min(8, 'A nova senha precisa ter pelo menos 8 caracteres').max(72)
@@ -88,7 +101,7 @@ export const orderSchema = z.object({
 })
 
 export const orderQuoteSchema = z.object({
-  paymentPlan: z.string().trim().min(1, 'Selecione um plano de pagamento').max(30),
+  paymentPlan: z.string().trim().min(1).max(30).optional(),
   items: z.array(z.object({
     productId: z.coerce.number().int().positive(),
     quantity: z.coerce.number().int().positive().max(100000),
