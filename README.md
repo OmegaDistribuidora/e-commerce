@@ -62,6 +62,7 @@ Defina no serviço do e-commerce:
 - `ADMIN_EMAIL` (opcional; padrão `admin@omegadistribuidora.com.br`)
 - `ADMIN_NAME` (opcional)
 - `ADMIN_PASSWORD` (obrigatória para criar o primeiro administrador)
+- `ADMIN_PASSWORD_RESET=true` (opcional; redefine a senha da conta `ADMIN_EMAIL` para `ADMIN_PASSWORD` na inicialização e encerra as sessões dela. Remova a variável depois do primeiro acesso)
 
 A conta inicial é criada apenas quando ainda não existe. Depois, o Administrador cria outros usuários Administradores ou Comerciais em `/gestao`. Administradores e Comerciais consultam pedidos e gerenciam banners; somente Administradores criam usuários internos.
 

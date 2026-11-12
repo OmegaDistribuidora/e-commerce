@@ -228,7 +228,19 @@ async function ensureBootstrapAdmin() {
   const email = String(process.env.ADMIN_EMAIL || 'admin@omegadistribuidora.com.br').trim().toLowerCase()
   const name = String(process.env.ADMIN_NAME || 'Administrador Ômega').trim()
   const existing = await pool.query('SELECT id FROM staff_users WHERE LOWER(email) = $1 LIMIT 1', [email])
-  if (existing.rows.length) return
+  if (existing.rows.length) {
+    // Redefinição explícita: ADMIN_PASSWORD_RESET=true grava ADMIN_PASSWORD na conta e encerra as sessões dela.
+    // Remova a variável depois do primeiro acesso para que reinícios não sobrescrevam a senha.
+    if (String(process.env.ADMIN_PASSWORD_RESET || '').trim().toLowerCase() === 'true') {
+      await pool.query(
+        `UPDATE staff_users SET password_hash=$2, active=TRUE, role='ADMIN', updated_at=CURRENT_TIMESTAMP WHERE id=$1`,
+        [existing.rows[0].id, hashPassword(password)],
+      )
+      await pool.query('DELETE FROM staff_sessions WHERE staff_user_id=$1', [existing.rows[0].id])
+      console.warn(`[auth] senha da conta administrativa ${email} redefinida por ADMIN_PASSWORD_RESET. Remova essa variável.`)
+    }
+    return
+  }
   await pool.query(
     `INSERT INTO staff_users (name, email, password_hash, role)
      VALUES ($1,$2,$3,'ADMIN')`,
