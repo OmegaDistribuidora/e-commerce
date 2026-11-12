@@ -92,6 +92,18 @@ export async function createConfirmedSupabaseUser({ email, password, metadata = 
   return payload
 }
 
+// Remove o acesso e informa se deu certo (404 = acesso já não existia).
+export async function removeSupabaseUser(id) {
+  const headers = adminHeaders()
+  if (!headers) throw new Error('A autenticação de clientes não está configurada no servidor.')
+  const response = await fetch(`${authConfig().url}/auth/v1/admin/users/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers,
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok && response.status !== 404) throw new Error('Não foi possível remover o acesso do cliente.')
+}
+
 export async function deleteSupabaseUser(id) {
   const headers = adminHeaders()
   if (!headers || !id) return

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
-import { createConfirmedSupabaseUser, deleteSupabaseUser, findSupabaseUserByEmail, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
+import { createConfirmedSupabaseUser, deleteSupabaseUser, findSupabaseUserByEmail, removeSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
 import { bannerSchema, bannersBulkSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerCreateSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema } from './validation.js'
 
 const app = express()
@@ -1721,6 +1721,51 @@ app.post('/api/staff/customers', requireCommercialAccess, async (request, respon
     if (error?.status === 409 || error?.status === 502) return response.status(error.status).json({ message: error.message })
     if (error?.code === '23505') return response.status(409).json({ message: 'Já existe um cliente com estes dados.' })
     return next(error)
+  }
+})
+
+// Exclui cliente. Sem pedidos: remove o registro. Com pedidos: desativa e libera e-mail e CPF/CNPJ,
+// preservando o histórico. Em ambos os casos o acesso no Supabase é removido.
+app.delete('/api/staff/customers/:id', requireAdmin, async (request, response, next) => {
+  const customerId = Number(request.params.id)
+  if (!Number.isSafeInteger(customerId) || customerId < 1) return response.status(400).json({ message: 'Cliente inválido.' })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const current = await client.query(
+      'SELECT id, legal_name, trade_name, supabase_user_id FROM customers WHERE id=$1 AND active=TRUE FOR UPDATE',
+      [customerId],
+    )
+    if (!current.rows.length) {
+      await client.query('ROLLBACK')
+      return response.status(404).json({ message: 'Cliente não encontrado.' })
+    }
+    const customer = current.rows[0]
+    if (customer.supabase_user_id) await removeSupabaseUser(customer.supabase_user_id)
+    const orders = await client.query('SELECT COUNT(*)::int AS count FROM orders WHERE customer_id=$1', [customerId])
+    const orderCount = Number(orders.rows[0].count)
+    if (orderCount === 0) {
+      await client.query('DELETE FROM customers WHERE id=$1', [customerId])
+    } else {
+      await client.query('DELETE FROM sessions WHERE customer_id=$1', [customerId])
+      await client.query('DELETE FROM customer_commercial_conditions WHERE customer_id=$1', [customerId])
+      await client.query(
+        `UPDATE customers SET active=FALSE, supabase_user_id=NULL, password_hash=NULL,
+           email=$2, document=$3, updated_at=CURRENT_TIMESTAMP
+         WHERE id=$1`,
+        [customerId, `removido-${customerId}@cliente-removido.invalid`, `REM${customerId}`.slice(0, 14)],
+      )
+    }
+    await client.query('COMMIT')
+    return response.json({ removed: true, orderCount, name: customer.trade_name || customer.legal_name })
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined)
+    if (error instanceof Error && /acesso do cliente|não está configurada/.test(error.message)) {
+      return response.status(502).json({ message: error.message })
+    }
+    return next(error)
+  } finally {
+    client.release()
   }
 })
 

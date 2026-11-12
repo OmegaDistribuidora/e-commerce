@@ -912,3 +912,10 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .create-customer-form .staff-form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
 .create-customer-form label small { color: var(--muted); font-weight: 500; }
 .create-customer-form .primary-button { justify-self: start; }
+
+.approved-customers { margin-bottom: 18px; padding: 16px 20px; border: 1px solid #dfe7f1; border-radius: 13px; background: #fff; display: grid; gap: 8px; }
+.approved-customers h2 { margin: 0 0 4px; color: var(--navy); font-size: 15px; }
+.approved-customers article { padding: 10px 0; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.approved-customers article div { display: grid; gap: 2px; min-width: 0; }
+.approved-customers small { color: var(--muted); overflow-wrap: anywhere; }
+.approved-customers .order-cancel-button { margin-top: 0; }
