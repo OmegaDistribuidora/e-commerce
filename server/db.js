@@ -73,6 +73,18 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE banners ADD COLUMN IF NOT EXISTS section_code INTEGER')
   await pool.query('ALTER TABLE banners ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ')
   await pool.query('ALTER TABLE banners ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ')
+  await pool.query("ALTER TABLE banners ADD COLUMN IF NOT EXISTS destination_type VARCHAR(20) NOT NULL DEFAULT 'navigation'")
+  await pool.query("ALTER TABLE banners ADD COLUMN IF NOT EXISTS destination_values INTEGER[] NOT NULL DEFAULT '{}'")
+  await pool.query("ALTER TABLE banners ADD COLUMN IF NOT EXISTS navigation_path TEXT NOT NULL DEFAULT '/#produtos'")
+  await pool.query('ALTER TABLE banners DROP CONSTRAINT IF EXISTS banners_destination_type_check')
+  await pool.query("ALTER TABLE banners ADD CONSTRAINT banners_destination_type_check CHECK (destination_type IN ('navigation', 'sections', 'products', 'suppliers'))")
+  if (process.env.DATABASE_URL) {
+    await pool.query(`UPDATE banners
+      SET destination_type='sections', destination_values=ARRAY[section_code]
+      WHERE section_code IS NOT NULL AND destination_type='navigation' AND destination_values='{}'::integer[]`)
+    await pool.query(`UPDATE banners SET navigation_path=CASE WHEN target_url='#produtos' THEN '/#produtos' ELSE target_url END
+      WHERE destination_type='navigation' AND navigation_path='/#produtos'`)
+  }
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_plan_label VARCHAR(160)')
   await pool.query('CREATE INDEX IF NOT EXISTS idx_banners_section_code ON banners(section_code)')
   if (process.env.DATABASE_URL) {

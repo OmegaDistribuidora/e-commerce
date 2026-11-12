@@ -381,17 +381,38 @@ function decodeBannerImage(dataUrl) {
   return { mime: match[1], data }
 }
 
-async function findMissingBannerSection(database, banners) {
-  const sectionCodes = [...new Set(banners.map((banner) => banner.sectionCode).filter(Boolean))]
-  if (!sectionCodes.length) return null
-  const result = await database.query(
-    `SELECT DISTINCT section_code
-     FROM products
-     WHERE active=TRUE AND section_code = ANY($1::int[])`,
-    [sectionCodes],
-  )
-  const availableCodes = new Set(result.rows.map((row) => Number(row.section_code)))
-  return sectionCodes.find((code) => !availableCodes.has(Number(code))) ?? null
+async function findMissingBannerDestination(database, banners) {
+  const configurations = {
+    sections: { column: 'section_code', label: 'seção' },
+    products: { column: 'external_id', label: 'produto' },
+    suppliers: { column: 'supplier_id', label: 'fornecedor' },
+  }
+  for (const banner of banners) {
+    if (banner.destinationType === 'navigation') continue
+    const configuration = configurations[banner.destinationType]
+    const codes = [...new Set(banner.destinationValues.map(Number))]
+    const result = await database.query(
+      `SELECT DISTINCT ${configuration.column} AS code FROM products
+       WHERE active=TRUE AND ${configuration.column} = ANY($1::int[])`,
+      [codes],
+    )
+    const availableCodes = new Set(result.rows.map((row) => Number(row.code)))
+    const missingCode = codes.find((code) => !availableCodes.has(code))
+    if (missingCode) return { label: configuration.label, code: missingCode }
+  }
+  return null
+}
+
+function bannerDestinationUrl(banner) {
+  const codes = banner.destinationValues.join(',')
+  if (banner.destinationType === 'sections') return `/?secoes=${codes}#produtos`
+  if (banner.destinationType === 'products') return `/?produtos=${codes}#produtos`
+  if (banner.destinationType === 'suppliers') return `/?fornecedores=${codes}#produtos`
+  return banner.navigationPath || '/#produtos'
+}
+
+function postgresIntegerArray(values) {
+  return `{${values.map(Number).join(',')}}`
 }
 
 function decodeProductImage(dataUrl) {
@@ -750,7 +771,8 @@ app.get('/api/banners', async (request, response, next) => {
     const placement = request.query.placement === 'catalog' ? 'catalog' : 'hero'
     const result = await pool.query(
       `SELECT b.id, b.title, b.alt_text, b.image_path, b.image_data IS NOT NULL AS uploaded,
-              b.target_url, b.section_code, b.position, b.active, b.placement,
+              b.target_url, b.section_code, b.destination_type, b.destination_values, b.navigation_path,
+              b.position, b.active, b.placement,
               b.starts_at, b.ends_at, b.updated_at,
               tx.section_name, tx.department_code, tx.department_name
        FROM banners b
@@ -774,6 +796,9 @@ app.get('/api/banners', async (request, response, next) => {
       imageUrl: banner.uploaded ? `/api/banners/${banner.id}/image?v=${new Date(banner.updated_at).getTime()}` : banner.image_path,
       targetUrl: banner.target_url,
       sectionCode: banner.section_code === null ? null : Number(banner.section_code),
+      destinationType: banner.destination_type,
+      destinationValues: Array.isArray(banner.destination_values) ? banner.destination_values.map(Number) : [],
+      navigationPath: banner.navigation_path,
       sectionName: banner.section_name || '',
       departmentCode: banner.department_code === null ? null : Number(banner.department_code),
       departmentName: banner.department_name || '',
@@ -1652,7 +1677,8 @@ app.get('/api/staff/banners', requireMarketingAccess, async (_request, response,
   try {
     const result = await pool.query(
       `SELECT b.id, b.title, b.alt_text, b.image_path, b.image_data IS NOT NULL AS uploaded,
-              b.target_url, b.section_code, b.position, b.active, b.placement,
+              b.target_url, b.section_code, b.destination_type, b.destination_values, b.navigation_path,
+              b.position, b.active, b.placement,
               b.starts_at, b.ends_at, b.updated_at,
               tx.section_name, tx.department_code, tx.department_name
        FROM banners b
@@ -1670,6 +1696,9 @@ app.get('/api/staff/banners', requireMarketingAccess, async (_request, response,
       imageUrl: banner.uploaded ? `/api/banners/${banner.id}/image?v=${new Date(banner.updated_at).getTime()}` : banner.image_path,
       targetUrl: banner.target_url, position: Number(banner.position), active: banner.active, placement: banner.placement,
       sectionCode: banner.section_code === null ? null : Number(banner.section_code),
+      destinationType: banner.destination_type,
+      destinationValues: Array.isArray(banner.destination_values) ? banner.destination_values.map(Number) : [],
+      navigationPath: banner.navigation_path,
       sectionName: banner.section_name || '', departmentCode: banner.department_code === null ? null : Number(banner.department_code),
       departmentName: banner.department_name || '',
       startsAt: banner.starts_at, endsAt: banner.ends_at,
@@ -1685,10 +1714,10 @@ app.put('/api/staff/banners', requireMarketingAccess, async (request, response, 
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    const missingSection = await findMissingBannerSection(client, parsed.data.banners)
-    if (missingSection) {
+    const missingDestination = await findMissingBannerDestination(client, parsed.data.banners)
+    if (missingDestination) {
       await client.query('ROLLBACK')
-      return response.status(400).json({ message: `A seção ${missingSection} não está disponível no catálogo ativo.` })
+      return response.status(400).json({ message: `O ${missingDestination.label} ${missingDestination.code} não está disponível no catálogo ativo.` })
     }
     if (parsed.data.deletedIds.length) {
       await client.query('DELETE FROM banners WHERE id = ANY($1::bigint[])', [parsed.data.deletedIds])
@@ -1702,12 +1731,15 @@ app.put('/api/staff/banners', requireMarketingAccess, async (request, response, 
       if (banner.id) {
         const result = await client.query(
           `UPDATE banners SET title=$1, alt_text=$2, target_url=$3, section_code=$4,
-             position=$5, active=$6, placement=$7,
-             starts_at=$8, ends_at=$9, image_data=COALESCE($10, image_data), image_mime=COALESCE($11, image_mime),
-             image_path=CASE WHEN $10::bytea IS NOT NULL THEN NULL ELSE image_path END,
+             destination_type=$5, destination_values=$6, navigation_path=$7,
+             position=$8, active=$9, placement=$10,
+             starts_at=$11, ends_at=$12, image_data=COALESCE($13, image_data), image_mime=COALESCE($14, image_mime),
+             image_path=CASE WHEN $13::bytea IS NOT NULL THEN NULL ELSE image_path END,
              updated_at=CURRENT_TIMESTAMP
-           WHERE id=$12 RETURNING id`,
-          [banner.title, banner.altText, banner.targetUrl || '#produtos', banner.sectionCode,
+           WHERE id=$15 RETURNING id`,
+          [banner.title, banner.altText, bannerDestinationUrl(banner),
+            banner.destinationType === 'sections' ? banner.destinationValues[0] : null,
+            banner.destinationType, postgresIntegerArray(banner.destinationValues), banner.navigationPath,
             banner.position, banner.active, banner.placement, banner.startsAt || null, banner.endsAt || null,
             image?.data ?? null, image?.mime ?? null, banner.id],
         )
@@ -1718,9 +1750,12 @@ app.put('/api/staff/banners', requireMarketingAccess, async (request, response, 
           return response.status(400).json({ message: `Selecione uma imagem para o banner â€œ${banner.title}â€.` })
         }
         await client.query(
-          `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, section_code, position, active, placement, starts_at, ends_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-          [banner.title, banner.altText, image.data, image.mime, banner.targetUrl || '#produtos', banner.sectionCode,
+          `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, section_code,
+             destination_type, destination_values, navigation_path, position, active, placement, starts_at, ends_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+          [banner.title, banner.altText, image.data, image.mime, bannerDestinationUrl(banner),
+            banner.destinationType === 'sections' ? banner.destinationValues[0] : null,
+            banner.destinationType, postgresIntegerArray(banner.destinationValues), banner.navigationPath,
             banner.position, banner.active, banner.placement, banner.startsAt || null, banner.endsAt || null],
         )
       }
@@ -1739,27 +1774,29 @@ app.put('/api/staff/banners/:id', requireMarketingAccess, async (request, respon
   try {
     const parsed = bannerSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
-    const missingSection = await findMissingBannerSection(pool, [parsed.data])
-    if (missingSection) return response.status(400).json({ message: `A seção ${missingSection} não está disponível no catálogo ativo.` })
+    const missingDestination = await findMissingBannerDestination(pool, [parsed.data])
+    if (missingDestination) return response.status(400).json({ message: `O ${missingDestination.label} ${missingDestination.code} não está disponível no catálogo ativo.` })
     let image = null
     try { image = decodeBannerImage(parsed.data.imageDataUrl) } catch (error) {
       return response.status(400).json({ message: error.message })
     }
     const values = [
-      parsed.data.title, parsed.data.altText, parsed.data.targetUrl || '#produtos',
-      parsed.data.sectionCode, parsed.data.position, parsed.data.active, parsed.data.placement,
-      parsed.data.startsAt || null, parsed.data.endsAt || null,
-      image?.data ?? null, image?.mime ?? null,
+      parsed.data.title, parsed.data.altText, bannerDestinationUrl(parsed.data),
+      parsed.data.destinationType === 'sections' ? parsed.data.destinationValues[0] : null,
+      parsed.data.destinationType, postgresIntegerArray(parsed.data.destinationValues), parsed.data.navigationPath,
+      parsed.data.position, parsed.data.active, parsed.data.placement,
+      parsed.data.startsAt || null, parsed.data.endsAt || null, image?.data ?? null, image?.mime ?? null,
       request.params.id,
     ]
     const result = await pool.query(
       `UPDATE banners SET title=$1, alt_text=$2, target_url=$3, section_code=$4,
-         position=$5, active=$6, placement=$7,
-         starts_at=$8, ends_at=$9,
-         image_data=COALESCE($10, image_data), image_mime=COALESCE($11, image_mime),
-         image_path=CASE WHEN $10::bytea IS NOT NULL THEN NULL ELSE image_path END,
+         destination_type=$5, destination_values=$6, navigation_path=$7,
+         position=$8, active=$9, placement=$10,
+         starts_at=$11, ends_at=$12,
+         image_data=COALESCE($13, image_data), image_mime=COALESCE($14, image_mime),
+         image_path=CASE WHEN $13::bytea IS NOT NULL THEN NULL ELSE image_path END,
          updated_at=CURRENT_TIMESTAMP
-       WHERE id=$12 RETURNING id`,
+       WHERE id=$15 RETURNING id`,
       values,
     )
     if (!result.rows.length) return response.status(404).json({ message: 'Banner não encontrado.' })
@@ -1773,18 +1810,21 @@ app.post('/api/staff/banners', requireMarketingAccess, async (request, response,
   try {
     const parsed = bannerSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
-    const missingSection = await findMissingBannerSection(pool, [parsed.data])
-    if (missingSection) return response.status(400).json({ message: `A seção ${missingSection} não está disponível no catálogo ativo.` })
+    const missingDestination = await findMissingBannerDestination(pool, [parsed.data])
+    if (missingDestination) return response.status(400).json({ message: `O ${missingDestination.label} ${missingDestination.code} não está disponível no catálogo ativo.` })
     let image
     try { image = decodeBannerImage(parsed.data.imageDataUrl) } catch (error) {
       return response.status(400).json({ message: error.message })
     }
     if (!image) return response.status(400).json({ message: 'Selecione uma imagem para o novo banner.' })
     const result = await pool.query(
-      `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, section_code, position, active, placement, starts_at, ends_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-      [parsed.data.title, parsed.data.altText, image.data, image.mime, parsed.data.targetUrl || '#produtos',
-        parsed.data.sectionCode, parsed.data.position, parsed.data.active, parsed.data.placement,
+      `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, section_code,
+         destination_type, destination_values, navigation_path, position, active, placement, starts_at, ends_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+      [parsed.data.title, parsed.data.altText, image.data, image.mime, bannerDestinationUrl(parsed.data),
+        parsed.data.destinationType === 'sections' ? parsed.data.destinationValues[0] : null,
+        parsed.data.destinationType, postgresIntegerArray(parsed.data.destinationValues), parsed.data.navigationPath,
+        parsed.data.position, parsed.data.active, parsed.data.placement,
         parsed.data.startsAt || null, parsed.data.endsAt || null],
     )
     return response.status(201).json({ id: Number(result.rows[0].id), saved: true })
@@ -1912,9 +1952,18 @@ app.post('/api/orders', async (request, response, next) => {
 })
 
 if (existsSync(distDir)) {
-  app.use(express.static(distDir, { maxAge: '1h' }))
+  app.use(express.static(distDir, {
+    index: false,
+    setHeaders: (response, filePath) => {
+      const isVersionedBuildAsset = /[\\/]assets[\\/]index-[A-Za-z0-9_-]+\.(?:js|css)$/.test(filePath)
+      response.setHeader('Cache-Control', isVersionedBuildAsset
+        ? 'public, max-age=31536000, immutable'
+        : 'no-cache')
+    },
+  }))
   app.use((request, response, next) => {
     if (request.method === 'GET' && !request.path.startsWith('/api/')) {
+      response.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
       return response.sendFile(resolve(distDir, 'index.html'))
     }
     return next()

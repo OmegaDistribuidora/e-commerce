@@ -107,6 +107,9 @@ export const bannerSchema = z.object({
   altText: z.string().trim().min(3, 'Informe o texto alternativo').max(240),
   targetUrl: z.string().trim().max(500).default('#produtos'),
   sectionCode: z.coerce.number().int().positive().nullable().optional().default(null),
+  destinationType: z.enum(['navigation', 'sections', 'products', 'suppliers']).default('navigation'),
+  destinationValues: z.array(z.coerce.number().int().positive()).max(100).default([]),
+  navigationPath: z.enum(['/', '/#produtos', '/?modo=mais-vendidos#produtos', '/#parceiros', '/pedidos', '/conta']).default('/#produtos'),
   position: z.coerce.number().int().min(0).max(1000),
   active: z.boolean(),
   placement: z.enum(['hero', 'catalog']).default('hero'),
@@ -115,6 +118,8 @@ export const bannerSchema = z.object({
   endsAt: z.string().datetime({ offset: true }).nullable().optional(),
 }).refine((value) => !value.startsAt || !value.endsAt || new Date(value.endsAt) > new Date(value.startsAt), {
   message: 'O encerramento deve ser posterior ao inÃ­cio.', path: ['endsAt'],
+}).refine((value) => value.destinationType === 'navigation' || value.destinationValues.length > 0, {
+  message: 'Selecione pelo menos um destino para o banner.', path: ['destinationValues'],
 })
 
 export const bannersBulkSchema = z.object({

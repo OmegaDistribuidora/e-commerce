@@ -17,8 +17,8 @@ import type { Banner, CartItem, CatalogDepartment, CommercialConditions, Custome
 import { formatDocument } from './validation'
 
 const fallbackSlides: Banner[] = [
-  { id: 1, title: 'Institucional Ômega', imageUrl: '/assets/banner-omega.png', altText: 'Tudo que o seu negócio precisa, em um só lugar', targetUrl: '#produtos', sectionCode: null, position: 1, active: true, placement: 'hero', startsAt: null, endsAt: null },
-  { id: 2, title: 'Linha Bombril', imageUrl: '/assets/banner-bombril.png', altText: 'Linha Bombril: mais limpeza para o seu dia a dia', targetUrl: '#produtos', sectionCode: null, position: 2, active: true, placement: 'hero', startsAt: null, endsAt: null },
+  { id: 1, title: 'Institucional Ômega', imageUrl: '/assets/banner-omega.png', altText: 'Tudo que o seu negócio precisa, em um só lugar', targetUrl: '/#produtos', sectionCode: null, destinationType: 'navigation', destinationValues: [], navigationPath: '/#produtos', position: 1, active: true, placement: 'hero', startsAt: null, endsAt: null },
+  { id: 2, title: 'Linha Bombril', imageUrl: '/assets/banner-bombril.png', altText: 'Linha Bombril: mais limpeza para o seu dia a dia', targetUrl: '/#produtos', sectionCode: null, destinationType: 'navigation', destinationValues: [], navigationPath: '/#produtos', position: 2, active: true, placement: 'hero', startsAt: null, endsAt: null },
 ]
 
 const whatsappUrl = `https://wa.me/558592020207?text=${encodeURIComponent('Olá! Venho do e-Commerce da Ômega Distribuidora e preciso de atendimento!')}`
@@ -30,6 +30,10 @@ function readStoredCart(): CartItem[] {
   } catch { return [] }
 }
 
+function queryCodes(value: string | null) {
+  return [...new Set((value || '').split(',').map(Number).filter((code) => Number.isSafeInteger(code) && code > 0))]
+}
+
 function App() {
   if (window.location.pathname === '/conta') return <AccountPage />
   if (window.location.pathname === '/pedidos') return <OrdersPage />
@@ -38,8 +42,12 @@ function App() {
   if (productMatch) return <ProductPage code={Number(productMatch[1])} />
   const parameters = new URLSearchParams(window.location.search)
   const supplierId = Number(parameters.get('fornecedor'))
+  const supplierIds = queryCodes(parameters.get('fornecedores'))
+  if (Number.isFinite(supplierId) && supplierId > 0) supplierIds.push(supplierId)
   return <StorePage
-    initialSupplierId={Number.isFinite(supplierId) && supplierId > 0 ? supplierId : null}
+    initialSupplierIds={[...new Set(supplierIds)]}
+    initialSectionCodes={queryCodes(parameters.get('secoes'))}
+    initialProductCodes={queryCodes(parameters.get('produtos'))}
     initialDepartment={parameters.get('departamento') || ''}
     initialSection={parameters.get('secao') || ''}
     initialQuery={parameters.get('busca') || ''}
@@ -48,12 +56,15 @@ function App() {
   />
 }
 
-function StorePage({ initialSupplierId, initialDepartment, initialSection, initialQuery, initialCartOpen, initialMode }: { initialSupplierId: number | null; initialDepartment: string; initialSection: string; initialQuery: string; initialCartOpen: boolean; initialMode: 'featured' | 'bestsellers' }) {
+function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCodes, initialDepartment, initialSection, initialQuery, initialCartOpen, initialMode }: { initialSupplierIds: number[]; initialSectionCodes: number[]; initialProductCodes: number[]; initialDepartment: string; initialSection: string; initialQuery: string; initialCartOpen: boolean; initialMode: 'featured' | 'bestsellers' }) {
   const [products, setProducts] = useState<Product[]>([])
   const [loadingProducts, setLoadingProducts] = useState(true)
   const [productsError, setProductsError] = useState('')
   const [query, setQuery] = useState(initialQuery)
-  const [supplierFilter, setSupplierFilter] = useState(initialSupplierId ? String(initialSupplierId) : '')
+  const [supplierFilter, setSupplierFilter] = useState(initialSupplierIds.length === 1 ? String(initialSupplierIds[0]) : '')
+  const [destinationSupplierIds, setDestinationSupplierIds] = useState(initialSupplierIds)
+  const [destinationSectionCodes, setDestinationSectionCodes] = useState(initialSectionCodes)
+  const [destinationProductCodes, setDestinationProductCodes] = useState(initialProductCodes)
   const [departmentFilter, setDepartmentFilter] = useState(initialDepartment)
   const [sectionFilter, setSectionFilter] = useState(initialSection)
   const [departments, setDepartments] = useState<CatalogDepartment[]>([])
@@ -76,7 +87,6 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
   const [slides, setSlides] = useState<Banner[]>(fallbackSlides)
   const [catalogBanners, setCatalogBanners] = useState<Banner[]>([])
   const [slide, setSlide] = useState(0)
-  const [slideRatios, setSlideRatios] = useState<Record<number, number>>({})
   const [toast, setToast] = useState('')
   const productsRef = useRef<HTMLElement>(null)
 
@@ -142,12 +152,15 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
     const normalized = query.trim().toLocaleLowerCase('pt-BR')
     return products.filter((product) => {
       const matchesSupplier = !supplierFilter || String(product.supplierId) === supplierFilter
+      const matchesDestinationSupplier = !destinationSupplierIds.length || destinationSupplierIds.includes(product.supplierId)
       const matchesDepartment = !departmentFilter || product.department === departmentFilter
       const matchesSection = !sectionFilter || product.section === sectionFilter
+      const matchesDestinationSection = !destinationSectionCodes.length || destinationSectionCodes.includes(product.sectionCode)
+      const matchesDestinationProduct = !destinationProductCodes.length || destinationProductCodes.includes(product.code)
       const matchesQuery = !normalized || `${product.name} ${product.brand} ${product.category} ${product.code}`.toLocaleLowerCase('pt-BR').includes(normalized)
-      return matchesSupplier && matchesDepartment && matchesSection && matchesQuery
+      return matchesSupplier && matchesDestinationSupplier && matchesDepartment && matchesSection && matchesDestinationSection && matchesDestinationProduct && matchesQuery
     })
-  }, [departmentFilter, products, query, sectionFilter, supplierFilter])
+  }, [departmentFilter, destinationProductCodes, destinationSectionCodes, destinationSupplierIds, products, query, sectionFilter, supplierFilter])
 
   const supplierOptions = useMemo(() => [...new Map(products.map((product) => [product.supplierId, product.brand])).entries()].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR')), [products])
   const selectedSupplierName = supplierOptions.find(([id]) => String(id) === supplierFilter)?.[1]
@@ -178,22 +191,23 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
         while (pageBannerIndex < pageBanners.length) {
           const candidate = pageBanners[pageBannerIndex]
           pageBannerIndex += 1
-          if (!candidate.sectionCode || remaining.some((product) => product.sectionCode === candidate.sectionCode)) return candidate
+          const sectionCodes = candidate.destinationType === 'sections' ? candidate.destinationValues : []
+          if (!sectionCodes.length || remaining.some((product) => sectionCodes.includes(product.sectionCode))) return candidate
         }
         return null
       }
       while (remaining.length > 0 && displayed < pageProductLimit) {
         const limit = Math.min(5, pageProductLimit - displayed)
-        const requiredSection = precedingBanner?.sectionCode
+        const requiredSections = precedingBanner?.destinationType === 'sections' ? precedingBanner.destinationValues : []
         const upcomingBanner = pageBanners.slice(pageBannerIndex).find((banner) => (
-          !banner.sectionCode || remaining.some((product) => product.sectionCode === banner.sectionCode)
+          banner.destinationType !== 'sections' || !banner.destinationValues.length || remaining.some((product) => banner.destinationValues.includes(product.sectionCode))
         )) ?? null
-        const reservedSection = requiredSection ? null : upcomingBanner?.sectionCode
-        const canReserve = Boolean(reservedSection && remaining.some((product) => product.sectionCode !== reservedSection))
-        const rowProducts = requiredSection
-          ? takeMatching((product) => product.sectionCode === requiredSection, limit)
+        const reservedSections = requiredSections.length || upcomingBanner?.destinationType !== 'sections' ? [] : upcomingBanner.destinationValues
+        const canReserve = Boolean(reservedSections.length && remaining.some((product) => !reservedSections.includes(product.sectionCode)))
+        const rowProducts = requiredSections.length
+          ? takeMatching((product) => requiredSections.includes(product.sectionCode), limit)
           : canReserve
-            ? takeMatching((product) => product.sectionCode !== reservedSection, limit)
+            ? takeMatching((product) => !reservedSections.includes(product.sectionCode), limit)
             : remaining.splice(0, limit)
         if (!rowProducts.length) {
           precedingBanner = null
@@ -250,6 +264,9 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
     setSupplierFilter('')
     setDepartmentFilter('')
     setSectionFilter('')
+    setDestinationSupplierIds([])
+    setDestinationSectionCodes([])
+    setDestinationProductCodes([])
     setCatalogMode('featured')
     if (window.location.search) window.history.replaceState({}, '', '/')
   }
@@ -284,10 +301,11 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
   }
 
   function bannerTarget(banner: Banner) {
-    if (banner.sectionCode && banner.departmentName && banner.sectionName) {
-      return `/?departamento=${encodeURIComponent(banner.departmentName)}&secao=${encodeURIComponent(banner.sectionName)}#produtos`
-    }
-    return banner.targetUrl || '#produtos'
+    const codes = banner.destinationValues.join(',')
+    if (banner.destinationType === 'sections') return `/?secoes=${codes}#produtos`
+    if (banner.destinationType === 'products') return `/?produtos=${codes}#produtos`
+    if (banner.destinationType === 'suppliers') return `/?fornecedores=${codes}#produtos`
+    return banner.navigationPath || '/#produtos'
   }
 
   function changeQuantity(id: number, delta: number) {
@@ -387,7 +405,7 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
       {customer && !customer.canOrder && <div className="store-pending-banner"><LoaderCircle /><div><strong>Cadastro em análise</strong><span>Você já pode consultar o catálogo e os preços. A compra será liberada após a validação do seu cadastro.</span></div><a href="/pedidos">Ver meu cadastro</a></div>}
 
       <main id="top">
-        <section className="hero" aria-label="Destaques" style={{ aspectRatio: slideRatios[slide] || 2.5 }}><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item, index) => <a key={item.id} className="hero-slide" href={bannerTarget(item)}><img src={item.imageUrl} alt={item.altText} onLoad={(event) => { const image = event.currentTarget; if (image.naturalWidth && image.naturalHeight) setSlideRatios((current) => ({ ...current, [index]: image.naturalWidth / image.naturalHeight })) }} /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => setSlide((slide - 1 + slides.length) % slides.length)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => setSlide((slide + 1) % slides.length)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => setSlide(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section>
+        <section className="hero" aria-label="Destaques"><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item) => <a key={item.id} className="hero-slide" href={bannerTarget(item)}><img src={item.imageUrl} alt={item.altText} /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => setSlide((slide - 1 + slides.length) % slides.length)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => setSlide((slide + 1) % slides.length)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => setSlide(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section>
 
         <section className={`container products-section ${selectedDepartment ? 'has-taxonomy' : 'catalog-home'}`} id="produtos" ref={productsRef}>
           {selectedDepartment && <aside className="taxonomy-sidebar" aria-label="Departamentos e seções">

@@ -90,6 +90,9 @@ export type Banner = {
   imageUrl: string
   targetUrl: string
   sectionCode: number | null
+  destinationType: 'navigation' | 'sections' | 'products' | 'suppliers'
+  destinationValues: number[]
+  navigationPath: string
   sectionName?: string
   departmentCode?: number | null
   departmentName?: string
