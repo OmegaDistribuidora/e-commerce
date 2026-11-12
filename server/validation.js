@@ -98,7 +98,7 @@ export const staffUserSchema = z.object({
     .regex(/[A-Z]/, 'Inclua uma letra maiúscula na senha')
     .regex(/[a-z]/, 'Inclua uma letra minúscula na senha')
     .regex(/\d/, 'Inclua um número na senha'),
-  role: z.enum(['ADMIN', 'COMERCIAL']),
+  role: z.enum(['ADMIN', 'COMERCIAL', 'MARKETING']),
 })
 
 export const bannerSchema = z.object({
@@ -120,15 +120,6 @@ export const bannerSchema = z.object({
 export const bannersBulkSchema = z.object({
   banners: z.array(bannerSchema).max(100),
   deletedIds: z.array(z.coerce.number().int().positive()).max(100).default([]),
-})
-
-export const categorySchema = z.object({
-  name: z.string().trim().min(2, 'Informe o nome da categoria').max(80),
-  position: z.coerce.number().int().min(0).max(1000).optional().default(0),
-})
-
-export const categoryProductsSchema = z.object({
-  productIds: z.array(z.coerce.number().int().positive()).max(20000),
 })
 
 const syncProductSchema = z.object({

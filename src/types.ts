@@ -77,7 +77,7 @@ export type StaffUser = {
   id: number
   name: string
   email: string
-  role: 'ADMIN' | 'COMERCIAL'
+  role: 'ADMIN' | 'COMERCIAL' | 'MARKETING'
   authProvider?: 'supabase' | 'legacy'
   active?: boolean
   createdAt?: string

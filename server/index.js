@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
 import { findSupabaseUserByEmail, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
-import { bannerSchema, bannersBulkSchema, categoryProductsSchema, categorySchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderSchema, productSyncSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema } from './validation.js'
+import { bannerSchema, bannersBulkSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderSchema, productSyncSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema } from './validation.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -133,6 +133,24 @@ function requireAdmin(request, response, next) {
   if (request.authError) return response.status(401).json({ message: 'Sua sessão expirou. Entre novamente.' })
   if (!request.staff) return response.status(401).json({ message: 'Entre na área de gestão para continuar.' })
   if (request.staff.role !== 'ADMIN') return response.status(403).json({ message: 'Esta ação é exclusiva do administrador.' })
+  return next()
+}
+
+function requireCommercialAccess(request, response, next) {
+  if (request.authError) return response.status(401).json({ message: 'Sua sessÃ£o expirou. Entre novamente.' })
+  if (!request.staff) return response.status(401).json({ message: 'Entre na Ã¡rea de gestÃ£o para continuar.' })
+  if (!['ADMIN', 'COMERCIAL'].includes(request.staff.role)) {
+    return response.status(403).json({ message: 'Este perfil nÃ£o possui acesso a pedidos ou clientes.' })
+  }
+  return next()
+}
+
+function requireMarketingAccess(request, response, next) {
+  if (request.authError) return response.status(401).json({ message: 'Sua sessÃ£o expirou. Entre novamente.' })
+  if (!request.staff) return response.status(401).json({ message: 'Entre na Ã¡rea de gestÃ£o para continuar.' })
+  if (!['ADMIN', 'COMERCIAL', 'MARKETING'].includes(request.staff.role)) {
+    return response.status(403).json({ message: 'Este perfil nÃ£o possui acesso ao conteÃºdo da loja.' })
+  }
   return next()
 }
 
@@ -808,26 +826,6 @@ app.get('/api/products/:id/image', async (request, response, next) => {
   }
 })
 
-app.get('/api/categories', async (_request, response, next) => {
-  try {
-    const result = await pool.query(
-      `SELECT c.id, c.name, c.position, COUNT(p.id)::int AS product_count
-       FROM catalog_categories c
-       LEFT JOIN product_categories pc ON pc.category_id = c.id
-       LEFT JOIN products p ON p.id = pc.product_id AND p.active = TRUE
-       WHERE c.active = TRUE
-       GROUP BY c.id
-       ORDER BY c.position, c.name`,
-    )
-    return response.json({ categories: result.rows.map((category) => ({
-      id: Number(category.id), name: category.name, position: Number(category.position),
-      productCount: Number(category.product_count),
-    })) })
-  } catch (error) {
-    return next(error)
-  }
-})
-
 app.post('/api/integrations/products/sync', async (request, response, next) => {
   if (!process.env.PRODUCT_SYNC_TOKEN) {
     return response.status(503).json({ message: 'Integração de produtos ainda não configurada.' })
@@ -1030,7 +1028,6 @@ app.post('/api/integrations/customers/conditions', async (request, response, nex
 app.get('/api/products', async (request, response, next) => {
   try {
     const search = String(request.query.search ?? '').trim()
-    const category = String(request.query.category ?? '').trim()
     const supplier = Number(request.query.supplier)
     const department = Number(request.query.department)
     const section = Number(request.query.section)
@@ -1044,14 +1041,6 @@ app.get('/api/products', async (request, response, next) => {
     if (search) {
       params.push(`%${search}%`)
       conditions.push(`(p.name ILIKE $${params.length} OR p.brand ILIKE $${params.length} OR p.external_id::text ILIKE $${params.length})`)
-    }
-    if (category && category !== 'Todos') {
-      params.push(category)
-      conditions.push(`EXISTS (
-        SELECT 1 FROM product_categories pc
-        JOIN catalog_categories cc ON cc.id = pc.category_id
-        WHERE pc.product_id = p.id AND cc.active = TRUE AND cc.name = $${params.length}
-      )`)
     }
     if (Number.isSafeInteger(supplier) && supplier > 0) {
       params.push(supplier)
@@ -1094,24 +1083,6 @@ app.get('/api/products', async (request, response, next) => {
       params,
     )
 
-    const productIds = result.rows.map((row) => Number(row.id))
-    const categoryMap = new Map()
-    if (productIds.length) {
-      const categoryParams = productIds.map((_, index) => `$${index + 1}`).join(',')
-      const categoryResult = await pool.query(
-        `SELECT pc.product_id, c.name
-         FROM product_categories pc JOIN catalog_categories c ON c.id = pc.category_id
-         WHERE c.active = TRUE AND pc.product_id IN (${categoryParams})
-         ORDER BY c.position, c.name`,
-        productIds,
-      )
-      for (const item of categoryResult.rows) {
-        const names = categoryMap.get(Number(item.product_id)) || []
-        names.push(item.name)
-        categoryMap.set(Number(item.product_id), names)
-      }
-    }
-
     response.json({
       products: result.rows.map((row) => {
         const authenticated = Boolean(request.customer)
@@ -1131,8 +1102,8 @@ app.get('/api/products', async (request, response, next) => {
         minBoxes: Number(row.min_boxes),
         unitPrice: authenticated ? Number(channelPrice ?? row.unit_price) : null,
         listUnitPrice: authenticated ? Number(row.list_unit_price ?? channelPrice ?? row.unit_price) : null,
-        category: categoryMap.get(Number(row.id))?.[0] || 'Sem categoria',
-        categories: categoryMap.get(Number(row.id)) || [],
+        category: row.section || 'Sem seÃ§Ã£o',
+        categories: row.section ? [row.section] : [],
         departmentCode: Number(row.department_code || 0),
         department: row.department,
         sectionCode: Number(row.section_code || 0),
@@ -1359,7 +1330,7 @@ app.get('/api/orders', async (request, response, next) => {
   }
 })
 
-app.get('/api/staff/customers', requireStaff, async (request, response, next) => {
+app.get('/api/staff/customers', requireCommercialAccess, async (request, response, next) => {
   try {
     const status = request.query.status === 'approved' ? 'approved' : 'pending'
     const result = await pool.query(
@@ -1383,7 +1354,7 @@ app.get('/api/staff/customers', requireStaff, async (request, response, next) =>
   }
 })
 
-app.post('/api/staff/customers/:id/approve', requireStaff, async (request, response, next) => {
+app.post('/api/staff/customers/:id/approve', requireCommercialAccess, async (request, response, next) => {
   try {
     const customerId = Number(request.params.id)
     if (!Number.isSafeInteger(customerId) || customerId < 1) {
@@ -1425,7 +1396,7 @@ app.post('/api/staff/customers/:id/approve', requireStaff, async (request, respo
   }
 })
 
-app.get('/api/staff/orders', requireStaff, async (_request, response, next) => {
+app.get('/api/staff/orders', requireCommercialAccess, async (_request, response, next) => {
   try {
     return response.json({ orders: await listOrders() })
   } catch (error) {
@@ -1433,7 +1404,7 @@ app.get('/api/staff/orders', requireStaff, async (_request, response, next) => {
   }
 })
 
-app.put('/api/staff/orders/:id/winthor', requireStaff, async (request, response, next) => {
+app.put('/api/staff/orders/:id/winthor', requireCommercialAccess, async (request, response, next) => {
   try {
     const orderId = Number(request.params.id)
     if (!Number.isSafeInteger(orderId) || orderId < 1) return response.status(400).json({ message: 'Pedido do e-commerce inválido.' })
@@ -1505,6 +1476,10 @@ app.post('/api/staff/users', requireAdmin, async (request, response, next) => {
     return next(error)
   }
 })
+
+app.all(/^\/api\/staff\/categories(?:\/.*)?$/, requireStaff, (_request, response) => (
+  response.status(410).json({ message: 'As categorias manuais foram desativadas. Use os departamentos e seÃ§Ãµes sincronizados do WinThor.' })
+))
 
 app.get('/api/staff/categories', requireStaff, async (_request, response, next) => {
   try {
@@ -1593,7 +1568,7 @@ app.put('/api/staff/categories/:id/products', requireStaff, async (request, resp
   }
 })
 
-app.get('/api/staff/catalog-products', requireStaff, async (request, response, next) => {
+app.get('/api/staff/catalog-products', requireMarketingAccess, async (request, response, next) => {
   try {
     const search = String(request.query.search || '').trim()
     const supplierId = Number(request.query.supplierId || 0)
@@ -1637,7 +1612,7 @@ app.get('/api/staff/catalog-products', requireStaff, async (request, response, n
   }
 })
 
-app.put('/api/staff/products/:id/image', requireStaff, async (request, response, next) => {
+app.put('/api/staff/products/:id/image', requireMarketingAccess, async (request, response, next) => {
   try {
     let image
     try { image = decodeProductImage(request.body?.imageDataUrl) } catch (error) {
@@ -1658,7 +1633,7 @@ app.put('/api/staff/products/:id/image', requireStaff, async (request, response,
   }
 })
 
-app.delete('/api/staff/products/:id/image', requireStaff, async (request, response, next) => {
+app.delete('/api/staff/products/:id/image', requireMarketingAccess, async (request, response, next) => {
   try {
     const result = await pool.query(
       `UPDATE products SET image_data=NULL,image_mime=NULL,image_path=NULL,image_hidden=TRUE,
@@ -1673,7 +1648,7 @@ app.delete('/api/staff/products/:id/image', requireStaff, async (request, respon
   }
 })
 
-app.get('/api/staff/banners', requireStaff, async (_request, response, next) => {
+app.get('/api/staff/banners', requireMarketingAccess, async (_request, response, next) => {
   try {
     const result = await pool.query(
       `SELECT b.id, b.title, b.alt_text, b.image_path, b.image_data IS NOT NULL AS uploaded,
@@ -1704,7 +1679,7 @@ app.get('/api/staff/banners', requireStaff, async (_request, response, next) => 
   }
 })
 
-app.put('/api/staff/banners', requireStaff, async (request, response, next) => {
+app.put('/api/staff/banners', requireMarketingAccess, async (request, response, next) => {
   const parsed = bannersBulkSchema.safeParse(request.body)
   if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
   const client = await pool.connect()
@@ -1760,7 +1735,7 @@ app.put('/api/staff/banners', requireStaff, async (request, response, next) => {
   }
 })
 
-app.put('/api/staff/banners/:id', requireStaff, async (request, response, next) => {
+app.put('/api/staff/banners/:id', requireMarketingAccess, async (request, response, next) => {
   try {
     const parsed = bannerSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
@@ -1792,7 +1767,7 @@ app.put('/api/staff/banners/:id', requireStaff, async (request, response, next) 
   }
 })
 
-app.post('/api/staff/banners', requireStaff, async (request, response, next) => {
+app.post('/api/staff/banners', requireMarketingAccess, async (request, response, next) => {
   try {
     const parsed = bannerSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })

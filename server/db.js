@@ -56,6 +56,8 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS approved_by_staff_user_id BIGINT')
   await pool.query('CREATE INDEX IF NOT EXISTS idx_customers_registration_status ON customers(registration_status, created_at DESC)')
   await pool.query('ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS supabase_user_id UUID')
+  await pool.query('ALTER TABLE staff_users DROP CONSTRAINT IF EXISTS staff_users_role_check')
+  await pool.query("ALTER TABLE staff_users ADD CONSTRAINT staff_users_role_check CHECK (role IN ('ADMIN', 'COMERCIAL', 'MARKETING'))")
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_supabase_user ON customers(supabase_user_id)')
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_supabase_user ON staff_users(supabase_user_id)')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP')
@@ -101,7 +103,6 @@ export async function initializeDatabase() {
   const countResult = await pool.query('SELECT COUNT(*)::int AS count FROM products')
   if (Number(countResult.rows[0].count) === 0) await seedDatabase()
   await ensureBundledProductImages()
-  await ensureCatalogCategories()
   if (!process.env.DATABASE_URL) await ensureLocalCustomer()
 }
 

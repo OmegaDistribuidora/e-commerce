@@ -69,9 +69,15 @@ A conta inicial é criada apenas quando ainda não existe. Depois, o Administrad
 
 A DAG versionada em `airflow/dags/dag_ecommerce_produtos.py` atualiza produtos ativos e preços a cada 30 minutos. Ela envia o catálogo à API HTTPS protegida por `PRODUCT_SYNC_TOKEN`; o PostgreSQL permanece privado no Railway. Consulte `airflow/README.md` para configurar as Connections `oracle_filial` e `ecommerce_api`.
 
-### Categorias comerciais
+### Organização do catálogo
 
-As categorias são mantidas nas tabelas `catalog_categories` e `product_categories`. A classificação inicial do protótipo é migrada automaticamente, mas a DAG não altera categorias. Usuários Administradores e Comerciais podem criar, excluir e organizar produtos em várias categorias pela área `/gestao`, com busca por nome, código, EAN ou marca e filtro por fornecedor.
+O catálogo utiliza exclusivamente a hierarquia `Departamento → Seção → Produtos` sincronizada do WinThor. Não existe manutenção manual de categorias na área de gestão.
+
+Os perfis internos são:
+
+- `ADMIN`: acesso completo e criação de usuários;
+- `COMERCIAL`: pedidos, clientes, banners e fotos de produtos;
+- `MARKETING`: somente banners, fotos de produtos e configurações da própria conta.
 
 ### Status dos pedidos no WinThor
 

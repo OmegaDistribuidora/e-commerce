@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowRight, BadgePercent, Box, ChevronDown, ChevronLeft, ChevronRight,
+  ArrowRight, BadgePercent, ChevronDown, ChevronLeft, ChevronRight,
   CircleUserRound, Headphones, Heart, ImageOff, LoaderCircle, LockKeyhole,
   LogOut, MapPin, Menu, Minus, PackageCheck, Plus, Search, ShieldCheck,
-  ShoppingCart, SlidersHorizontal, Sparkles, Store, Tag, Trash2, Truck,
-  UtensilsCrossed, X,
+  ShoppingCart, SlidersHorizontal, Store, Trash2, Truck, X,
 } from 'lucide-react'
 import AccountPage from './AccountPage'
 import OrdersPage from './OrdersPage'
@@ -14,19 +13,8 @@ import { authenticatedFetch } from './api'
 import { money } from './data'
 import { formatCatalogName } from './catalog'
 import { supabase } from './supabase'
-import type { Banner, CartItem, CatalogDepartment, Category, CommercialConditions, Customer, Partner, Product, StaffUser } from './types'
+import type { Banner, CartItem, CatalogDepartment, CommercialConditions, Customer, Partner, Product, StaffUser } from './types'
 import { formatDocument } from './validation'
-
-const defaultCategories: Category[] = ['Limpeza', 'Higiene', 'Utilidades', 'Alimentos']
-
-function categoryIcon(name: string) {
-  if (name === 'Todos') return Store
-  if (name === 'Limpeza') return Sparkles
-  if (name === 'Higiene') return ShieldCheck
-  if (name === 'Utilidades') return Box
-  if (name === 'Alimentos') return UtensilsCrossed
-  return Tag
-}
 
 const fallbackSlides: Banner[] = [
   { id: 1, title: 'Institucional Ômega', imageUrl: '/assets/banner-omega.png', altText: 'Tudo que o seu negócio precisa, em um só lugar', targetUrl: '#produtos', sectionCode: null, position: 1, active: true, placement: 'hero', startsAt: null, endsAt: null },
@@ -62,11 +50,9 @@ function App() {
 
 function StorePage({ initialSupplierId, initialDepartment, initialSection, initialQuery, initialCartOpen, initialMode }: { initialSupplierId: number | null; initialDepartment: string; initialSection: string; initialQuery: string; initialCartOpen: boolean; initialMode: 'featured' | 'bestsellers' }) {
   const [products, setProducts] = useState<Product[]>([])
-  const [catalogCategories, setCatalogCategories] = useState<Category[]>(defaultCategories)
   const [loadingProducts, setLoadingProducts] = useState(true)
   const [productsError, setProductsError] = useState('')
   const [query, setQuery] = useState(initialQuery)
-  const [category, setCategory] = useState<Category>('Todos')
   const [supplierFilter, setSupplierFilter] = useState(initialSupplierId ? String(initialSupplierId) : '')
   const [departmentFilter, setDepartmentFilter] = useState(initialDepartment)
   const [sectionFilter, setSectionFilter] = useState(initialSection)
@@ -136,9 +122,6 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
     fetch('/api/banners?placement=catalog').then((response) => response.json()).then((data) => {
       if (Array.isArray(data.banners)) setCatalogBanners(data.banners)
     }).catch(() => undefined)
-    fetch('/api/categories').then((response) => response.json()).then((data) => {
-      if (Array.isArray(data.categories)) setCatalogCategories(data.categories.map((item: { name: string }) => item.name))
-    }).catch(() => undefined)
     fetch('/api/catalog/navigation').then((response) => response.json()).then((data) => {
       if (Array.isArray(data.departments)) setDepartments(data.departments)
       if (Array.isArray(data.partners)) setPartnerLogos(data.partners)
@@ -158,14 +141,13 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
   const filteredProducts = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase('pt-BR')
     return products.filter((product) => {
-      const matchesCategory = category === 'Todos' || product.categories?.includes(category) || product.category === category
       const matchesSupplier = !supplierFilter || String(product.supplierId) === supplierFilter
       const matchesDepartment = !departmentFilter || product.department === departmentFilter
       const matchesSection = !sectionFilter || product.section === sectionFilter
       const matchesQuery = !normalized || `${product.name} ${product.brand} ${product.category} ${product.code}`.toLocaleLowerCase('pt-BR').includes(normalized)
-      return matchesCategory && matchesSupplier && matchesDepartment && matchesSection && matchesQuery
+      return matchesSupplier && matchesDepartment && matchesSection && matchesQuery
     })
-  }, [category, departmentFilter, products, query, sectionFilter, supplierFilter])
+  }, [departmentFilter, products, query, sectionFilter, supplierFilter])
 
   const supplierOptions = useMemo(() => [...new Map(products.map((product) => [product.supplierId, product.brand])).entries()].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR')), [products])
   const selectedSupplierName = supplierOptions.find(([id]) => String(id) === supplierFilter)?.[1]
@@ -265,7 +247,6 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
 
   function clearFilters() {
     setQuery('')
-    setCategory('Todos')
     setSupplierFilter('')
     setDepartmentFilter('')
     setSectionFilter('')
@@ -275,7 +256,6 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
 
   function selectDepartment(name: string) {
     setCatalogMode('featured')
-    setCategory('Todos')
     setDepartmentFilter(name)
     setSectionFilter('')
     setExpandedDepartment(name)
@@ -286,7 +266,6 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
 
   function selectSection(departmentName: string, sectionName: string) {
     setCatalogMode('featured')
-    setCategory('Todos')
     setDepartmentFilter(departmentName)
     setSectionFilter(sectionName)
     setVisibleCount(25)
@@ -298,7 +277,6 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
     setSupplierFilter(String(partner.supplierId))
     setDepartmentFilter('')
     setSectionFilter('')
-    setCategory('Todos')
     setCatalogMode('featured')
     setVisibleCount(25)
     window.history.replaceState({}, '', `/?fornecedor=${partner.supplierId}#produtos`)
@@ -324,16 +302,8 @@ function StorePage({ initialSupplierId, initialDepartment, initialSection, initi
     setCart((current) => current.filter((item) => item.id !== id))
   }
 
-  function selectCategory(next: Category) {
-    setCategory(next)
-    setMenuOpen(false)
-    setVisibleCount(25)
-    window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
-  }
-
   function showBestSellers() {
     setCatalogMode('bestsellers')
-    setCategory('Todos')
     setMenuOpen(false)
     window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
   }
