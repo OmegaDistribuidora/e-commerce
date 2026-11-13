@@ -16,7 +16,7 @@ Para testar o login local com o cliente real Omega Matriz (`filial.dcliente`, CN
 - E-mail: `ecommerce@omegadistribuidora.com.br`
 - Senha: `Omega@2026`
 
-Visitantes podem navegar pelo catálogo, mas os preços são enviados pela API somente após uma sessão autenticada. O pedido mínimo é de R$ 200,00 e também é validado no servidor.
+Visitantes podem navegar pelo catálogo. Os preços são enviados pela API somente para clientes autenticados, aprovados e com região e planos de pagamento já sincronizados do WinThor. O pedido mínimo é de R$ 200,00 e também é validado no servidor.
 
 ## PostgreSQL local persistente
 
@@ -35,15 +35,15 @@ npm run dev
 
 As tabelas e o seed inicial são criados automaticamente.
 
-## Atualizar o catálogo de referência
+## Atualizar o catálogo de referência local
 
-O script abaixo lê produtos, estoque e vendas no DW e consulta o preço vigente diretamente na `PCTABPR` do WinThor. O Varejo usa `PVENDA` da região 1 (Capital e Área Metropolitana) e Redes usa `PVENDA` da região 12, com fallback para a região 1. Nenhuma credencial é gravada no repositório.
+O comando abaixo atualiza apenas os dados de referência usados no desenvolvimento local. Ele não é a fonte operacional do ambiente de produção:
 
 ```bash
 npm run seed:refresh
 ```
 
-As imagens são associadas pelo código do produto em `public/assets/products`.
+Em produção, produtos, hierarquia comercial, preços por região, planos de pagamento, limite de crédito e compromissos financeiros são sincronizados do WinThor pela DAG descrita em `airflow/README.md`. Nenhuma credencial deve ser gravada no repositório.
 
 ## Railway
 
@@ -51,9 +51,17 @@ As imagens são associadas pelo código do produto em `public/assets/products`.
 2. No serviço da aplicação, crie `DATABASE_URL` como referência a `${{Postgres.DATABASE_URL}}` (ajuste `Postgres` se o serviço tiver outro nome). Nunca use `localhost` nessa variável no Railway.
 3. Não configure `VITE_PORT`; o Railway injeta `PORT` automaticamente e o servidor já utiliza essa porta.
 4. Configure `SOURCE_DATABASE_URL` somente quando houver um banco-fonte com `filial.dcliente`. Essa variável não deve apontar para o PostgreSQL vazio da aplicação.
-5. Publique o repositório; `railway.json` executará `npm run build` e `npm run start`.
+5. A infraestrutura do serviço está declarada em `.railway/railway.ts`. O Railpack detecta os scripts do `package.json`, executa `npm run build` e inicia a aplicação com `npm run start`.
 
-O servidor Express aplica o schema, carrega o seed somente se a tabela de produtos estiver vazia e serve o frontend compilado. A autenticação usa senha derivada com `scrypt` e sessão em cookie HTTP-only. Na consulta de CPF/CNPJ para primeiro acesso, a base local é verificada primeiro; documentos ainda não sincronizados podem ser consultados no DW e copiados para a base da aplicação sem expor credenciais ao navegador.
+O arquivo de infraestrutura mantém as variáveis como **não gerenciadas pelo código**: segredos e configurações continuam no painel do Railway e nunca são copiados para o repositório. Para conferir uma mudança de infraestrutura antes de aplicá-la, use `railway config plan`; para aplicá-la, use `railway config apply`.
+
+O servidor Express aplica o schema, carrega o seed somente se a tabela de produtos estiver vazia e serve o frontend compilado. Clientes usam Supabase Auth, com JWT validado no backend e vínculo pelo campo `supabase_user_id`. Usuários internos continuam usando senha derivada com `scrypt` e sessão em cookie HTTP-only. Senhas e chaves privadas do Supabase não são armazenadas no frontend.
+
+### Autenticação de clientes
+
+O Supabase é usado exclusivamente para autenticação; catálogo, clientes, pedidos e demais dados comerciais continuam no PostgreSQL do Railway. Configure no backend `SUPABASE_URL`, `SUPABASE_JWT_AUDIENCE` e `SUPABASE_SERVICE_ROLE_KEY`. No frontend, exponha somente `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY`.
+
+Cadastro, confirmação por OTP e recuperação de senha usam o SMTP configurado no Supabase. A credencial SMTP/Resend e a `SUPABASE_SERVICE_ROLE_KEY` nunca devem usar o prefixo `VITE_` nem ser enviadas ao navegador.
 
 ### Conta administrativa
 
@@ -64,11 +72,11 @@ Defina no serviço do e-commerce:
 - `ADMIN_PASSWORD` (obrigatória para criar o primeiro administrador)
 - `ADMIN_PASSWORD_RESET=true` (opcional; redefine a senha da conta `ADMIN_EMAIL` para `ADMIN_PASSWORD` na inicialização e encerra as sessões dela. Remova a variável depois do primeiro acesso)
 
-A conta inicial é criada apenas quando ainda não existe. Depois, o Administrador cria outros usuários Administradores ou Comerciais em `/gestao`. Administradores e Comerciais consultam pedidos e gerenciam banners; somente Administradores criam usuários internos.
+A conta inicial é criada apenas quando ainda não existe. Depois, o Administrador cria usuários Administradores, Comerciais ou de Marketing em `/gestao`. Somente Administradores criam usuários internos.
 
 ### Sincronização WinThor
 
-A DAG versionada em `airflow/dags/dag_ecommerce_produtos.py` atualiza produtos ativos e preços a cada 30 minutos. Ela envia o catálogo à API HTTPS protegida por `PRODUCT_SYNC_TOKEN`; o PostgreSQL permanece privado no Railway. Consulte `airflow/README.md` para configurar as Connections `lancamentos_oracle_filial` e `ecommerce_api`.
+A DAG versionada em `airflow/dags/dag_ecommerce_produtos.py` executa a cada 30 minutos. Ela sincroniza somente produtos ativos e habilitados para a força de vendas, hierarquia Departamento → Seção, preços por região e plano, condições comerciais e compromissos de crédito. Os dados são enviados à API HTTPS protegida por `PRODUCT_SYNC_TOKEN`; o PostgreSQL permanece privado no Railway. Consulte `airflow/README.md` para implantação, Connections e validação operacional.
 
 ### Organização do catálogo
 
@@ -76,9 +84,20 @@ O catálogo utiliza exclusivamente a hierarquia `Departamento → Seção → Pr
 
 Os perfis internos são:
 
-- `ADMIN`: acesso completo e criação de usuários;
-- `COMERCIAL`: pedidos, clientes, banners e fotos de produtos;
-- `MARKETING`: somente banners, fotos de produtos e configurações da própria conta.
+- `ADMIN`: acesso completo, clientes, pedidos, marketing e criação de usuários;
+- `COMERCIAL`: pedidos, aprovação/cadastro de clientes e configurações da própria conta;
+- `MARKETING`: banners, fotos de produtos e configurações da própria conta.
+
+### Preços, planos e crédito
+
+- A região de preço vem de `PCCLIENT.NUMREGIAOCLI`; quando não informada, usa `PCPRACA.NUMREGIAO`.
+- Os planos liberados vêm de `PCPLPAGCLI`; se não houver registros para o cliente, usa-se `PCCLIENT.CODPLPAG`.
+- Entram somente planos ativos em `PCPLPAG` e que não sejam de bonificação/troca (`TIPOPRAZO <> 'B'`).
+- `PCPLPAG.NUMPR` seleciona a coluna `PCTABPR.PTABELA1` a `PTABELA7`.
+- Catálogo e página do produto mostram o menor preço positivo entre os planos liberados. O checkout recalcula o pedido no backend para o plano escolhido.
+- Cliente ainda não aprovado ou sem condições comerciais sincronizadas não recebe preço e não pode finalizar pedidos.
+- Crédito disponível = `LIMCRED` − títulos em aberto − pedidos não faturados no WinThor − pedidos do e-commerce ainda não considerados pela última leitura do WinThor.
+- O checkout impede pedidos acima do crédito disponível.
 
 ### Status dos pedidos no WinThor
 
@@ -97,8 +116,8 @@ Enquanto o pedido está **Em análise** e ainda não tem `NUMPED`, ele pode ser 
 - `src/`: interface React/TypeScript
 - `server/index.js`: API HTTP
 - `server/schema.sql`: schema PostgreSQL
-- `server/seed-data.json`: catálogo real para inicialização
+- `server/seed-data.json`: recorte de referência para inicialização local
 - `scripts/export-reference-data.py`: exportação segura do DW
-- `public/assets/products/`: fotos vinculadas ao código do produto
+- `.railway/railway.ts`: infraestrutura do serviço no Railway
 
-O ranking “Mais vendidos” é calculado pela tabela `sales`, usando somente os últimos sete dias. A próxima integração operacional deve executar a sincronização de produtos, preços, clientes e vendas em uma rotina agendada.
+O ranking “Mais vendidos” é calculado pela tabela `sales`, usando somente os últimos sete dias. A sincronização operacional de produtos, preços e condições comerciais é executada pela DAG do Airflow a cada 30 minutos.
