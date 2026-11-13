@@ -312,11 +312,11 @@ async function refreshStaleOrderStatuses(orders) {
       }
       const checkedAt = new Date()
       await pool.query(
-        `UPDATE orders SET status=$2, winthor_status_code=$3, winthor_status_label=$4,
+        `UPDATE orders SET status=$2::varchar, winthor_status_code=$3, winthor_status_label=$4,
            winthor_status_checked_at=$5,
-           cancelled_at=CASE WHEN $2='cancelled' THEN COALESCE(cancelled_at,$5) ELSE cancelled_at END,
-           cancelled_by=CASE WHEN $2='cancelled' THEN COALESCE(NULLIF(cancelled_by,''),'WinThor') ELSE cancelled_by END,
-           updated_at=CASE WHEN status<>$2 THEN CURRENT_TIMESTAMP ELSE updated_at END
+           cancelled_at=CASE WHEN $2::varchar='cancelled' THEN COALESCE(cancelled_at,$5) ELSE cancelled_at END,
+           cancelled_by=CASE WHEN $2::varchar='cancelled' THEN COALESCE(NULLIF(cancelled_by,''),'WinThor') ELSE cancelled_by END,
+           updated_at=CASE WHEN status<>$2::varchar THEN CURRENT_TIMESTAMP ELSE updated_at END
          WHERE id=$1 AND winthor_order_number=$6`,
         [order.id, winthorStatus.status, winthorStatus.code, winthorStatus.label, checkedAt, winthorOrderNumber],
       )
@@ -356,7 +356,7 @@ async function listOrders(whereClause = '', params = []) {
     const placeholders = orderIds.map((_, index) => `$${index + 1}`).join(',')
     const items = await pool.query(
       `SELECT oi.id, oi.order_id, p.id AS product_id, p.external_id AS code, p.name,
-              p.image_path, p.image_uploaded, p.image_hidden, p.image_updated_at,
+              p.image_path, p.image_data IS NOT NULL AS image_uploaded, p.image_hidden, p.image_updated_at,
               oi.boxes, COALESCE(oi.units, oi.boxes * oi.units_per_box) AS units,
               oi.units_per_box, oi.unit_price, oi.line_total
        FROM order_items oi JOIN products p ON p.id = oi.product_id
