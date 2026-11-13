@@ -539,6 +539,7 @@ function CartQuantityField({ item, onChange, onInvalid }: {
       onInvalid(`Digite uma quantidade entre ${multiple} e 100.000, em múltiplos de ${multiple}.`)
       return
     }
+    setDraft(String(quantity))
     onChange(item.id, quantity)
   }
 
