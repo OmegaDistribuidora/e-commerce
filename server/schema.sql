@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS customer_commercial_conditions (
   open_titles_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
   open_orders_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
   price_region INTEGER,
+  restricted_supplier_ids INTEGER[] NOT NULL DEFAULT '{}',
   payment_plans JSONB NOT NULL DEFAULT '[]'::jsonb,
   source_updated_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP

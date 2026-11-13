@@ -76,7 +76,7 @@ A conta inicial é criada apenas quando ainda não existe. Depois, o Administrad
 
 ### Sincronização WinThor
 
-A DAG versionada em `airflow/dags/dag_ecommerce_produtos.py` executa a cada 30 minutos. Ela sincroniza somente produtos ativos e habilitados para a força de vendas, hierarquia Departamento → Seção, preços por região e plano, condições comerciais e compromissos de crédito. Os dados são enviados à API HTTPS protegida por `PRODUCT_SYNC_TOKEN`; o PostgreSQL permanece privado no Railway. Consulte `airflow/README.md` para implantação, Connections e validação operacional.
+A DAG versionada em `airflow/dags/dag_ecommerce_produtos.py` executa a cada 30 minutos. Ela sincroniza somente produtos ativos e habilitados para a força de vendas, hierarquia Departamento → Seção, preços por região e plano, condições comerciais, compromissos de crédito e restrições de fornecedor da `PCRESTRICAOVENDA` por praça/cliente. Os dados são enviados à API HTTPS protegida por `PRODUCT_SYNC_TOKEN`; o PostgreSQL permanece privado no Railway. Consulte `airflow/README.md` para implantação, Connections e validação operacional.
 
 ### Organização do catálogo
 

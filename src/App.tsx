@@ -146,7 +146,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
     fetch('/api/banners?placement=catalog').then((response) => response.json()).then((data) => {
       if (Array.isArray(data.banners)) setCatalogBanners(data.banners)
     }).catch(() => undefined)
-    fetch('/api/catalog/navigation').then((response) => response.json()).then((data) => {
+    authenticatedFetch('/api/catalog/navigation').then((response) => response.json()).then((data) => {
       if (Array.isArray(data.departments)) setDepartments(data.departments)
       if (Array.isArray(data.partners)) setPartnerLogos(data.partners)
     }).catch(() => undefined)
@@ -368,6 +368,10 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
     }))
   }
 
+  function setQuantity(id: number, quantity: number) {
+    setCart((current) => current.map((item) => item.id === id ? { ...item, quantity } : item))
+  }
+
   function removeFromCart(id: number) {
     setCart((current) => current.filter((item) => item.id !== id))
   }
@@ -509,7 +513,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
 
       {menuOpen && <div className="overlay" onMouseDown={() => setMenuOpen(false)}><aside className="side-panel menu-panel department-drawer" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">CATÁLOGO</span><h2>Departamentos</h2></div><button className="icon-btn" onClick={() => setMenuOpen(false)}><X /></button></div><button className={!departmentFilter ? 'active drawer-all-products' : 'drawer-all-products'} onClick={() => { clearFilters(); setMenuOpen(false); window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth' }), 50) }}><Store size={20} />Todos os produtos<ChevronRight size={18} /></button><div className="drawer-taxonomy">{departments.map((department) => { const open = expandedDepartment === department.name || departmentFilter === department.name; return <div className="drawer-department" key={department.code || department.name}><button className={departmentFilter === department.name && !sectionFilter ? 'active' : ''} onClick={() => setExpandedDepartment(open ? '' : department.name)}><span>{formatCatalogName(department.name)}<small>{department.productCount} produtos</small></span><ChevronDown className={open ? 'rotated' : ''} size={18} /></button>{open && <div>{<button className="drawer-department-all" onClick={() => selectDepartment(department.name)}>Todos em {formatCatalogName(department.name)}</button>}{department.sections.map((section) => <button className={sectionFilter === section.name ? 'active' : ''} key={`${department.name}-${section.code || section.name}`} onClick={() => selectSection(department.name, section.name)}>{formatCatalogName(section.name)}<small>{section.productCount}</small></button>)}</div>}</div> })}</div><a className="drawer-partners" href="#parceiros" onClick={() => setMenuOpen(false)}>Parceiros<ChevronRight size={18} /></a>{(customer || staffUser) && <button className="menu-logout" onClick={logout}><LogOut size={20} />Sair da conta</button>}</aside></div>}
 
-      {cartOpen && <div className="overlay" onMouseDown={() => setCartOpen(false)}><aside className="side-panel cart-panel" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">SEU PEDIDO</span><h2>Meu carrinho</h2></div><button className="icon-btn" onClick={() => setCartOpen(false)}><X /></button></div>{cart.length === 0 ? <div className="empty-cart"><span><ShoppingCart /></span><h3>Seu carrinho está vazio</h3><p>Explore o catálogo e adicione os produtos que seu negócio precisa.</p><button className="primary-button" onClick={() => setCartOpen(false)}>Explorar produtos</button></div> : <><div className="cart-items">{cart.map((item) => <div className="cart-item" key={item.id}><div className="cart-product-image">{item.image ? <img src={item.image} alt="" /> : <ImageOff />}</div><div className="cart-product-info"><strong>{item.name}</strong><small>Vendido em múltiplos de {item.salesMultiple} unidades</small><span>{unitMoney.format(item.unitPrice ?? 0)} / unidade</span><div className="quantity-control"><button onClick={() => changeQuantity(item.id, -item.salesMultiple)} aria-label={`Remover ${item.salesMultiple} unidades`}><Minus size={15} /></button><b>{item.quantity} un.</b><button onClick={() => changeQuantity(item.id, item.salesMultiple)} aria-label={`Adicionar ${item.salesMultiple} unidades`}><Plus size={15} /></button><button className="remove-item" onClick={() => removeFromCart(item.id)} aria-label="Remover item"><Trash2 size={16} /></button></div></div></div>)}</div><div className="cart-summary"><div><span>Subtotal estimado</span><strong>{money.format(cartTotal)}</strong></div><div className={`cart-minimum ${minimumRemaining === 0 ? 'complete' : ''}`}><span>{minimumRemaining > 0 ? `Adicione mais ${money.format(minimumRemaining)} para atingir o mínimo.` : 'Pedido mínimo atingido.'}</span><i><b style={{ width: `${minimumProgress}%` }} /></i></div><p>Pedido para {customer?.tradeName || customer?.legalName}. Os preços exibidos são os menores entre os seus planos de pagamento; o total é recalculado conforme o plano escolhido na finalização. Frete confirmado pela equipe.</p><button className="checkout-button" onClick={beginCheckout} disabled={minimumRemaining > 0 || loadingConditions}>{loadingConditions ? <LoaderCircle className="spin" /> : minimumRemaining > 0 ? `Mínimo de ${money.format(minimumOrder)}` : 'Finalizar pedido'} {!loadingConditions && <ArrowRight size={19} />}</button>{orderError && <span className="field-error cart-condition-error">{orderError}</span>}<button className="keep-shopping" onClick={() => setCartOpen(false)}>Continuar comprando</button></div></>}</aside></div>}
+      {cartOpen && <div className="overlay" onMouseDown={() => setCartOpen(false)}><aside className="side-panel cart-panel" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">SEU PEDIDO</span><h2>Meu carrinho</h2></div><button className="icon-btn" onClick={() => setCartOpen(false)}><X /></button></div>{cart.length === 0 ? <div className="empty-cart"><span><ShoppingCart /></span><h3>Seu carrinho está vazio</h3><p>Explore o catálogo e adicione os produtos que seu negócio precisa.</p><button className="primary-button" onClick={() => setCartOpen(false)}>Explorar produtos</button></div> : <><div className="cart-items">{cart.map((item) => <div className="cart-item" key={item.id}><div className="cart-product-image">{item.image ? <img src={item.image} alt="" /> : <ImageOff />}</div><div className="cart-product-info"><strong>{item.name}</strong><small>Vendido em múltiplos de {item.salesMultiple} unidades</small><span>{unitMoney.format(item.unitPrice ?? 0)} / unidade</span><div className="quantity-control"><button onClick={() => changeQuantity(item.id, -item.salesMultiple)} aria-label={`Remover ${item.salesMultiple} unidades`}><Minus size={15} /></button><CartQuantityField item={item} onChange={setQuantity} onInvalid={(message) => setToast(message)} /><button onClick={() => changeQuantity(item.id, item.salesMultiple)} aria-label={`Adicionar ${item.salesMultiple} unidades`}><Plus size={15} /></button><button className="remove-item" onClick={() => removeFromCart(item.id)} aria-label="Remover item"><Trash2 size={16} /></button></div></div></div>)}</div><div className="cart-summary"><div><span>Subtotal estimado</span><strong>{money.format(cartTotal)}</strong></div><div className={`cart-minimum ${minimumRemaining === 0 ? 'complete' : ''}`}><span>{minimumRemaining > 0 ? `Adicione mais ${money.format(minimumRemaining)} para atingir o mínimo.` : 'Pedido mínimo atingido.'}</span><i><b style={{ width: `${minimumProgress}%` }} /></i></div><p>Pedido para {customer?.tradeName || customer?.legalName}. Os preços exibidos são os menores entre os seus planos de pagamento; o total é recalculado conforme o plano escolhido na finalização. Frete confirmado pela equipe.</p><button className="checkout-button" onClick={beginCheckout} disabled={minimumRemaining > 0 || loadingConditions}>{loadingConditions ? <LoaderCircle className="spin" /> : minimumRemaining > 0 ? `Mínimo de ${money.format(minimumOrder)}` : 'Finalizar pedido'} {!loadingConditions && <ArrowRight size={19} />}</button>{orderError && <span className="field-error cart-condition-error">{orderError}</span>}<button className="keep-shopping" onClick={() => setCartOpen(false)}>Continuar comprando</button></div></>}</aside></div>}
 
       {checkoutOpen && customer && commercialConditions && <div className="overlay modal-overlay" onMouseDown={() => setCheckoutOpen(false)}><div className="checkout-modal" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">CONFIRMAR PEDIDO</span><h2>Identificação do cliente</h2></div><button className="icon-btn" onClick={() => setCheckoutOpen(false)}><X /></button></div><form onSubmit={submitOrder}><div className="checkout-customer"><CircleUserRound /><div><strong>{customer.tradeName || customer.legalName}</strong><span>{formatDocument(customer.document)} · {customer.email}</span></div><a href="/conta">Alterar</a></div><label>Plano de pagamento<select name="paymentPlan" value={quote?.paymentPlan.code ?? ''} onChange={(event) => requestQuote(event.target.value)} disabled={quoting} required>{!quote && <option value="" disabled>Calculando...</option>}{(quote?.planTotals ?? commercialConditions.paymentPlans.map((plan) => ({ ...plan, total: null }))).map((plan) => <option key={plan.code} value={plan.code} disabled={quote !== null && plan.total === null}>{plan.label}{plan.total !== null ? ` · ${money.format(plan.total)}` : quote ? ' · indisponível' : ''}</option>)}</select></label><div className={`checkout-credit ${checkoutTotal > commercialConditions.availableCredit ? 'exceeded' : ''}`}><span>Crédito disponível</span><strong>{money.format(commercialConditions.availableCredit)}</strong>{commercialConditions.availableCredit < commercialConditions.creditLimit && <small>Limite de {money.format(commercialConditions.creditLimit)}, com {money.format(commercialConditions.creditLimit - commercialConditions.availableCredit)} comprometidos em títulos e pedidos em aberto.</small>}<small>{checkoutTotal > commercialConditions.availableCredit ? `Reduza o pedido em ${money.format(checkoutTotal - commercialConditions.availableCredit)}.` : `Após este pedido: ${money.format(commercialConditions.availableCredit - checkoutTotal)}`}</small></div><label>Observações<textarea name="notes" placeholder="Informe preferências de entrega, contato ou condições." rows={3} /></label>{orderError && <span className="field-error">{orderError}</span>}<div className="checkout-total"><span>Total no plano escolhido</span><strong>{quoting ? <LoaderCircle className="spin" /> : money.format(checkoutTotal)}</strong></div><button className="checkout-button" type="submit" disabled={sendingOrder || quoting || !quote || checkoutTotal < minimumOrder || checkoutTotal > commercialConditions.availableCredit || commercialConditions.paymentPlans.length === 0}>{sendingOrder ? <LoaderCircle className="spin" /> : <>Enviar pedido <ArrowRight size={19} /></>}</button></form></div></div>}
 
@@ -517,6 +521,38 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
       {toast && <div className="toast"><PackageCheck size={19} />{toast}</div>}
     </div>
   )
+}
+
+function CartQuantityField({ item, onChange, onInvalid }: {
+  item: CartItem
+  onChange: (id: number, quantity: number) => void
+  onInvalid: (message: string) => void
+}) {
+  const [draft, setDraft] = useState(String(item.quantity))
+  useEffect(() => setDraft(String(item.quantity)), [item.quantity])
+
+  function commit() {
+    const quantity = Number(draft)
+    const multiple = Math.max(1, item.salesMultiple)
+    if (!Number.isSafeInteger(quantity) || quantity < multiple || quantity > 100000 || quantity % multiple !== 0) {
+      setDraft(String(item.quantity))
+      onInvalid(`Digite uma quantidade entre ${multiple} e 100.000, em múltiplos de ${multiple}.`)
+      return
+    }
+    onChange(item.id, quantity)
+  }
+
+  return <label className="cart-quantity-field" aria-label={`Quantidade de ${item.name}`}>
+    <input
+      type="text"
+      inputMode="numeric"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value.replace(/\D/g, '').slice(0, 6))}
+      onBlur={commit}
+      onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
+    />
+    <span>un.</span>
+  </label>
 }
 
 function ProductCard({ product, rank, addToCart, changeQuantity, quantity, authenticated, canOrder }: { product: Product; rank?: number; addToCart: (product: Product) => void; changeQuantity: (id: number, delta: number) => void; quantity: number; authenticated: boolean; canOrder: boolean }) {

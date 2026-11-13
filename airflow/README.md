@@ -23,7 +23,8 @@ A DAG `ecommerce_produtos_precos` está configurada para executar a cada 30 minu
 6. preserva as fotos já cadastradas no e-commerce;
 7. registra os totais em `product_sync_runs`;
 8. atualiza código do fabricante, NCM, EAN, múltiplo e embalagem master;
-9. atualiza os planos de pagamento liberados, o `LIMCRED`, os títulos em aberto (`PCPREST` sem `DTPAG`, sem cancelamento/estorno e sem cobranças que não são dívida) e os pedidos não faturados (`PCPEDC` nas posições L, M, B e P, exceto bonificação e transferência) dos clientes aprovados.
+9. atualiza os planos de pagamento liberados, o `LIMCRED`, os títulos em aberto (`PCPREST` sem `DTPAG`, sem cancelamento/estorno e sem cobranças que não são dívida) e os pedidos não faturados (`PCPEDC` nas posições L, M, B e P, exceto bonificação e transferência) dos clientes aprovados;
+10. sincroniza as restrições de fornecedor da `PCRESTRICAOVENDA` por praça e por cliente. O catálogo, a página do produto, o orçamento e o envio do pedido aplicam a mesma restrição no backend.
 
 O crédito disponível no checkout é `LIMCRED − títulos em aberto − pedidos não faturados no WinThor − pedidos do e-commerce que ainda não estavam no WinThor na última leitura`. Quando o cliente paga um título, o valor volta a ficar disponível na sincronização seguinte.
 

@@ -468,7 +468,7 @@ const priceColumn = (table) => `price_${priceTableOf(table)}`
 async function customerPricing(database, customer) {
   if (!customer) return null
   const result = await database.query(
-    'SELECT price_region, payment_plans FROM customer_commercial_conditions WHERE customer_id=$1',
+    'SELECT price_region, payment_plans, restricted_supplier_ids FROM customer_commercial_conditions WHERE customer_id=$1',
     [customer.id],
   )
   const row = result.rows[0]
@@ -478,7 +478,9 @@ async function customerPricing(database, customer) {
     priceTable: priceTableOf(plan.priceTable),
   }))
   const region = row?.price_region != null ? Number(row.price_region) : null
-  return { region, plans, priceTables: [...new Set(plans.map((plan) => plan.priceTable))] }
+  const restrictedSupplierIds = (Array.isArray(row?.restricted_supplier_ids) ? row.restricted_supplier_ids : [])
+    .map(Number).filter((value) => Number.isSafeInteger(value) && value > 0)
+  return { region, plans, priceTables: [...new Set(plans.map((plan) => plan.priceTable))], restrictedSupplierIds }
 }
 
 // Menor preço positivo entre as tabelas dos planos liberados para o cliente.
@@ -492,13 +494,18 @@ async function priceCartItems(database, pricing, plan, items) {
   const productIds = [...new Set(items.map((item) => item.productId))]
   const placeholders = productIds.map((_, index) => `$${index + 2}`).join(',')
   const result = await database.query(
-    `SELECT p.id, p.external_id, p.name, p.units_per_box, p.sales_multiple, CASE WHEN rp.${priceColumn(plan.priceTable)} > 0 THEN rp.${priceColumn(plan.priceTable)} END AS price
+    `SELECT p.id, p.external_id, p.supplier_id, p.name, p.units_per_box, p.sales_multiple, CASE WHEN rp.${priceColumn(plan.priceTable)} > 0 THEN rp.${priceColumn(plan.priceTable)} END AS price
      FROM products p
      LEFT JOIN region_prices rp ON rp.product_id = p.id AND rp.region = $1
      WHERE p.active = TRUE AND p.id IN (${placeholders})`,
     [pricing.region, ...productIds],
   )
   const productMap = new Map(result.rows.map((product) => [Number(product.id), product]))
+  const restrictedSuppliers = new Set(pricing.restrictedSupplierIds || [])
+  const restrictedProduct = result.rows.find((product) => restrictedSuppliers.has(Number(product.supplier_id)))
+  if (restrictedProduct) {
+    throw new RequestError(`O produto ${restrictedProduct.external_id} - ${restrictedProduct.name} não está disponível para este cadastro.`)
+  }
   if (productMap.size !== productIds.length) throw new RequestError('Um ou mais produtos não estão disponíveis.')
   const lines = items.map((item) => {
     const product = productMap.get(item.productId)
@@ -1175,16 +1182,18 @@ app.post('/api/integrations/customers/conditions', async (request, response, nex
     for (const condition of parsed.data.customers) {
       const result = await client.query(
         `INSERT INTO customer_commercial_conditions
-           (customer_id, credit_limit, open_titles_amount, open_orders_amount, price_region, payment_plans, source_updated_at)
-         SELECT id,$2::numeric,$5::numeric,$6::numeric,$7::int,$3::jsonb,$4::timestamptz FROM customers WHERE external_id=$1 AND active=TRUE
+          (customer_id, credit_limit, open_titles_amount, open_orders_amount, price_region, restricted_supplier_ids, payment_plans, source_updated_at)
+         SELECT id,$2::numeric,$5::numeric,$6::numeric,$7::int,$8::integer[],$3::jsonb,$4::timestamptz FROM customers WHERE external_id=$1 AND active=TRUE
          ON CONFLICT (customer_id) DO UPDATE SET credit_limit=EXCLUDED.credit_limit,
            open_titles_amount=EXCLUDED.open_titles_amount, open_orders_amount=EXCLUDED.open_orders_amount,
            price_region=COALESCE(EXCLUDED.price_region, customer_commercial_conditions.price_region),
+           restricted_supplier_ids=EXCLUDED.restricted_supplier_ids,
            payment_plans=EXCLUDED.payment_plans, source_updated_at=EXCLUDED.source_updated_at,
            updated_at=CURRENT_TIMESTAMP
          RETURNING customer_id`,
         [condition.externalId, condition.creditLimit, JSON.stringify(condition.paymentPlans), condition.sourceUpdatedAt || null,
-          condition.openTitlesAmount, condition.openOrdersAmount, condition.priceRegion ?? null],
+          condition.openTitlesAmount, condition.openOrdersAmount, condition.priceRegion ?? null,
+          postgresIntegerArray(condition.restrictedSupplierIds)],
       )
       updatedCount += result.rowCount
     }
@@ -1344,6 +1353,10 @@ app.get('/api/products', async (request, response, next) => {
       conditions.push(`p.section_code = $${params.length}`)
     }
     const pricing = await customerPricing(pool, request.customer)
+    if (pricing?.restrictedSupplierIds?.length) {
+      params.push(postgresIntegerArray(pricing.restrictedSupplierIds))
+      conditions.push(`NOT (p.supplier_id = ANY($${params.length}::integer[]))`)
+    }
     const priceTables = pricing?.region != null ? pricing.priceTables : []
     params.push(priceTables.length ? pricing.region : -1)
     const regionParam = params.length
@@ -1431,15 +1444,19 @@ const partnerNameBySupplier = new Map([
   [4698, 'Assim'],
 ])
 
-app.get('/api/catalog/navigation', async (_request, response, next) => {
+app.get('/api/catalog/navigation', async (request, response, next) => {
   try {
+    const pricing = await customerPricing(pool, request.customer)
+    const restrictedSupplierIds = pricing?.restrictedSupplierIds || []
     const taxonomyResult = await pool.query(
       `SELECT department_code, department, section_code, section, COUNT(*)::int AS product_count
        FROM products
        WHERE active=TRUE
+         AND ($1::integer[] = '{}'::integer[] OR NOT (supplier_id = ANY($1::integer[])))
          AND COALESCE(department,'') <> '' AND COALESCE(section,'') <> ''
        GROUP BY department_code, department, section_code, section
        ORDER BY department, section`,
+      [postgresIntegerArray(restrictedSupplierIds)],
     )
     const departmentMap = new Map()
     for (const row of taxonomyResult.rows) {
@@ -1469,9 +1486,10 @@ app.get('/api/catalog/navigation', async (_request, response, next) => {
       `SELECT supplier_id, MIN(brand) AS name, COUNT(*)::int AS product_count
        FROM products
        WHERE active=TRUE AND supplier_id = ANY($1::int[])
+         AND ($2::integer[] = '{}'::integer[] OR NOT (supplier_id = ANY($2::integer[])))
        GROUP BY supplier_id
        ORDER BY MIN(brand)`,
-      [supplierIds],
+      [supplierIds, postgresIntegerArray(restrictedSupplierIds)],
     )
     const partnerData = new Map(partnerResult.rows.map((row) => [Number(row.supplier_id), row]))
     const partners = supplierIds.map((supplierId) => {
@@ -1505,6 +1523,9 @@ app.get('/api/products/:code', async (request, response, next) => {
     if (!result.rows.length) return response.status(404).json({ message: 'Produto não encontrado ou indisponível.' })
     const row = result.rows[0]
     const pricing = await customerPricing(pool, request.customer)
+    if (pricing?.restrictedSupplierIds?.includes(Number(row.supplier_id))) {
+      return response.status(404).json({ message: 'Produto não encontrado ou indisponível.' })
+    }
     let unitPrice = null
     let planPrices = []
     if (pricing?.region != null && pricing.plans.length) {

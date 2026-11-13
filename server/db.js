@@ -91,6 +91,7 @@ export async function initializeDatabase() {
     await pool.query(`CREATE TABLE IF NOT EXISTS customer_commercial_conditions (
       customer_id BIGINT PRIMARY KEY REFERENCES customers(id) ON DELETE CASCADE,
       credit_limit NUMERIC(14,2) NOT NULL DEFAULT 0,
+      restricted_supplier_ids INTEGER[] NOT NULL DEFAULT '{}',
       payment_plans JSONB NOT NULL DEFAULT '[]'::jsonb,
       source_updated_at TIMESTAMPTZ,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -99,6 +100,7 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS open_titles_amount NUMERIC(14,2) NOT NULL DEFAULT 0')
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS open_orders_amount NUMERIC(14,2) NOT NULL DEFAULT 0')
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS price_region INTEGER')
+  await pool.query("ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS restricted_supplier_ids INTEGER[] NOT NULL DEFAULT '{}'")
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_by VARCHAR(160)')
   if (process.env.DATABASE_URL) {

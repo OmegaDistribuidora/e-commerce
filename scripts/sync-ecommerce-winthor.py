@@ -291,6 +291,8 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
             customer_plans = {}
             open_titles = {}
             open_orders = {}
+            customer_restricted_suppliers = {}
+            plaza_restricted_suppliers = {}
             for offset in range(0, len(customer_codes), 500):
                 batch = customer_codes[offset:offset + 500]
                 binds = ",".join(f":c{index}" for index in range(len(batch)))
@@ -298,13 +300,34 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
                 # Região de preço: NUMREGIAOCLI do cliente ou, se vazia, a região da praça.
                 cursor.execute(
                     f"""SELECT c.codcli, NVL(c.limcred, 0), c.codplpag,
-                               NVL(NULLIF(c.numregiaocli, 0), pr.numregiao)
+                               NVL(NULLIF(c.numregiaocli, 0), pr.numregiao), c.codpraca
                         FROM pcclient c
                         LEFT JOIN pcpraca pr ON pr.codpraca = c.codpraca
                         WHERE c.codcli IN ({binds})""",
                     params,
                 )
-                customer_rows.extend(cursor.fetchall())
+                batch_customer_rows = cursor.fetchall()
+                customer_rows.extend(batch_customer_rows)
+                plaza_codes = sorted({int(row[4]) for row in batch_customer_rows if row[4] is not None})
+                restriction_params = dict(params)
+                restriction_filters = [f"codcli IN ({binds})"]
+                if plaza_codes:
+                    plaza_binds = ",".join(f":p{index}" for index in range(len(plaza_codes)))
+                    restriction_params.update({f"p{index}": code for index, code in enumerate(plaza_codes)})
+                    restriction_filters.append(f"codpraca IN ({plaza_binds})")
+                cursor.execute(
+                    f"""SELECT codcli, codpraca, codfornec
+                        FROM pcrestricaovenda
+                        WHERE codfornec IS NOT NULL
+                          AND ({' OR '.join(restriction_filters)})""",
+                    restriction_params,
+                )
+                for restricted_customer, restricted_plaza, restricted_supplier in cursor.fetchall():
+                    supplier_code = int(restricted_supplier)
+                    if restricted_customer is not None:
+                        customer_restricted_suppliers.setdefault(int(restricted_customer), set()).add(supplier_code)
+                    elif restricted_plaza is not None:
+                        plaza_restricted_suppliers.setdefault(int(restricted_plaza), set()).add(supplier_code)
                 # Planos liberados por cliente no WinThor.
                 cursor.execute(
                     f"""SELECT codcli, codplpag FROM pcplpagcli WHERE codcli IN ({binds})""",
@@ -349,7 +372,7 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
 
     conditions = []
     regions = set()
-    for code, credit_limit, primary_plan, price_region in customer_rows:
+    for code, credit_limit, primary_plan, price_region, plaza_code in customer_rows:
         # PCPLPAGCLI define os planos do cliente; sem linhas nela, vale o plano do PCCLIENT.
         allowed_codes = customer_plans.get(int(code)) or ([int(primary_plan)] if primary_plan is not None else [])
         unique_codes = sorted(
@@ -359,12 +382,16 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
         region = int(price_region) if price_region is not None else None
         if region is not None:
             regions.add(region)
+        restricted_suppliers = set(customer_restricted_suppliers.get(int(code), set()))
+        if plaza_code is not None:
+            restricted_suppliers.update(plaza_restricted_suppliers.get(int(plaza_code), set()))
         conditions.append({
             "externalId": int(code),
             "creditLimit": round(number(credit_limit), 2),
             "openTitlesAmount": round(max(0.0, open_titles.get(int(code), 0.0)), 2),
             "openOrdersAmount": round(max(0.0, open_orders.get(int(code), 0.0)), 2),
             "priceRegion": region,
+            "restrictedSupplierIds": sorted(restricted_suppliers),
             "paymentPlans": [
                 {"code": str(value), "label": plan_map[value]["label"], "priceTable": plan_map[value]["priceTable"]}
                 for value in unique_codes
