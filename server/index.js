@@ -920,6 +920,8 @@ app.put('/api/staff/password', requireStaff, async (request, response, next) => 
 app.get('/api/banners', async (request, response, next) => {
   try {
     const placement = request.query.placement === 'catalog' ? 'catalog' : 'hero'
+    const pricing = await customerPricing(pool, request.customer)
+    const restrictedSupplierIds = pricing?.restrictedSupplierIds || []
     const result = await pool.query(
       `SELECT b.id, b.title, b.alt_text, b.image_path, b.image_data IS NOT NULL AS uploaded,
               b.target_url, b.section_code, b.destination_type, b.destination_values, b.navigation_path,
@@ -937,8 +939,22 @@ app.get('/api/banners', async (request, response, next) => {
        WHERE b.active = TRUE AND b.placement = $1
          AND (b.starts_at IS NULL OR b.starts_at <= CURRENT_TIMESTAMP)
          AND (b.ends_at IS NULL OR b.ends_at > CURRENT_TIMESTAMP)
+         AND (
+           b.destination_type = 'navigation'
+           OR EXISTS (
+             SELECT 1
+             FROM products bp
+             WHERE bp.active = TRUE
+               AND (
+                 (b.destination_type = 'sections' AND bp.section_code = ANY(b.destination_values))
+                 OR (b.destination_type = 'products' AND bp.external_id = ANY(b.destination_values))
+                 OR (b.destination_type = 'suppliers' AND bp.supplier_id = ANY(b.destination_values))
+               )
+               AND ($2::integer[] = '{}'::integer[] OR NOT (bp.supplier_id = ANY($2::integer[])))
+           )
+         )
        ORDER BY b.position, b.id`,
-      [placement],
+      [placement, postgresIntegerArray(restrictedSupplierIds)],
     )
     return response.json({ banners: result.rows.map((banner) => ({
       id: Number(banner.id),

@@ -140,17 +140,18 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
     if (authReady && !customer) setCart([])
   }, [authReady, customer])
   useEffect(() => {
-    fetch('/api/banners').then((response) => response.json()).then((data) => {
-      if (Array.isArray(data.banners) && data.banners.length) setSlides(data.banners)
+    if (!authReady) return
+    authenticatedFetch('/api/banners').then((response) => response.json()).then((data) => {
+      if (Array.isArray(data.banners)) setSlides(data.banners.length ? data.banners : fallbackSlides)
     }).catch(() => undefined)
-    fetch('/api/banners?placement=catalog').then((response) => response.json()).then((data) => {
+    authenticatedFetch('/api/banners?placement=catalog').then((response) => response.json()).then((data) => {
       if (Array.isArray(data.banners)) setCatalogBanners(data.banners)
     }).catch(() => undefined)
     authenticatedFetch('/api/catalog/navigation').then((response) => response.json()).then((data) => {
       if (Array.isArray(data.departments)) setDepartments(data.departments)
       if (Array.isArray(data.partners)) setPartnerLogos(data.partners)
     }).catch(() => undefined)
-  }, [])
+  }, [authReady, customer?.id])
   useEffect(() => {
     const timer = window.setInterval(() => setSlide((current) => (current + 1) % slides.length), 6500)
     return () => window.clearInterval(timer)
