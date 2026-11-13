@@ -155,6 +155,7 @@ export type OrderItem = {
   productId: number
   code: number
   name: string
+  image: string | null
   boxes: number
   units: number
   unitsPerBox: number

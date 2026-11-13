@@ -16,7 +16,7 @@ const port = Number(process.env.PORT) || 3000
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const distDir = resolve(currentDir, '../dist')
 const orderStatusCacheMs = Math.max(1, Number(process.env.ORDER_STATUS_CACHE_MINUTES) || 15) * 60 * 1000
-const customerOrderStatuses = new Set(['analysis', 'released', 'sent'])
+const customerOrderStatuses = new Set(['analysis', 'released', 'sent', 'cancelled'])
 
 class RequestError extends Error {
   constructor(message, status = 400) {
@@ -211,11 +211,13 @@ async function fetchWinthorOrderStatuses(orderNumbers) {
   const statuses = new Map()
   for (const order of Array.isArray(data.pedidos) ? data.pedidos : []) {
     const number = Number(order.numped)
-    if (Number.isSafeInteger(number) && customerOrderStatuses.has(order.status)) {
+    const label = String(order.statusReal || '').trim().slice(0, 80) || 'Em análise'
+    const normalizedStatus = order.status === 'cancelled' || /cancelad/i.test(label) ? 'cancelled' : order.status
+    if (Number.isSafeInteger(number) && customerOrderStatuses.has(normalizedStatus)) {
       statuses.set(number, {
-        status: order.status,
+        status: normalizedStatus,
         code: String(order.posicao || '').trim().slice(0, 20),
-        label: String(order.statusReal || '').trim().slice(0, 80) || 'Em análise',
+        label,
       })
     }
   }
@@ -302,12 +304,18 @@ async function refreshStaleOrderStatuses(orders) {
     const statuses = await fetchWinthorOrderStatuses(staleOrders.map((order) => order.winthor_order_number))
     await Promise.all(staleOrders.map(async (order) => {
       const winthorOrderNumber = Number(order.winthor_order_number)
-      const winthorStatus = statuses.get(winthorOrderNumber)
-      if (!winthorStatus) return
+      // O vínculo só é criado depois que o NUMPED é confirmado pela API. Se um pedido
+      // anteriormente confirmado desaparece da PCPEDC/PCPEDI, ele foi removido no WinThor
+      // (caso observado em cancelamentos) e não deve permanecer como liberado no e-commerce.
+      const winthorStatus = statuses.get(winthorOrderNumber) || {
+        status: 'cancelled', code: 'C', label: 'Cancelado no WinThor',
+      }
       const checkedAt = new Date()
       await pool.query(
         `UPDATE orders SET status=$2, winthor_status_code=$3, winthor_status_label=$4,
            winthor_status_checked_at=$5,
+           cancelled_at=CASE WHEN $2='cancelled' THEN COALESCE(cancelled_at,$5) ELSE cancelled_at END,
+           cancelled_by=CASE WHEN $2='cancelled' THEN COALESCE(NULLIF(cancelled_by,''),'WinThor') ELSE cancelled_by END,
            updated_at=CASE WHEN status<>$2 THEN CURRENT_TIMESTAMP ELSE updated_at END
          WHERE id=$1 AND winthor_order_number=$6`,
         [order.id, winthorStatus.status, winthorStatus.code, winthorStatus.label, checkedAt, winthorOrderNumber],
@@ -316,6 +324,10 @@ async function refreshStaleOrderStatuses(orders) {
       order.winthor_status_code = winthorStatus.code
       order.winthor_status_label = winthorStatus.label
       order.winthor_status_checked_at = checkedAt
+      if (winthorStatus.status === 'cancelled') {
+        order.cancelled_at ||= checkedAt
+        order.cancelled_by ||= 'WinThor'
+      }
     }))
   } catch (error) {
     console.warn(`[orders] consulta de status adiada: ${error instanceof Error ? error.message : 'falha desconhecida'}`)
@@ -344,6 +356,7 @@ async function listOrders(whereClause = '', params = []) {
     const placeholders = orderIds.map((_, index) => `$${index + 1}`).join(',')
     const items = await pool.query(
       `SELECT oi.id, oi.order_id, p.id AS product_id, p.external_id AS code, p.name,
+              p.image_path, p.image_uploaded, p.image_hidden, p.image_updated_at,
               oi.boxes, COALESCE(oi.units, oi.boxes * oi.units_per_box) AS units,
               oi.units_per_box, oi.unit_price, oi.line_total
        FROM order_items oi JOIN products p ON p.id = oi.product_id
@@ -354,7 +367,7 @@ async function listOrders(whereClause = '', params = []) {
   }
   return result.rows.map((order) => ({
     id: Number(order.id),
-    number: `OMG-${String(order.id).padStart(6, '0')}`,
+    number: order.winthor_order_number == null ? 'Pedido pendente' : String(order.winthor_order_number),
     status: order.status,
     winthorOrderNumber: order.winthor_order_number == null ? null : Number(order.winthor_order_number),
     winthorStatusCode: order.winthor_status_code || '',
@@ -377,6 +390,7 @@ async function listOrders(whereClause = '', params = []) {
     },
     items: itemRows.filter((item) => Number(item.order_id) === Number(order.id)).map((item) => ({
       id: Number(item.id), productId: Number(item.product_id), code: Number(item.code), name: item.name,
+      image: productImageUrl({ ...item, id: item.product_id }),
       boxes: Number(item.boxes), units: Number(item.units), unitsPerBox: Number(item.units_per_box),
       unitPrice: Number(item.unit_price), lineTotal: Number(item.line_total),
     })),
@@ -2298,7 +2312,7 @@ app.post('/api/orders', async (request, response, next) => {
     return response.status(201).json({
       order: {
         id: Number(order.id),
-        number: `OMG-${String(order.id).padStart(6, '0')}`,
+        number: 'Pedido pendente',
         total,
         paymentPlan: parsed.data.paymentPlan,
         paymentPlanLabel: selectedPlan.label,

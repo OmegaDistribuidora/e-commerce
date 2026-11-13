@@ -421,6 +421,11 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .order-lines { padding: 8px 20px 18px; }
 .order-lines > div { padding: 11px 0; border-bottom: 1px solid #edf1f6; display: grid; grid-template-columns: 1fr 180px 120px; gap: 15px; font-size: 12px; }
 .order-lines > div strong { text-align: right; color: var(--navy); }
+.order-product { min-width: 0; display: flex !important; grid-template-columns: none !important; align-items: center; gap: 10px !important; }
+.order-product > span:last-child { min-width: 0; display: grid; gap: 3px; }
+.order-product-thumb { width: 46px; height: 46px; flex: 0 0 46px; border: 1px solid #e1e8f1; border-radius: 8px; display: grid !important; place-items: center; overflow: hidden; background: #fff; color: #9aabba !important; }
+.order-product-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.order-product-thumb svg { width: 20px; height: 20px; }
 .staff-empty { padding: 50px; border: 1px dashed #cbd8e7; border-radius: 12px; text-align: center; color: var(--muted); background: #fff; }
 .staff-section-heading { margin-bottom: 16px; display: flex; justify-content: space-between; align-items: end; }
 .staff-section-heading h2 { margin: 0; color: var(--navy); }
