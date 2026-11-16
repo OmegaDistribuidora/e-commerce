@@ -90,6 +90,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   const [catalogBanners, setCatalogBanners] = useState<Banner[]>([])
   const [slide, setSlide] = useState(0)
   const [toast, setToast] = useState('')
+  const [favoriteIds, setFavoriteIds] = useState<Set<number>>(new Set())
   const productsRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
@@ -139,6 +140,19 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   useEffect(() => {
     if (authReady && !customer) setCart([])
   }, [authReady, customer])
+  useEffect(() => {
+    if (!authReady || !customer) {
+      setFavoriteIds(new Set())
+      return
+    }
+    authenticatedFetch('/api/customer/favorites')
+      .then(async (response) => {
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.message)
+        setFavoriteIds(new Set((data.favorites || []).map((product: Product) => Number(product.id))))
+      })
+      .catch(() => setFavoriteIds(new Set()))
+  }, [authReady, customer?.id])
   useEffect(() => {
     if (!authReady) return
     authenticatedFetch('/api/banners').then((response) => response.json()).then((data) => {
@@ -259,6 +273,28 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
         : [...current, { ...product, quantity: product.salesMultiple }]
     })
     setToast(`${product.name} adicionado ao carrinho`)
+  }
+
+  async function toggleFavorite(product: Product) {
+    if (!customer) {
+      window.location.href = '/conta'
+      return
+    }
+    const isFavorite = favoriteIds.has(product.id)
+    try {
+      const response = await authenticatedFetch(`/api/customer/favorites/${product.id}`, { method: isFavorite ? 'DELETE' : 'PUT' })
+      const data = response.status === 204 ? null : await response.json()
+      if (!response.ok) throw new Error(data?.message || 'Não foi possível alterar o favorito.')
+      setFavoriteIds((current) => {
+        const next = new Set(current)
+        if (isFavorite) next.delete(product.id)
+        else next.add(product.id)
+        return next
+      })
+      setToast(isFavorite ? `${product.name} removido dos favoritos` : `${product.name} adicionado aos favoritos`)
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'Não foi possível alterar o favorito.')
+    }
   }
 
   async function logout() {
@@ -496,7 +532,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
           </aside>}
           <div className="section-heading"><div><span className="eyebrow">DEPARTAMENTO → SEÇÃO → PRODUTOS</span><h1>{selectedSupplierName ? `Produtos ${selectedSupplierName}` : query ? `Resultados para “${query}”` : selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : catalogMode === 'bestsellers' ? 'Mais vendidos nos últimos 7 dias' : 'Todos os produtos'}</h1>{selectedDepartment && <p className="taxonomy-breadcrumb">{formatCatalogName(selectedDepartment.name)}{selectedSection ? ` → ${formatCatalogName(selectedSection.name)}` : ''}</p>}</div><span className="result-count">{filteredProducts.length} {filteredProducts.length === 1 ? 'produto' : 'produtos'}</span></div>
           <div className="catalog-filters"><span className="filter-title"><SlidersHorizontal size={18} /> Refinar catálogo</span><label>Fornecedor<select value={supplierFilter} onChange={(event) => selectSupplier(event.target.value)}><option value="">Todos os fornecedores</option>{supplierOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Departamento<select value={departmentFilter} onChange={(event) => event.target.value ? selectDepartment(event.target.value) : clearFilters()}><option value="">Todos os departamentos</option>{departments.map((department) => <option value={department.name} key={department.code || department.name}>{formatCatalogName(department.name)}</option>)}</select></label><label>Seção<select value={sectionFilter} onChange={(event) => event.target.value ? selectSection(departmentFilter, event.target.value) : selectDepartment(departmentFilter)} disabled={!selectedDepartment}><option value="">Todas as seções</option>{selectedDepartment?.sections.map((section) => <option value={section.name} key={section.code || section.name}>{formatCatalogName(section.name)}</option>)}</select></label><button onClick={clearFilters}>Limpar filtros</button></div>
-          {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : catalogRows.length > 0 ? <><div className="catalog-flow">{catalogRows.map((row, rowIndex) => <div className="catalog-row-group" key={`row-${rowIndex}`}><div className="product-grid">{row.products.map((product, productIndex) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? rowIndex * 5 + productIndex + 1 : undefined} addToCart={addToCart} changeQuantity={changeQuantity} quantity={cart.find((item) => item.id === product.id)?.quantity ?? 0} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} commercialBlocked={Boolean(customer?.commercialBlocked)} />)}</div>{row.bannerAfter && <a className="catalog-banner" href={bannerTarget(row.bannerAfter)}><img src={row.bannerAfter.imageUrl} alt={row.bannerAfter.altText} /></a>}</div>)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 25)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={clearFilters}>Limpar filtros</button></div>}
+          {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : catalogRows.length > 0 ? <><div className="catalog-flow">{catalogRows.map((row, rowIndex) => <div className="catalog-row-group" key={`row-${rowIndex}`}><div className="product-grid">{row.products.map((product, productIndex) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? rowIndex * 5 + productIndex + 1 : undefined} addToCart={addToCart} changeQuantity={changeQuantity} toggleFavorite={toggleFavorite} favorite={favoriteIds.has(product.id)} quantity={cart.find((item) => item.id === product.id)?.quantity ?? 0} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} commercialBlocked={Boolean(customer?.commercialBlocked)} />)}</div>{row.bannerAfter && <a className="catalog-banner" href={bannerTarget(row.bannerAfter)}><img src={row.bannerAfter.imageUrl} alt={row.bannerAfter.altText} /></a>}</div>)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 25)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={clearFilters}>Limpar filtros</button></div>}
         </section>
 
         {partnerLogos.length > 0 && <section className="brands-section" id="parceiros"><div className="container"><div className="section-heading"><div><h2>Nossos parceiros</h2><p>Selecione uma marca para ver todos os produtos desse fornecedor.</p></div></div></div><div className="brands-carousel"><div className="brands-track">{[0, 1].map((copy) => <div className="brands-loop" aria-hidden={copy === 1 || undefined} key={copy}>{partnerLogos.map((partner) => <button className="brand-card" onClick={() => selectPartner(partner)} key={`${copy}-${partner.supplierId}`} tabIndex={copy === 1 ? -1 : undefined} aria-label={`Filtrar produtos de ${partner.name}`}><img src={partner.logo} alt={copy === 0 ? `Logo ${partner.name}` : ''} loading="lazy" /></button>)}</div>)}</div></div></section>}
@@ -551,12 +587,12 @@ function CartQuantityField({ item, onChange, onInvalid }: {
   </label>
 }
 
-function ProductCard({ product, rank, addToCart, changeQuantity, quantity, authenticated, canOrder, commercialBlocked }: { product: Product; rank?: number; addToCart: (product: Product) => void; changeQuantity: (id: number, delta: number) => void; quantity: number; authenticated: boolean; canOrder: boolean; commercialBlocked: boolean }) {
+function ProductCard({ product, rank, addToCart, changeQuantity, toggleFavorite, favorite, quantity, authenticated, canOrder, commercialBlocked }: { product: Product; rank?: number; addToCart: (product: Product) => void; changeQuantity: (id: number, delta: number) => void; toggleFavorite: (product: Product) => void; favorite: boolean; quantity: number; authenticated: boolean; canOrder: boolean; commercialBlocked: boolean }) {
   return (
     <article className="product-card">
       <div className="product-image-wrap">
         {rank && rank <= 10 && <span className="product-badge">#{rank} em vendas</span>}
-        <button className="favorite" aria-label="Favoritar"><Heart size={19} /></button>
+        <button type="button" className={`favorite ${favorite ? 'active' : ''}`} onClick={() => toggleFavorite(product)} aria-label={favorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} title={favorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}><Heart size={19} fill={favorite ? 'currentColor' : 'none'} /></button>
         <a className="product-image-link" href={`/produto/${product.code}`} aria-label={`Ver detalhes de ${product.name}`}>{product.image ? <img src={product.image} alt={product.name} /> : <div className="no-product-image"><ImageOff /><span>Produto sem foto</span></div>}</a>
       </div>
       <div className="product-content">

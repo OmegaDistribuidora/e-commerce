@@ -162,6 +162,16 @@ CREATE TABLE IF NOT EXISTS customer_commercial_conditions (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS customer_favorites (
+  customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (customer_id, product_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_favorites_recent
+  ON customer_favorites(customer_id, created_at DESC);
+
 -- Snapshot leve do PCEST, separado por filial. O saldo disponivel e sempre
 -- calculado como estoque total - reservado - bloqueado.
 CREATE TABLE IF NOT EXISTS product_stocks (

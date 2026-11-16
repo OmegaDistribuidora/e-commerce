@@ -103,6 +103,15 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS stock_branch INTEGER')
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT FALSE')
   await pool.query("ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS restricted_supplier_ids INTEGER[] NOT NULL DEFAULT '{}'")
+  if (process.env.DATABASE_URL) {
+    await pool.query(`CREATE TABLE IF NOT EXISTS customer_favorites (
+      customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (customer_id, product_id)
+    )`)
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_customer_favorites_recent ON customer_favorites(customer_id, created_at DESC)')
+  }
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_by VARCHAR(160)')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_branch INTEGER')

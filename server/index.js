@@ -1737,6 +1737,82 @@ app.get('/api/products/:code', async (request, response, next) => {
   }
 })
 
+app.get('/api/customer/favorites', async (request, response, next) => {
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para consultar seus favoritos.' })
+  try {
+    const pricing = await customerPricing(pool, request.customer)
+    const priceTables = pricing?.region != null ? pricing.priceTables : []
+    const priceColumns = priceTables.map((table) => `, rp.${priceColumn(table)}`).join('')
+    const restrictedSupplierIds = pricing?.restrictedSupplierIds || []
+    const result = await pool.query(
+      `SELECT p.id, p.external_id, p.supplier_id, p.brand, p.name, p.package, p.master_package,
+              p.units_per_box, p.sales_multiple, p.min_boxes, p.department_code, p.department,
+              p.section_code, p.section, p.image_path, p.image_data IS NOT NULL AS image_uploaded,
+              p.image_hidden, p.image_updated_at, p.ean, p.manufacturer_code, p.ncm_code,
+              p.price_date, cf.created_at AS favorited_at${priceColumns}
+       FROM customer_favorites cf
+       JOIN products p ON p.id=cf.product_id AND p.active=TRUE
+       LEFT JOIN region_prices rp ON rp.product_id=p.id AND rp.region=$2
+       WHERE cf.customer_id=$1
+         AND ($3::integer[] = '{}'::integer[] OR NOT (p.supplier_id = ANY($3::integer[])))
+       ORDER BY cf.created_at DESC`,
+      [request.customer.id, priceTables.length ? pricing.region : -1, postgresIntegerArray(restrictedSupplierIds)],
+    )
+    return response.json({ favorites: result.rows.map((row) => {
+      const customerPrice = lowestPlanPrice(row, priceTables)
+      return {
+        id: Number(row.id), code: Number(row.external_id), supplierId: Number(row.supplier_id || 0),
+        brand: row.brand, name: row.name, package: row.package || '', masterPackage: row.master_package || '',
+        unitsPerBox: Number(row.units_per_box), salesMultiple: Number(row.sales_multiple), minBoxes: Number(row.min_boxes),
+        unitPrice: customerPrice, listUnitPrice: customerPrice,
+        category: row.section || 'Sem seção', categories: row.section ? [row.section] : [],
+        departmentCode: Number(row.department_code || 0), department: row.department || '',
+        sectionCode: Number(row.section_code || 0), section: row.section || '',
+        image: productImageUrl(row), priceDate: row.price_date, weeklySales: 0,
+        ean: row.ean || '', manufacturerCode: row.manufacturer_code || '', ncm: row.ncm_code || '',
+        favoritedAt: row.favorited_at,
+      }
+    }) })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.put('/api/customer/favorites/:productId', async (request, response, next) => {
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para favoritar produtos.' })
+  try {
+    const productId = Number(request.params.productId)
+    if (!Number.isSafeInteger(productId) || productId < 1) return response.status(400).json({ message: 'Produto inválido.' })
+    const [productResult, pricing] = await Promise.all([
+      pool.query('SELECT id, supplier_id FROM products WHERE id=$1 AND active=TRUE LIMIT 1', [productId]),
+      customerPricing(pool, request.customer),
+    ])
+    if (!productResult.rows.length || pricing?.restrictedSupplierIds?.includes(Number(productResult.rows[0].supplier_id))) {
+      return response.status(404).json({ message: 'Produto não encontrado ou indisponível.' })
+    }
+    await pool.query(
+      `INSERT INTO customer_favorites(customer_id,product_id) VALUES ($1,$2)
+       ON CONFLICT (customer_id,product_id) DO NOTHING`,
+      [request.customer.id, productId],
+    )
+    return response.status(201).json({ productId, favorite: true })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.delete('/api/customer/favorites/:productId', async (request, response, next) => {
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para alterar seus favoritos.' })
+  try {
+    const productId = Number(request.params.productId)
+    if (!Number.isSafeInteger(productId) || productId < 1) return response.status(400).json({ message: 'Produto inválido.' })
+    await pool.query('DELETE FROM customer_favorites WHERE customer_id=$1 AND product_id=$2', [request.customer.id, productId])
+    return response.status(204).end()
+  } catch (error) {
+    return next(error)
+  }
+})
+
 app.get('/api/customer/commercial-conditions', async (request, response, next) => {
   if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para consultar as condições comerciais.' })
   try {

@@ -18,6 +18,8 @@ Para testar o login local com o cliente real Omega Matriz (`filial.dcliente`, CN
 
 Visitantes podem navegar pelo catálogo. Os preços são enviados pela API somente para clientes autenticados, aprovados e com região e planos de pagamento já sincronizados do WinThor. O pedido mínimo é de R$ 200,00 e também é validado no servidor.
 
+Clientes autenticados podem favoritar produtos no catálogo. Os favoritos são persistidos no PostgreSQL por cliente e aparecem na aba **Favoritos** da área da conta; produtos inativos ou restritos para o cadastro não são retornados pela API.
+
 ## PostgreSQL local persistente
 
 Com o Docker Desktop iniciado:
