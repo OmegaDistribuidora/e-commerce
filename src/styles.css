@@ -637,19 +637,19 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .customer-account-tabs button b { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #dcecff; color: var(--blue); display: grid; place-items: center; font-size: 10px; }
 .customer-account-tabs button:hover, .customer-account-tabs button.active { color: var(--blue); background: #eaf3ff; }
 .customer-favorites-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.customer-favorite-card { min-width: 0; padding: 18px; border: 1px solid #dfe7f1; border-radius: 13px; background: #fff; display: grid; grid-template-columns: 105px minmax(0, 1fr); gap: 15px; align-items: center; }
-.customer-favorite-image { width: 105px; height: 115px; display: grid; place-items: center; }
-.customer-favorite-image img { width: 100%; height: 100%; object-fit: contain; }
+.customer-favorite-card { min-width: 0; min-height: 238px; padding: 18px; border: 1px solid #dfe7f1; border-radius: 13px; background: #fff; overflow: hidden; display: grid; grid-template-columns: 125px minmax(0, 1fr); grid-template-rows: 150px 44px; gap: 14px 18px; align-items: stretch; }
+.customer-favorite-image { position: relative; width: 125px; height: 150px; padding: 8px; overflow: hidden; contain: paint; display: grid; place-items: center; }
+.customer-favorite-image img { position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); max-width: calc(100% - 16px); max-height: calc(100% - 16px); object-fit: contain; object-position: center; }
 .customer-favorite-image > span { color: #8a99aa; display: grid; justify-items: center; gap: 6px; text-align: center; }
 .customer-favorite-image > span svg { width: 27px; }
 .customer-favorite-image > span small { font-size: 9px; }
-.customer-favorite-card > div { min-width: 0; align-self: center; }
+.customer-favorite-card > div { min-width: 0; height: 150px; padding: 8px 0; display: flex; flex-direction: column; align-self: stretch; }
 .customer-favorite-card > div > small { color: #718297; font-size: 9px; font-weight: 800; text-transform: uppercase; }
-.customer-favorite-card h2 { min-height: 42px; margin: 6px 0 12px; color: var(--navy); font-size: 15px; line-height: 1.35; }
+.customer-favorite-card h2 { min-height: 42px; margin: 6px 0 12px; color: var(--navy); font-size: 15px; line-height: 1.35; display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .customer-favorite-card h2 a { color: inherit; }
-.customer-favorite-card > div > strong { color: var(--navy); font-size: 18px; }
+.customer-favorite-card > div > strong { margin-top: auto; color: var(--navy); font-size: 18px; }
 .customer-favorite-card > div > strong small { color: var(--muted); font-size: 9px; font-weight: 500; }
-.customer-favorite-card > button { grid-column: 1 / -1; min-height: 36px; border: 1px solid #efcaca; border-radius: 8px; background: #fff8f8; color: #b93434; display: flex; align-items: center; justify-content: center; gap: 7px; font-weight: 750; }
+.customer-favorite-card > button { grid-column: 1 / -1; width: 100%; min-height: 44px; border: 1px solid #efcaca; border-radius: 8px; background: #fff8f8; color: #b93434; display: flex; align-items: center; justify-content: center; gap: 7px; font-weight: 750; }
 .customer-favorite-card > button svg { width: 16px; }
 .customer-favorite-card > button:hover { background: #ffeded; }
 .pending-registration-notice { margin-bottom: 18px; padding: 16px 18px; border: 1px solid #efd99a; border-radius: 11px; background: #fff8e5; color: #765300; display: flex; gap: 12px; }
