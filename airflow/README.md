@@ -34,7 +34,7 @@ Execute a DAG manualmente uma vez e confira os totais do log antes de habilitar 
 
 ## DAG de estoque
 
-Copie tambem `dags/dag_ecommerce_estoque.py` para a pasta de DAGs do Airflow. Ela reutiliza as mesmas Connections `lancamentos_oracle_filial` e `ecommerce_api` e executa `scripts/sync-ecommerce-stock.py` a cada 5 minutos.
+Copie tambem `dags/dag_ecommerce_estoque.py` para a pasta de DAGs do Airflow. Ela reutiliza as mesmas Connections `lancamentos_oracle_filial` e `ecommerce_api` e executa `scripts/sync-ecommerce-stock.py` a cada minuto.
 
 A carga de estoque e separada da carga completa para ser leve e frequente. Ela:
 
@@ -45,6 +45,8 @@ A carga de estoque e separada da carga completa para ser leve e frequente. Ela:
 5. atualiza no PostgreSQL somente os produtos cujo saldo mudou e renova separadamente o horario do snapshot;
 6. rejeita cargas vazias ou parciais antes de alterar o banco;
 7. faz o checkout falhar de forma segura se o snapshot estiver ausente ou desatualizado.
+
+O agendamento aceita somente uma execucao ativa. Se uma leitura demorar mais que um minuto, a proxima nao concorre com ela. O checkout tambem desconta imediatamente os pedidos pendentes do proprio e-commerce; quando um pedido ainda sem NUMPED e cancelado, essa reserva local deixa de ser considerada na mesma transacao, sem aguardar a DAG.
 
 A filial de estoque do cliente segue, nesta ordem, `PCCLIENT.CODFILIALESTOQUE`, `PCCLIENT.CODFILIALNF`, a filial do representante em `PCUSUARI` e a filial do pedido mais recente. Somente os codigos 1 e 3 sao aceitos. Se o WinThor nao permitir determinar a filial com seguranca, o pedido nao e finalizado ate a proxima sincronizacao cadastral.
 

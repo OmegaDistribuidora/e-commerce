@@ -16,7 +16,7 @@ const port = Number(process.env.PORT) || 3000
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const distDir = resolve(currentDir, '../dist')
 const orderStatusCacheMs = Math.max(1, Number(process.env.ORDER_STATUS_CACHE_MINUTES) || 15) * 60 * 1000
-const stockMaxAgeMs = Math.max(5, Number(process.env.STOCK_MAX_AGE_MINUTES) || 15) * 60 * 1000
+const stockMaxAgeMs = Math.max(2, Number(process.env.STOCK_MAX_AGE_MINUTES) || 5) * 60 * 1000
 const customerOrderStatuses = new Set(['analysis', 'released', 'sent', 'cancelled'])
 
 class RequestError extends Error {
