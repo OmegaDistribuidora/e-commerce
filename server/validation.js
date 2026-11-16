@@ -108,6 +108,11 @@ export const orderQuoteSchema = z.object({
   })).min(1, 'O carrinho está vazio').max(200),
 })
 
+export const stockCheckSchema = z.object({
+  productId: z.coerce.number().int().positive(),
+  quantity: z.coerce.number().int().positive().max(100000),
+})
+
 const priceValue = z.coerce.number().nonnegative().max(99999999).nullable()
 
 // Linhas compactas: [região, CODPROD, PTABELA1..PTABELA7].

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft, CircleUserRound, ImageOff, LoaderCircle, LockKeyhole, LogOut,
   MapPin, Menu, Minus, Plus, Search, ShoppingCart, Warehouse, X, ZoomIn,
@@ -26,6 +26,10 @@ export default function ProductPage({ code }: { code: number }) {
   const [error, setError] = useState('')
   const [zoomed, setZoomed] = useState(false)
   const [quantity, setQuantity] = useState(0)
+  const [quantityDraft, setQuantityDraft] = useState('0')
+  const [checkingStock, setCheckingStock] = useState(false)
+  const [quantityError, setQuantityError] = useState('')
+  const stockCheckRef = useRef(false)
   const [search, setSearch] = useState('')
   const [departments, setDepartments] = useState<CatalogDepartment[]>([])
   const [partners, setPartners] = useState<Partner[]>([])
@@ -42,7 +46,9 @@ export default function ProductPage({ code }: { code: number }) {
       setCustomer(account?.accountType === 'customer' ? account.customer : null)
       setStaffUser(account?.accountType === 'staff' ? account.user : null)
       setProduct(loadedProduct)
-      setQuantity(readCart().find((item) => item.id === loadedProduct.id)?.quantity || 0)
+      const storedQuantity = readCart().find((item) => item.id === loadedProduct.id)?.quantity || 0
+      setQuantity(storedQuantity)
+      setQuantityDraft(String(storedQuantity))
     }).catch((requestError) => setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar o produto.'))
       .finally(() => setLoading(false))
   }, [code])
@@ -54,12 +60,51 @@ export default function ProductPage({ code }: { code: number }) {
     }).catch(() => undefined)
   }, [])
 
-  function updateCart(nextQuantity: number) {
-    if (!product) return
+  async function updateCart(nextQuantity: number) {
+    if (!product || stockCheckRef.current) return false
+    const multiple = Math.max(1, product.salesMultiple)
+    if (nextQuantity > 0 && (!Number.isSafeInteger(nextQuantity) || nextQuantity < multiple || nextQuantity > 100000 || nextQuantity % multiple !== 0)) {
+      setQuantityDraft(String(quantity))
+      setQuantityError(`Digite uma quantidade entre ${multiple} e 100.000, em múltiplos de ${multiple}.`)
+      return false
+    }
+    setQuantityError('')
+    if (nextQuantity > 0) {
+      stockCheckRef.current = true
+      setCheckingStock(true)
+      try {
+        const response = await authenticatedFetch('/api/customer/stock-check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ productId: product.id, quantity: nextQuantity }),
+        })
+        const data = await response.json().catch(() => null)
+        if (!response.ok) throw new Error(data?.message || 'Não foi possível validar o estoque agora.')
+      } catch (requestError) {
+        setQuantityDraft(String(quantity))
+        setQuantityError(requestError instanceof Error ? requestError.message : 'Não foi possível validar o estoque agora.')
+        return false
+      } finally {
+        stockCheckRef.current = false
+        setCheckingStock(false)
+      }
+    }
     const cart = readCart().filter((item) => item.id !== product.id)
     if (nextQuantity > 0) cart.push({ ...product, quantity: nextQuantity })
     localStorage.setItem('omega-cart-v2', JSON.stringify(cart))
     setQuantity(nextQuantity)
+    setQuantityDraft(String(nextQuantity))
+    return true
+  }
+
+  async function commitQuantity() {
+    const nextQuantity = Number(quantityDraft)
+    if (!Number.isSafeInteger(nextQuantity) || nextQuantity <= 0) {
+      setQuantityDraft(String(quantity))
+      setQuantityError(`Digite uma quantidade válida em múltiplos de ${Math.max(1, product?.salesMultiple || 1)}.`)
+      return
+    }
+    if (!(await updateCart(nextQuantity))) setQuantityDraft(String(quantity))
   }
 
   function submitSearch(event: React.FormEvent<HTMLFormElement>) {
@@ -107,7 +152,7 @@ export default function ProductPage({ code }: { code: number }) {
           <h1>{product.name}</h1>
           <p className="product-detail-brand">{product.brand}</p>
           {customer && product.unitPrice !== null ? <div className="product-detail-price"><strong>{unitMoney.format(product.unitPrice)}</strong><span>por unidade{product.planPrices?.[0] ? ` · ${product.planPrices[0].label}` : ''}</span></div> : customer ? <p className="product-detail-unavailable">Preço indisponível para o seu cadastro. Fale com a equipe Ômega.</p> : <a className="product-detail-login" href="/conta"><LockKeyhole /> Entrar para ver preço</a>}{customer && product.planPrices && product.planPrices.length > 1 && <ul className="product-plan-prices">{product.planPrices.map((plan) => <li key={plan.code}><span>{plan.label}</span><strong>{unitMoney.format(plan.unitPrice)}</strong></li>)}</ul>}
-          {customer?.canOrder && product.unitPrice !== null && (quantity > 0 ? <div className="product-detail-quantity"><button onClick={() => updateCart(Math.max(0, quantity - product.salesMultiple))}><Minus /></button><span><strong>{quantity}</strong> unidades no carrinho</span><button onClick={() => updateCart(quantity + product.salesMultiple)}><Plus /></button></div> : <button className="product-detail-add" onClick={() => updateCart(product.salesMultiple)}><ShoppingCart /> Adicionar {product.salesMultiple} {product.salesMultiple === 1 ? 'unidade' : 'unidades'}</button>)}
+          {customer?.canOrder && product.unitPrice !== null && (quantity > 0 ? <><div className="product-detail-quantity"><button disabled={checkingStock} onClick={() => updateCart(Math.max(0, quantity - product.salesMultiple))}><Minus /></button><label aria-label={`Quantidade de ${product.name}`}><input type="text" inputMode="numeric" disabled={checkingStock} value={quantityDraft} onChange={(event) => setQuantityDraft(event.target.value.replace(/\D/g, '').slice(0, 6))} onBlur={commitQuantity} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} /><span>unidades</span></label><button disabled={checkingStock} onClick={() => updateCart(quantity + product.salesMultiple)}><Plus /></button></div>{quantityError && <span className="field-error product-quantity-error">{quantityError}</span>}</> : <><button className="product-detail-add" disabled={checkingStock} onClick={() => updateCart(product.salesMultiple)}>{checkingStock ? <><LoaderCircle className="spin" /> Validando estoque</> : <><ShoppingCart /> Adicionar {product.salesMultiple} {product.salesMultiple === 1 ? 'unidade' : 'unidades'}</>}</button>{quantityError && <span className="field-error product-quantity-error">{quantityError}</span>}</>)}
           {staffUser && <section className="staff-product-stock"><header><Warehouse /><div><h2>Estoque por filial</h2><span>Informação exclusiva da gestão</span></div></header><div>{product.stocks?.map((stock) => <article key={stock.branch}><div><strong>Filial {stock.branch}</strong><small>{stock.branch === 1 ? 'Capital e região metropolitana' : 'Barbalha / Cariri'}</small></div>{stock.availableUnits == null ? <b className="stock-unavailable">Não sincronizado</b> : <><b>{stock.availableUnits.toLocaleString('pt-BR')} disponíveis</b><dl><span>Total <strong>{stock.totalUnits?.toLocaleString('pt-BR')}</strong></span><span>Reservado <strong>{stock.reservedUnits?.toLocaleString('pt-BR')}</strong></span><span>Bloqueado <strong>{stock.blockedUnits?.toLocaleString('pt-BR')}</strong></span></dl></>}<time>{stock.updatedAt ? `Atualizado em ${new Date(stock.updatedAt).toLocaleString('pt-BR')}` : 'Aguardando primeira sincronização'}</time></article>)}{!product.stocks?.length && <article><b className="stock-unavailable">Aguardando sincronização do estoque</b></article>}</div></section>}
           <div className="product-specifications">
             <h2>Detalhes do produto</h2>

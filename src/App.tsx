@@ -91,6 +91,8 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   const [slide, setSlide] = useState(0)
   const [toast, setToast] = useState('')
   const [favoriteIds, setFavoriteIds] = useState<Set<number>>(new Set())
+  const [stockCheckingIds, setStockCheckingIds] = useState<Set<number>>(new Set())
+  const stockChecksRef = useRef(new Set<number>())
   const productsRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
@@ -257,7 +259,33 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   const minimumRemaining = Math.max(0, minimumOrder - cartTotal)
   const minimumProgress = Math.min(100, (cartTotal / minimumOrder) * 100)
 
-  function addToCart(product: Product) {
+  async function validateCartQuantity(productId: number, quantity: number) {
+    if (stockChecksRef.current.has(productId)) return false
+    stockChecksRef.current.add(productId)
+    setStockCheckingIds((current) => new Set(current).add(productId))
+    try {
+      const response = await authenticatedFetch('/api/customer/stock-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId, quantity }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.message || 'Não foi possível validar o estoque agora.')
+      return true
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'Não foi possível validar o estoque agora.')
+      return false
+    } finally {
+      stockChecksRef.current.delete(productId)
+      setStockCheckingIds((current) => {
+        const next = new Set(current)
+        next.delete(productId)
+        return next
+      })
+    }
+  }
+
+  async function addToCart(product: Product) {
     if (!customer || product.unitPrice === null) {
       window.location.href = '/conta'
       return
@@ -266,12 +294,12 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
       setToast(customer.commercialBlocked ? 'Seu cadastro está bloqueado para compras. Fale com a equipe Ômega.' : 'Seu cadastro está em análise. Você poderá comprar após a aprovação da equipe Ômega.')
       return
     }
-    setCart((current) => {
-      const existing = current.find((item) => item.id === product.id)
-      return existing
-        ? current.map((item) => item.id === product.id ? { ...item, quantity: item.quantity + product.salesMultiple } : item)
-        : [...current, { ...product, quantity: product.salesMultiple }]
-    })
+    const existing = cart.find((item) => item.id === product.id)
+    const nextQuantity = (existing?.quantity || 0) + product.salesMultiple
+    if (!(await validateCartQuantity(product.id, nextQuantity))) return
+    setCart((current) => existing
+      ? current.map((item) => item.id === product.id ? { ...item, quantity: nextQuantity } : item)
+      : [...current, { ...product, quantity: nextQuantity }])
     setToast(`${product.name} adicionado ao carrinho`)
   }
 
@@ -393,16 +421,26 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
     return banner.navigationPath || '/#produtos'
   }
 
-  function changeQuantity(id: number, delta: number) {
-    setCart((current) => current.flatMap((item) => {
-      if (item.id !== id) return [item]
-      const nextQuantity = item.quantity + delta
-      return nextQuantity > 0 ? [{ ...item, quantity: nextQuantity }] : []
-    }))
+  async function changeQuantity(id: number, delta: number) {
+    const item = cart.find((candidate) => candidate.id === id)
+    if (!item) return false
+    const nextQuantity = item.quantity + delta
+    if (nextQuantity <= 0) {
+      removeFromCart(id)
+      return true
+    }
+    if (!(await validateCartQuantity(id, nextQuantity))) return false
+    setCart((current) => current.map((candidate) => candidate.id === id ? { ...candidate, quantity: nextQuantity } : candidate))
+    return true
   }
 
-  function setQuantity(id: number, quantity: number) {
-    setCart((current) => current.map((item) => item.id === id ? { ...item, quantity } : item))
+  async function setQuantity(id: number, quantity: number) {
+    const item = cart.find((candidate) => candidate.id === id)
+    if (!item) return false
+    if (quantity === item.quantity) return true
+    if (!(await validateCartQuantity(id, quantity))) return false
+    setCart((current) => current.map((candidate) => candidate.id === id ? { ...candidate, quantity } : candidate))
+    return true
   }
 
   function removeFromCart(id: number) {
@@ -532,7 +570,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
           </aside>}
           <div className="section-heading"><div><span className="eyebrow">DEPARTAMENTO → SEÇÃO → PRODUTOS</span><h1>{selectedSupplierName ? `Produtos ${selectedSupplierName}` : query ? `Resultados para “${query}”` : selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : catalogMode === 'bestsellers' ? 'Mais vendidos nos últimos 7 dias' : 'Todos os produtos'}</h1>{selectedDepartment && <p className="taxonomy-breadcrumb">{formatCatalogName(selectedDepartment.name)}{selectedSection ? ` → ${formatCatalogName(selectedSection.name)}` : ''}</p>}</div><span className="result-count">{filteredProducts.length} {filteredProducts.length === 1 ? 'produto' : 'produtos'}</span></div>
           <div className="catalog-filters"><span className="filter-title"><SlidersHorizontal size={18} /> Refinar catálogo</span><label>Fornecedor<select value={supplierFilter} onChange={(event) => selectSupplier(event.target.value)}><option value="">Todos os fornecedores</option>{supplierOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Departamento<select value={departmentFilter} onChange={(event) => event.target.value ? selectDepartment(event.target.value) : clearFilters()}><option value="">Todos os departamentos</option>{departments.map((department) => <option value={department.name} key={department.code || department.name}>{formatCatalogName(department.name)}</option>)}</select></label><label>Seção<select value={sectionFilter} onChange={(event) => event.target.value ? selectSection(departmentFilter, event.target.value) : selectDepartment(departmentFilter)} disabled={!selectedDepartment}><option value="">Todas as seções</option>{selectedDepartment?.sections.map((section) => <option value={section.name} key={section.code || section.name}>{formatCatalogName(section.name)}</option>)}</select></label><button onClick={clearFilters}>Limpar filtros</button></div>
-          {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : catalogRows.length > 0 ? <><div className="catalog-flow">{catalogRows.map((row, rowIndex) => <div className="catalog-row-group" key={`row-${rowIndex}`}><div className="product-grid">{row.products.map((product, productIndex) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? rowIndex * 5 + productIndex + 1 : undefined} addToCart={addToCart} changeQuantity={changeQuantity} toggleFavorite={toggleFavorite} favorite={favoriteIds.has(product.id)} quantity={cart.find((item) => item.id === product.id)?.quantity ?? 0} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} commercialBlocked={Boolean(customer?.commercialBlocked)} />)}</div>{row.bannerAfter && <a className="catalog-banner" href={bannerTarget(row.bannerAfter)}><img src={row.bannerAfter.imageUrl} alt={row.bannerAfter.altText} /></a>}</div>)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 25)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={clearFilters}>Limpar filtros</button></div>}
+          {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : catalogRows.length > 0 ? <><div className="catalog-flow">{catalogRows.map((row, rowIndex) => <div className="catalog-row-group" key={`row-${rowIndex}`}><div className="product-grid">{row.products.map((product, productIndex) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? rowIndex * 5 + productIndex + 1 : undefined} addToCart={addToCart} changeQuantity={changeQuantity} setQuantity={setQuantity} toggleFavorite={toggleFavorite} favorite={favoriteIds.has(product.id)} quantity={cart.find((item) => item.id === product.id)?.quantity ?? 0} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} commercialBlocked={Boolean(customer?.commercialBlocked)} checkingStock={stockCheckingIds.has(product.id)} onInvalid={setToast} />)}</div>{row.bannerAfter && <a className="catalog-banner" href={bannerTarget(row.bannerAfter)}><img src={row.bannerAfter.imageUrl} alt={row.bannerAfter.altText} /></a>}</div>)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 25)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={clearFilters}>Limpar filtros</button></div>}
         </section>
 
         {partnerLogos.length > 0 && <section className="brands-section" id="parceiros"><div className="container"><div className="section-heading"><div><h2>Nossos parceiros</h2><p>Selecione uma marca para ver todos os produtos desse fornecedor.</p></div></div></div><div className="brands-carousel"><div className="brands-track">{[0, 1].map((copy) => <div className="brands-loop" aria-hidden={copy === 1 || undefined} key={copy}>{partnerLogos.map((partner) => <button className="brand-card" onClick={() => selectPartner(partner)} key={`${copy}-${partner.supplierId}`} tabIndex={copy === 1 ? -1 : undefined} aria-label={`Filtrar produtos de ${partner.name}`}><img src={partner.logo} alt={copy === 0 ? `Logo ${partner.name}` : ''} loading="lazy" /></button>)}</div>)}</div></div></section>}
@@ -544,7 +582,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
 
       {menuOpen && <div className="overlay" onMouseDown={() => setMenuOpen(false)}><aside className="side-panel menu-panel department-drawer" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">CATÁLOGO</span><h2>Departamentos</h2></div><button className="icon-btn" onClick={() => setMenuOpen(false)}><X /></button></div><button className={!departmentFilter ? 'active drawer-all-products' : 'drawer-all-products'} onClick={() => { clearFilters(); setMenuOpen(false); window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth' }), 50) }}><Store size={20} />Todos os produtos<ChevronRight size={18} /></button><div className="drawer-taxonomy">{departments.map((department) => { const open = expandedDepartment === department.name || departmentFilter === department.name; return <div className="drawer-department" key={department.code || department.name}><button className={departmentFilter === department.name && !sectionFilter ? 'active' : ''} onClick={() => setExpandedDepartment(open ? '' : department.name)}><span>{formatCatalogName(department.name)}<small>{department.productCount} produtos</small></span><ChevronDown className={open ? 'rotated' : ''} size={18} /></button>{open && <div>{<button className="drawer-department-all" onClick={() => selectDepartment(department.name)}>Todos em {formatCatalogName(department.name)}</button>}{department.sections.map((section) => <button className={sectionFilter === section.name ? 'active' : ''} key={`${department.name}-${section.code || section.name}`} onClick={() => selectSection(department.name, section.name)}>{formatCatalogName(section.name)}<small>{section.productCount}</small></button>)}</div>}</div> })}</div><a className="drawer-partners" href="#parceiros" onClick={() => setMenuOpen(false)}>Parceiros<ChevronRight size={18} /></a>{(customer || staffUser) && <button className="menu-logout" onClick={logout}><LogOut size={20} />Sair da conta</button>}</aside></div>}
 
-      {cartOpen && <div className="overlay" onMouseDown={() => setCartOpen(false)}><aside className="side-panel cart-panel" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">SEU PEDIDO</span><h2>Meu carrinho</h2></div><button className="icon-btn" onClick={() => setCartOpen(false)}><X /></button></div>{cart.length === 0 ? <div className="empty-cart"><span><ShoppingCart /></span><h3>Seu carrinho está vazio</h3><p>Explore o catálogo e adicione os produtos que seu negócio precisa.</p><button className="primary-button" onClick={() => setCartOpen(false)}>Explorar produtos</button></div> : <><div className="cart-items">{cart.map((item) => <div className="cart-item" key={item.id}><div className="cart-product-image">{item.image ? <img src={item.image} alt="" /> : <ImageOff />}</div><div className="cart-product-info"><strong>{item.name}</strong><small>Vendido em múltiplos de {item.salesMultiple} unidades</small><span>{unitMoney.format(item.unitPrice ?? 0)} / unidade</span><div className="quantity-control"><button onClick={() => changeQuantity(item.id, -item.salesMultiple)} aria-label={`Remover ${item.salesMultiple} unidades`}><Minus size={15} /></button><CartQuantityField item={item} onChange={setQuantity} onInvalid={(message) => setToast(message)} /><button onClick={() => changeQuantity(item.id, item.salesMultiple)} aria-label={`Adicionar ${item.salesMultiple} unidades`}><Plus size={15} /></button><button className="remove-item" onClick={() => removeFromCart(item.id)} aria-label="Remover item"><Trash2 size={16} /></button></div></div></div>)}</div><div className="cart-summary"><div><span>Subtotal estimado</span><strong>{money.format(cartTotal)}</strong></div><div className={`cart-minimum ${minimumRemaining === 0 ? 'complete' : ''}`}><span>{minimumRemaining > 0 ? `Adicione mais ${money.format(minimumRemaining)} para atingir o mínimo.` : 'Pedido mínimo atingido.'}</span><i><b style={{ width: `${minimumProgress}%` }} /></i></div><p>Pedido para {customer?.tradeName || customer?.legalName}. Os preços exibidos são os menores entre os seus planos de pagamento; o total é recalculado conforme o plano escolhido na finalização. Frete confirmado pela equipe.</p><button className="checkout-button" onClick={beginCheckout} disabled={minimumRemaining > 0 || loadingConditions}>{loadingConditions ? <LoaderCircle className="spin" /> : minimumRemaining > 0 ? `Mínimo de ${money.format(minimumOrder)}` : 'Finalizar pedido'} {!loadingConditions && <ArrowRight size={19} />}</button>{orderError && <span className="field-error cart-condition-error">{orderError}</span>}<button className="keep-shopping" onClick={() => setCartOpen(false)}>Continuar comprando</button></div></>}</aside></div>}
+      {cartOpen && <div className="overlay" onMouseDown={() => setCartOpen(false)}><aside className="side-panel cart-panel" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">SEU PEDIDO</span><h2>Meu carrinho</h2></div><button className="icon-btn" onClick={() => setCartOpen(false)}><X /></button></div>{cart.length === 0 ? <div className="empty-cart"><span><ShoppingCart /></span><h3>Seu carrinho está vazio</h3><p>Explore o catálogo e adicione os produtos que seu negócio precisa.</p><button className="primary-button" onClick={() => setCartOpen(false)}>Explorar produtos</button></div> : <><div className="cart-items">{cart.map((item) => <div className="cart-item" key={item.id}><div className="cart-product-image">{item.image ? <img src={item.image} alt="" /> : <ImageOff />}</div><div className="cart-product-info"><strong>{item.name}</strong><small>Vendido em múltiplos de {item.salesMultiple} unidades</small><span>{unitMoney.format(item.unitPrice ?? 0)} / unidade</span><div className="quantity-control"><button disabled={stockCheckingIds.has(item.id)} onClick={() => changeQuantity(item.id, -item.salesMultiple)} aria-label={`Remover ${item.salesMultiple} unidades`}><Minus size={15} /></button><CartQuantityField item={item} onChange={setQuantity} onInvalid={(message) => setToast(message)} disabled={stockCheckingIds.has(item.id)} /><button disabled={stockCheckingIds.has(item.id)} onClick={() => changeQuantity(item.id, item.salesMultiple)} aria-label={`Adicionar ${item.salesMultiple} unidades`}><Plus size={15} /></button><button className="remove-item" onClick={() => removeFromCart(item.id)} aria-label="Remover item"><Trash2 size={16} /></button></div></div></div>)}</div><div className="cart-summary"><div><span>Subtotal estimado</span><strong>{money.format(cartTotal)}</strong></div><div className={`cart-minimum ${minimumRemaining === 0 ? 'complete' : ''}`}><span>{minimumRemaining > 0 ? `Adicione mais ${money.format(minimumRemaining)} para atingir o mínimo.` : 'Pedido mínimo atingido.'}</span><i><b style={{ width: `${minimumProgress}%` }} /></i></div><p>Pedido para {customer?.tradeName || customer?.legalName}. Os preços exibidos são os menores entre os seus planos de pagamento; o total é recalculado conforme o plano escolhido na finalização. Frete confirmado pela equipe.</p><button className="checkout-button" onClick={beginCheckout} disabled={minimumRemaining > 0 || loadingConditions}>{loadingConditions ? <LoaderCircle className="spin" /> : minimumRemaining > 0 ? `Mínimo de ${money.format(minimumOrder)}` : 'Finalizar pedido'} {!loadingConditions && <ArrowRight size={19} />}</button>{orderError && <span className="field-error cart-condition-error">{orderError}</span>}<button className="keep-shopping" onClick={() => setCartOpen(false)}>Continuar comprando</button></div></>}</aside></div>}
 
       {checkoutOpen && customer && commercialConditions && <div className="overlay modal-overlay" onMouseDown={() => setCheckoutOpen(false)}><div className="checkout-modal" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">CONFIRMAR PEDIDO</span><h2>Identificação do cliente</h2></div><button className="icon-btn" onClick={() => setCheckoutOpen(false)}><X /></button></div><form onSubmit={submitOrder}><div className="checkout-customer"><CircleUserRound /><div><strong>{customer.tradeName || customer.legalName}</strong><span>{formatDocument(customer.document)} · {customer.email}</span></div><a href="/conta">Alterar</a></div><label>Plano de pagamento<select name="paymentPlan" value={quote?.paymentPlan.code ?? ''} onChange={(event) => requestQuote(event.target.value)} disabled={quoting} required>{!quote && <option value="" disabled>Calculando...</option>}{(quote?.planTotals ?? commercialConditions.paymentPlans.map((plan) => ({ ...plan, total: null }))).map((plan) => <option key={plan.code} value={plan.code} disabled={quote !== null && plan.total === null}>{plan.label}{plan.total !== null ? ` · ${money.format(plan.total)}` : quote ? ' · indisponível' : ''}</option>)}</select></label><div className={`checkout-credit ${checkoutTotal > commercialConditions.availableCredit ? 'exceeded' : ''}`}><span>Crédito disponível</span><strong>{money.format(commercialConditions.availableCredit)}</strong>{commercialConditions.availableCredit < commercialConditions.creditLimit && <small>Limite de {money.format(commercialConditions.creditLimit)}, com {money.format(commercialConditions.creditLimit - commercialConditions.availableCredit)} comprometidos em títulos e pedidos em aberto.</small>}<small>{checkoutTotal > commercialConditions.availableCredit ? `Reduza o pedido em ${money.format(checkoutTotal - commercialConditions.availableCredit)}.` : `Após este pedido: ${money.format(commercialConditions.availableCredit - checkoutTotal)}`}</small></div><label>Observações<textarea name="notes" placeholder="Informe preferências de entrega, contato ou condições." rows={3} /></label>{orderError && <span className="field-error">{orderError}</span>}<div className="checkout-total"><span>Total no plano escolhido</span><strong>{quoting ? <LoaderCircle className="spin" /> : money.format(checkoutTotal)}</strong></div><button className="checkout-button" type="submit" disabled={sendingOrder || quoting || !quote || checkoutTotal < minimumOrder || checkoutTotal > commercialConditions.availableCredit || commercialConditions.paymentPlans.length === 0}>{sendingOrder ? <LoaderCircle className="spin" /> : <>Enviar pedido <ArrowRight size={19} /></>}</button></form></div></div>}
 
@@ -554,15 +592,16 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   )
 }
 
-function CartQuantityField({ item, onChange, onInvalid }: {
+function CartQuantityField({ item, onChange, onInvalid, disabled = false }: {
   item: CartItem
-  onChange: (id: number, quantity: number) => void
+  onChange: (id: number, quantity: number) => Promise<boolean>
   onInvalid: (message: string) => void
+  disabled?: boolean
 }) {
   const [draft, setDraft] = useState(String(item.quantity))
   useEffect(() => setDraft(String(item.quantity)), [item.quantity])
 
-  function commit() {
+  async function commit() {
     const quantity = Number(draft)
     const multiple = Math.max(1, item.salesMultiple)
     if (!Number.isSafeInteger(quantity) || quantity < multiple || quantity > 100000 || quantity % multiple !== 0) {
@@ -571,13 +610,14 @@ function CartQuantityField({ item, onChange, onInvalid }: {
       return
     }
     setDraft(String(quantity))
-    onChange(item.id, quantity)
+    if (!(await onChange(item.id, quantity))) setDraft(String(item.quantity))
   }
 
   return <label className="cart-quantity-field" aria-label={`Quantidade de ${item.name}`}>
     <input
       type="text"
       inputMode="numeric"
+      disabled={disabled}
       value={draft}
       onChange={(event) => setDraft(event.target.value.replace(/\D/g, '').slice(0, 6))}
       onBlur={commit}
@@ -587,7 +627,7 @@ function CartQuantityField({ item, onChange, onInvalid }: {
   </label>
 }
 
-function ProductCard({ product, rank, addToCart, changeQuantity, toggleFavorite, favorite, quantity, authenticated, canOrder, commercialBlocked }: { product: Product; rank?: number; addToCart: (product: Product) => void; changeQuantity: (id: number, delta: number) => void; toggleFavorite: (product: Product) => void; favorite: boolean; quantity: number; authenticated: boolean; canOrder: boolean; commercialBlocked: boolean }) {
+function ProductCard({ product, rank, addToCart, changeQuantity, setQuantity, toggleFavorite, favorite, quantity, authenticated, canOrder, commercialBlocked, checkingStock, onInvalid }: { product: Product; rank?: number; addToCart: (product: Product) => Promise<void>; changeQuantity: (id: number, delta: number) => Promise<boolean>; setQuantity: (id: number, quantity: number) => Promise<boolean>; toggleFavorite: (product: Product) => void; favorite: boolean; quantity: number; authenticated: boolean; canOrder: boolean; commercialBlocked: boolean; checkingStock: boolean; onInvalid: (message: string) => void }) {
   return (
     <article className="product-card">
       <div className="product-image-wrap">
@@ -599,7 +639,7 @@ function ProductCard({ product, rank, addToCart, changeQuantity, toggleFavorite,
         <span className="product-brand">{product.brand} · cód. {product.code}</span>
         <h3><a href={`/produto/${product.code}`}>{product.name}</a></h3>
         {authenticated && product.unitPrice !== null && <div className="price-row unit-price-row"><div><strong>{unitMoney.format(product.unitPrice)}</strong><small>por unidade</small></div></div>}
-        {authenticated && product.unitPrice === null ? <button className="buy-button login-to-buy" disabled>Preço indisponível</button> : quantity > 0 && authenticated && canOrder ? <div className="product-quantity-control"><button onClick={() => changeQuantity(product.id, -product.salesMultiple)} aria-label={`Remover ${product.salesMultiple} unidades`}><Minus size={18} /></button><span><strong>{quantity}</strong><small>unidades</small></span><button onClick={() => changeQuantity(product.id, product.salesMultiple)} aria-label={`Adicionar ${product.salesMultiple} unidades`}><Plus size={18} /></button></div> : <button className={`buy-button ${!authenticated || !canOrder ? 'login-to-buy' : ''}`} onClick={() => addToCart(product)}>{!authenticated ? <><LockKeyhole size={17} />Entrar para ver preço</> : !canOrder ? <><LoaderCircle size={17} />{commercialBlocked ? 'Compra bloqueada' : 'Cadastro em análise'}</> : <><ShoppingCart size={18} />Adicionar {product.salesMultiple} {product.salesMultiple === 1 ? 'unidade' : 'unidades'}</>}</button>}
+        {authenticated && product.unitPrice === null ? <button className="buy-button login-to-buy" disabled>Preço indisponível</button> : quantity > 0 && authenticated && canOrder ? <div className="product-quantity-control"><button disabled={checkingStock} onClick={() => changeQuantity(product.id, -product.salesMultiple)} aria-label={`Remover ${product.salesMultiple} unidades`}><Minus size={18} /></button><CartQuantityField item={{ ...product, quantity }} onChange={setQuantity} onInvalid={onInvalid} disabled={checkingStock} /><button disabled={checkingStock} onClick={() => changeQuantity(product.id, product.salesMultiple)} aria-label={`Adicionar ${product.salesMultiple} unidades`}><Plus size={18} /></button></div> : <button disabled={checkingStock} className={`buy-button ${!authenticated || !canOrder ? 'login-to-buy' : ''}`} onClick={() => addToCart(product)}>{checkingStock ? <><LoaderCircle className="spin" size={17} />Validando estoque</> : !authenticated ? <><LockKeyhole size={17} />Entrar para ver preço</> : !canOrder ? <><LoaderCircle size={17} />{commercialBlocked ? 'Compra bloqueada' : 'Cadastro em análise'}</> : <><ShoppingCart size={18} />Adicionar {product.salesMultiple} {product.salesMultiple === 1 ? 'unidade' : 'unidades'}</>}</button>}
       </div>
     </article>
   )

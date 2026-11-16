@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
 import { createConfirmedSupabaseUser, deleteSupabaseUser, findSupabaseUserByEmail, removeSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
-import { bannerSchema, bannersBulkSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerCreateSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema } from './validation.js'
+import { bannerSchema, bannersBulkSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerCreateSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -1478,6 +1478,41 @@ app.post('/api/customer/quote', async (request, response, next) => {
       total: selected.total,
       planTotals: quotes.map((quote) => ({ code: quote.plan.code, label: quote.plan.label, total: quote.error ? null : quote.total })),
     })
+  } catch (error) {
+    if (error instanceof RequestError) return response.status(error.status).json({ message: error.message })
+    return next(error)
+  }
+})
+
+// Checagem antecipada para alterações no carrinho. Ela não reserva unidades:
+// a validação definitiva continua sendo feita dentro da transação do pedido.
+app.post('/api/customer/stock-check', async (request, response, next) => {
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para adicionar produtos.' })
+  if ((request.customer.registration_status || 'approved') !== 'approved') {
+    return response.status(403).json({ message: 'Seu cadastro ainda está em análise.' })
+  }
+  const parsed = stockCheckSchema.safeParse(request.body)
+  if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+  try {
+    const pricing = await customerPricing(pool, request.customer)
+    if (pricing.isBlocked) {
+      return response.status(403).json({ message: 'Seu cadastro está bloqueado para compras. Fale com a equipe Ômega.' })
+    }
+    const productResult = await pool.query(
+      `SELECT id, external_id, supplier_id, name, units_per_box, sales_multiple
+       FROM products WHERE id=$1 AND active=TRUE LIMIT 1`,
+      [parsed.data.productId],
+    )
+    const product = productResult.rows[0]
+    if (!product || pricing.restrictedSupplierIds.includes(Number(product.supplier_id))) {
+      throw new RequestError('Este produto não está disponível para o seu cadastro.', 404)
+    }
+    const salesMultiple = Math.max(1, Number(product.sales_multiple))
+    if (parsed.data.quantity < salesMultiple || parsed.data.quantity % salesMultiple !== 0) {
+      throw new RequestError(`A quantidade do produto ${product.external_id} deve ser um múltiplo de ${salesMultiple} unidades.`)
+    }
+    await validateOrderStock(pool, pricing.stockBranch, [{ product, units: parsed.data.quantity }])
+    return response.json({ available: true })
   } catch (error) {
     if (error instanceof RequestError) return response.status(error.status).json({ message: error.message })
     return next(error)
