@@ -212,6 +212,7 @@ export const customerConditionsSyncSchema = z.object({
     openOrdersAmount: z.coerce.number().nonnegative().max(999999999999).default(0),
     priceRegion: z.coerce.number().int().nonnegative().nullable().optional(),
     stockBranch: z.coerce.number().int().refine((value) => value === 1 || value === 3).nullable().optional(),
+    isBlocked: z.boolean().default(false),
     restrictedSupplierIds: z.array(z.coerce.number().int().positive()).max(10000).default([]),
     paymentPlans: z.array(paymentPlanSyncSchema).max(100),
     sourceUpdatedAt: z.string().datetime({ offset: true }).nullable().optional(),

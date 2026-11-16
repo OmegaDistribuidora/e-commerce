@@ -76,7 +76,7 @@ A conta inicial é criada apenas quando ainda não existe. Depois, o Administrad
 
 ### Sincronização WinThor
 
-A DAG versionada em `airflow/dags/dag_ecommerce_produtos.py` executa a cada 30 minutos. Ela sincroniza somente produtos ativos e habilitados para a força de vendas, hierarquia Departamento → Seção, preços por região e plano, condições comerciais, compromissos de crédito e restrições de fornecedor da `PCRESTRICAOVENDA` por praça/cliente. Os dados são enviados à API HTTPS protegida por `PRODUCT_SYNC_TOKEN`; o PostgreSQL permanece privado no Railway. Consulte `airflow/README.md` para implantação, Connections e validação operacional.
+A DAG versionada em `airflow/dags/dag_ecommerce_produtos.py` executa a cada 30 minutos. Ela sincroniza somente produtos ativos e habilitados para a força de vendas, hierarquia Departamento → Seção, preços por região e plano, condições comerciais, bloqueio de compra do `PCCLIENT`, compromissos de crédito e restrições de fornecedor da `PCRESTRICAOVENDA` por praça/cliente. Os dados são enviados à API HTTPS protegida por `PRODUCT_SYNC_TOKEN`; o PostgreSQL permanece privado no Railway. Consulte `airflow/README.md` para implantação, Connections e validação operacional.
 
 ### Organização do catálogo
 
@@ -96,6 +96,7 @@ Os perfis internos são:
 - `PCPLPAG.NUMPR` seleciona a coluna `PCTABPR.PTABELA1` a `PTABELA7`.
 - Catálogo e página do produto mostram o menor preço positivo entre os planos liberados. O checkout recalcula o pedido no backend para o plano escolhido.
 - Cliente ainda não aprovado ou sem condições comerciais sincronizadas não recebe preço e não pode finalizar pedidos.
+- Cliente com `PCCLIENT.BLOQUEIO` diferente de `N` não pode cotar nem finalizar pedidos; a API revalida o bloqueio independentemente da interface.
 - Crédito disponível = `LIMCRED` − títulos em aberto − pedidos não faturados no WinThor − pedidos do e-commerce ainda não considerados pela última leitura do WinThor.
 - O checkout impede pedidos acima do crédito disponível.
 

@@ -85,6 +85,7 @@ export type Customer = {
   state?: string
   salesChannel: 'Varejo' | 'Redes'
   registrationStatus: 'pending' | 'approved'
+  commercialBlocked?: boolean
   canOrder: boolean
   createdAt?: string
   approvedAt?: string | null
@@ -122,6 +123,7 @@ export type Banner = {
 }
 
 export type CommercialConditions = {
+  isBlocked?: boolean
   creditLimit: number
   openTitlesAmount: number
   openOrdersAmount: number

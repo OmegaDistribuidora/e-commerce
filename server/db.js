@@ -101,6 +101,7 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS open_orders_amount NUMERIC(14,2) NOT NULL DEFAULT 0')
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS price_region INTEGER')
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS stock_branch INTEGER')
+  await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT FALSE')
   await pool.query("ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS restricted_supplier_ids INTEGER[] NOT NULL DEFAULT '{}'")
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_by VARCHAR(160)')

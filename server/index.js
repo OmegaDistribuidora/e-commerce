@@ -45,8 +45,10 @@ app.use(async (request, _response, next) => {
         pool.query(
           `SELECT id, external_id, document, person_type, legal_name, trade_name, phone,
                   email, postal_code, address_line, address_number, address_complement,
-                  neighborhood, city, state, sales_channel, registration_status
+                  neighborhood, city, state, sales_channel, registration_status,
+                  COALESCE(cc.is_blocked, FALSE) AS commercial_blocked
            FROM customers
+           LEFT JOIN customer_commercial_conditions cc ON cc.customer_id=customers.id
            WHERE supabase_user_id = $1 AND active = TRUE
            LIMIT 1`,
           [authUser.id],
@@ -69,9 +71,11 @@ app.use(async (request, _response, next) => {
     const result = await pool.query(
       `SELECT c.id, c.external_id, c.document, c.person_type, c.legal_name, c.trade_name, c.phone,
               c.email, c.postal_code, c.address_line, c.address_number, c.address_complement,
-              c.neighborhood, c.city, c.state, c.sales_channel, c.registration_status
+              c.neighborhood, c.city, c.state, c.sales_channel, c.registration_status,
+              COALESCE(cc.is_blocked, FALSE) AS commercial_blocked
        FROM sessions s
        JOIN customers c ON c.id = s.customer_id
+       LEFT JOIN customer_commercial_conditions cc ON cc.customer_id=c.id
        WHERE s.token_hash = $1 AND s.expires_at > CURRENT_TIMESTAMP AND c.active = TRUE
        LIMIT 1`,
       [hashSessionToken(token)],
@@ -123,7 +127,8 @@ function customerJson(customer) {
     state: customer.state,
     salesChannel: customer.sales_channel || 'Varejo',
     registrationStatus: customer.registration_status || 'approved',
-    canOrder: (customer.registration_status || 'approved') === 'approved',
+    commercialBlocked: Boolean(customer.commercial_blocked),
+    canOrder: (customer.registration_status || 'approved') === 'approved' && !customer.commercial_blocked,
   }
 }
 
@@ -469,7 +474,7 @@ const priceColumn = (table) => `price_${priceTableOf(table)}`
 async function customerPricing(database, customer) {
   if (!customer) return null
   const result = await database.query(
-    'SELECT price_region, stock_branch, payment_plans, restricted_supplier_ids FROM customer_commercial_conditions WHERE customer_id=$1',
+    'SELECT price_region, stock_branch, is_blocked, payment_plans, restricted_supplier_ids FROM customer_commercial_conditions WHERE customer_id=$1',
     [customer.id],
   )
   const row = result.rows[0]
@@ -482,7 +487,7 @@ async function customerPricing(database, customer) {
   const restrictedSupplierIds = (Array.isArray(row?.restricted_supplier_ids) ? row.restricted_supplier_ids : [])
     .map(Number).filter((value) => Number.isSafeInteger(value) && value > 0)
   const stockBranch = [1, 3].includes(Number(row?.stock_branch)) ? Number(row.stock_branch) : null
-  return { region, stockBranch, plans, priceTables: [...new Set(plans.map((plan) => plan.priceTable))], restrictedSupplierIds }
+  return { region, stockBranch, isBlocked: Boolean(row?.is_blocked), plans, priceTables: [...new Set(plans.map((plan) => plan.priceTable))], restrictedSupplierIds }
 }
 
 // Menor preço positivo entre as tabelas dos planos liberados para o cliente.
@@ -601,7 +606,7 @@ async function cancelOrder(orderId, { customerId = null, cancelledBy }) {
 // - pedidos do e-commerce que ainda não estavam no WinThor na última leitura.
 async function customerCreditSummary(database, customerId, { lock = false } = {}) {
   const conditionsResult = await database.query(
-    `SELECT credit_limit, open_titles_amount, open_orders_amount, payment_plans, source_updated_at, updated_at
+    `SELECT credit_limit, open_titles_amount, open_orders_amount, is_blocked, payment_plans, source_updated_at, updated_at
      FROM customer_commercial_conditions WHERE customer_id=$1${lock ? ' FOR UPDATE' : ''}`,
     [customerId],
   )
@@ -618,6 +623,7 @@ async function customerCreditSummary(database, customerId, { lock = false } = {}
   const openOrdersAmount = money2(row.open_orders_amount)
   const pendingOrdersAmount = money2(pendingResult.rows[0].total)
   return {
+    isBlocked: Boolean(row.is_blocked),
     creditLimit,
     openTitlesAmount,
     openOrdersAmount,
@@ -1243,19 +1249,20 @@ app.post('/api/integrations/customers/conditions', async (request, response, nex
     for (const condition of parsed.data.customers) {
       const result = await client.query(
         `INSERT INTO customer_commercial_conditions
-          (customer_id, credit_limit, open_titles_amount, open_orders_amount, price_region, stock_branch, restricted_supplier_ids, payment_plans, source_updated_at)
-         SELECT id,$2::numeric,$5::numeric,$6::numeric,$7::int,$9::int,$8::integer[],$3::jsonb,$4::timestamptz FROM customers WHERE external_id=$1 AND active=TRUE
+          (customer_id, credit_limit, open_titles_amount, open_orders_amount, price_region, stock_branch, is_blocked, restricted_supplier_ids, payment_plans, source_updated_at)
+         SELECT id,$2::numeric,$5::numeric,$6::numeric,$7::int,$9::int,$10::boolean,$8::integer[],$3::jsonb,$4::timestamptz FROM customers WHERE external_id=$1 AND active=TRUE
          ON CONFLICT (customer_id) DO UPDATE SET credit_limit=EXCLUDED.credit_limit,
            open_titles_amount=EXCLUDED.open_titles_amount, open_orders_amount=EXCLUDED.open_orders_amount,
            price_region=COALESCE(EXCLUDED.price_region, customer_commercial_conditions.price_region),
            stock_branch=COALESCE(EXCLUDED.stock_branch, customer_commercial_conditions.stock_branch),
+           is_blocked=EXCLUDED.is_blocked,
            restricted_supplier_ids=EXCLUDED.restricted_supplier_ids,
            payment_plans=EXCLUDED.payment_plans, source_updated_at=EXCLUDED.source_updated_at,
            updated_at=CURRENT_TIMESTAMP
          RETURNING customer_id`,
         [condition.externalId, condition.creditLimit, JSON.stringify(condition.paymentPlans), condition.sourceUpdatedAt || null,
           condition.openTitlesAmount, condition.openOrdersAmount, condition.priceRegion ?? null,
-          postgresIntegerArray(condition.restrictedSupplierIds), condition.stockBranch ?? null],
+          postgresIntegerArray(condition.restrictedSupplierIds), condition.stockBranch ?? null, condition.isBlocked],
       )
       updatedCount += result.rowCount
     }
@@ -1443,6 +1450,9 @@ app.post('/api/customer/quote', async (request, response, next) => {
   if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
   try {
     const pricing = await customerPricing(pool, request.customer)
+    if (pricing.isBlocked) {
+      return response.status(403).json({ message: 'Seu cadastro está bloqueado para compras. Fale com a equipe Ômega.' })
+    }
     if (pricing.region == null || !pricing.plans.length) {
       return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda estão sendo atualizadas pelo WinThor.' })
     }
@@ -2463,6 +2473,10 @@ app.post('/api/orders', async (request, response, next) => {
     if (!conditions) {
       await client.query('ROLLBACK')
       return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda não foram sincronizadas com o WinThor.' })
+    }
+    if (conditions.isBlocked) {
+      await client.query('ROLLBACK')
+      return response.status(403).json({ message: 'Seu cadastro está bloqueado para compras. Fale com a equipe Ômega.' })
     }
     const pricing = await customerPricing(client, request.customer)
     if (pricing.region == null) {

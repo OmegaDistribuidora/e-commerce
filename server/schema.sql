@@ -155,6 +155,7 @@ CREATE TABLE IF NOT EXISTS customer_commercial_conditions (
   open_orders_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
   price_region INTEGER,
   stock_branch INTEGER CHECK (stock_branch IN (1, 3)),
+  is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
   restricted_supplier_ids INTEGER[] NOT NULL DEFAULT '{}',
   payment_plans JSONB NOT NULL DEFAULT '[]'::jsonb,
   source_updated_at TIMESTAMPTZ,

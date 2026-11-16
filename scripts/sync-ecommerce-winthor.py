@@ -308,7 +308,8 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
                                  (SELECT MAX(TRIM(TO_CHAR(ped.codfilial))) KEEP (DENSE_RANK LAST ORDER BY ped.data, ped.numped)
                                     FROM pcpedc ped
                                    WHERE ped.codcli=c.codcli AND ped.codfilial IN ('1','3'))
-                               ) AS filial_estoque
+                               ) AS filial_estoque,
+                               CASE WHEN NVL(UPPER(TRIM(c.bloqueio)), 'S') = 'N' THEN 0 ELSE 1 END AS bloqueado
                         FROM pcclient c
                         LEFT JOIN pcpraca pr ON pr.codpraca = c.codpraca
                         LEFT JOIN pcusuari u ON u.codusur = c.codusur1
@@ -381,7 +382,7 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
 
     conditions = []
     regions = set()
-    for code, credit_limit, primary_plan, price_region, plaza_code, stock_branch in customer_rows:
+    for code, credit_limit, primary_plan, price_region, plaza_code, stock_branch, is_blocked in customer_rows:
         # PCPLPAGCLI define os planos do cliente; sem linhas nela, vale o plano do PCCLIENT.
         allowed_codes = customer_plans.get(int(code)) or ([int(primary_plan)] if primary_plan is not None else [])
         unique_codes = sorted(
@@ -401,6 +402,7 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
             "openOrdersAmount": round(max(0.0, open_orders.get(int(code), 0.0)), 2),
             "priceRegion": region,
             "stockBranch": int(stock_branch) if stock_branch is not None and int(stock_branch) in (1, 3) else None,
+            "isBlocked": bool(is_blocked),
             "restrictedSupplierIds": sorted(restricted_suppliers),
             "paymentPlans": [
                 {"code": str(value), "label": plan_map[value]["label"], "priceTable": plan_map[value]["priceTable"]}
