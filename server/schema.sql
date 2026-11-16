@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS orders (
   winthor_entered_at TIMESTAMP,
   payment_plan VARCHAR(30) NOT NULL DEFAULT 'avista',
   payment_plan_label VARCHAR(160),
+  stock_branch INTEGER CHECK (stock_branch IN (1, 3)),
   total NUMERIC(14,2) NOT NULL,
   notes TEXT,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -153,9 +154,31 @@ CREATE TABLE IF NOT EXISTS customer_commercial_conditions (
   open_titles_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
   open_orders_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
   price_region INTEGER,
+  stock_branch INTEGER CHECK (stock_branch IN (1, 3)),
   restricted_supplier_ids INTEGER[] NOT NULL DEFAULT '{}',
   payment_plans JSONB NOT NULL DEFAULT '[]'::jsonb,
   source_updated_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Snapshot leve do PCEST, separado por filial. O saldo disponivel e sempre
+-- calculado como estoque total - reservado - bloqueado.
+CREATE TABLE IF NOT EXISTS product_stocks (
+  product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  branch INTEGER NOT NULL CHECK (branch IN (1, 3)),
+  total_units NUMERIC(14,2) NOT NULL DEFAULT 0,
+  reserved_units NUMERIC(14,2) NOT NULL DEFAULT 0,
+  blocked_units NUMERIC(14,2) NOT NULL DEFAULT 0,
+  available_units NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (available_units >= 0),
+  source_updated_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (product_id, branch)
+);
+
+CREATE TABLE IF NOT EXISTS stock_sync_state (
+  branch INTEGER PRIMARY KEY CHECK (branch IN (1, 3)),
+  source_updated_at TIMESTAMPTZ NOT NULL,
+  source_count INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -217,6 +240,7 @@ CREATE INDEX IF NOT EXISTS idx_customers_document ON customers(document);
 CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
 CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions(customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer_date ON orders(customer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_product_stocks_branch ON product_stocks(branch, product_id);
 CREATE INDEX IF NOT EXISTS idx_staff_sessions_user ON staff_sessions(staff_user_id);
 CREATE INDEX IF NOT EXISTS idx_banners_active_position ON banners(active, position);
 CREATE INDEX IF NOT EXISTS idx_product_categories_category ON product_categories(category_id, product_id);

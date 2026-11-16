@@ -119,6 +119,18 @@ export const regionPricesSyncSchema = z.object({
   ])).max(500000),
 })
 
+// Linhas compactas: [CODPROD, CODFILIAL, estoque total, reservado, bloqueado].
+export const productStocksSyncSchema = z.object({
+  sourceUpdatedAt: z.string().datetime({ offset: true }),
+  stocks: z.array(z.tuple([
+    z.coerce.number().int().positive(),
+    z.coerce.number().int().refine((value) => value === 1 || value === 3, 'A filial deve ser 1 ou 3'),
+    z.coerce.number().min(-999999999).max(999999999),
+    z.coerce.number().min(-999999999).max(999999999),
+    z.coerce.number().min(-999999999).max(999999999),
+  ])).min(1).max(50000),
+})
+
 export const staffOrderLinkSchema = z.object({
   winthorOrderNumber: z.coerce.number().int('Informe um NUMPED válido').positive('Informe um NUMPED válido').max(999999999999),
 })
@@ -199,6 +211,7 @@ export const customerConditionsSyncSchema = z.object({
     openTitlesAmount: z.coerce.number().nonnegative().max(999999999999).default(0),
     openOrdersAmount: z.coerce.number().nonnegative().max(999999999999).default(0),
     priceRegion: z.coerce.number().int().nonnegative().nullable().optional(),
+    stockBranch: z.coerce.number().int().refine((value) => value === 1 || value === 3).nullable().optional(),
     restrictedSupplierIds: z.array(z.coerce.number().int().positive()).max(10000).default([]),
     paymentPlans: z.array(paymentPlanSyncSchema).max(100),
     sourceUpdatedAt: z.string().datetime({ offset: true }).nullable().optional(),

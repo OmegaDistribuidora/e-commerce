@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
 import { createConfirmedSupabaseUser, deleteSupabaseUser, findSupabaseUserByEmail, removeSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
-import { bannerSchema, bannersBulkSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerCreateSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema } from './validation.js'
+import { bannerSchema, bannersBulkSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerCreateSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema } from './validation.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -16,6 +16,7 @@ const port = Number(process.env.PORT) || 3000
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const distDir = resolve(currentDir, '../dist')
 const orderStatusCacheMs = Math.max(1, Number(process.env.ORDER_STATUS_CACHE_MINUTES) || 15) * 60 * 1000
+const stockMaxAgeMs = Math.max(5, Number(process.env.STOCK_MAX_AGE_MINUTES) || 15) * 60 * 1000
 const customerOrderStatuses = new Set(['analysis', 'released', 'sent', 'cancelled'])
 
 class RequestError extends Error {
@@ -468,7 +469,7 @@ const priceColumn = (table) => `price_${priceTableOf(table)}`
 async function customerPricing(database, customer) {
   if (!customer) return null
   const result = await database.query(
-    'SELECT price_region, payment_plans, restricted_supplier_ids FROM customer_commercial_conditions WHERE customer_id=$1',
+    'SELECT price_region, stock_branch, payment_plans, restricted_supplier_ids FROM customer_commercial_conditions WHERE customer_id=$1',
     [customer.id],
   )
   const row = result.rows[0]
@@ -480,7 +481,8 @@ async function customerPricing(database, customer) {
   const region = row?.price_region != null ? Number(row.price_region) : null
   const restrictedSupplierIds = (Array.isArray(row?.restricted_supplier_ids) ? row.restricted_supplier_ids : [])
     .map(Number).filter((value) => Number.isSafeInteger(value) && value > 0)
-  return { region, plans, priceTables: [...new Set(plans.map((plan) => plan.priceTable))], restrictedSupplierIds }
+  const stockBranch = [1, 3].includes(Number(row?.stock_branch)) ? Number(row.stock_branch) : null
+  return { region, stockBranch, plans, priceTables: [...new Set(plans.map((plan) => plan.priceTable))], restrictedSupplierIds }
 }
 
 // Menor preço positivo entre as tabelas dos planos liberados para o cliente.
@@ -527,6 +529,49 @@ async function priceCartItems(database, pricing, plan, items) {
     }
   })
   return { lines, total: money2(lines.reduce((sum, line) => sum + line.lineTotal, 0)) }
+}
+
+// Valida o snapshot da filial e desconta pedidos do e-commerce que ainda nao
+// estavam refletidos no WinThor quando esse snapshot foi produzido.
+async function validateOrderStock(database, stockBranch, lines) {
+  if (![1, 3].includes(Number(stockBranch))) {
+    throw new RequestError('A filial de atendimento deste cadastro ainda não foi sincronizada.', 503)
+  }
+  const productIds = lines.map((line) => Number(line.product.id))
+  const placeholders = productIds.map((_, index) => `$${index + 2}`).join(',')
+  const result = await database.query(
+    `SELECT ps.product_id, ps.available_units, ss.source_updated_at, p.external_id, p.name,
+            COALESCE((
+              SELECT SUM(oi.units)
+              FROM order_items oi
+              JOIN orders o ON o.id=oi.order_id
+              WHERE oi.product_id=ps.product_id AND o.stock_branch=ps.branch
+                AND o.status<>'cancelled'
+                AND (o.winthor_order_number IS NULL OR o.winthor_entered_at IS NULL
+                     OR ss.source_updated_at<=o.winthor_entered_at)
+            ),0) AS local_pending_units
+     FROM product_stocks ps
+     JOIN stock_sync_state ss ON ss.branch=ps.branch
+     JOIN products p ON p.id=ps.product_id
+     WHERE ps.branch=$1 AND ps.product_id IN (${placeholders})
+     FOR UPDATE OF ps`,
+    [stockBranch, ...productIds],
+  )
+  const stockByProduct = new Map(result.rows.map((row) => [Number(row.product_id), row]))
+  for (const line of lines) {
+    const stock = stockByProduct.get(Number(line.product.id))
+    if (!stock) {
+      throw new RequestError(`O estoque do produto ${line.product.external_id} ainda não foi sincronizado. Tente novamente em alguns minutos.`, 503)
+    }
+    const sourceTime = new Date(stock.source_updated_at).getTime()
+    if (!Number.isFinite(sourceTime) || Date.now() - sourceTime > stockMaxAgeMs) {
+      throw new RequestError('O estoque está sendo atualizado. Aguarde alguns minutos antes de finalizar o pedido.', 503)
+    }
+    const available = Math.max(0, Number(stock.available_units) - Number(stock.local_pending_units))
+    if (line.units > available) {
+      throw new RequestError(`A quantidade solicitada do produto ${stock.external_id} - ${stock.name} não está disponível no momento. Ajuste o carrinho e tente novamente.`, 409)
+    }
+  }
 }
 
 // Só pedidos ainda em análise e sem NUMPED podem ser cancelados.
@@ -1198,18 +1243,19 @@ app.post('/api/integrations/customers/conditions', async (request, response, nex
     for (const condition of parsed.data.customers) {
       const result = await client.query(
         `INSERT INTO customer_commercial_conditions
-          (customer_id, credit_limit, open_titles_amount, open_orders_amount, price_region, restricted_supplier_ids, payment_plans, source_updated_at)
-         SELECT id,$2::numeric,$5::numeric,$6::numeric,$7::int,$8::integer[],$3::jsonb,$4::timestamptz FROM customers WHERE external_id=$1 AND active=TRUE
+          (customer_id, credit_limit, open_titles_amount, open_orders_amount, price_region, stock_branch, restricted_supplier_ids, payment_plans, source_updated_at)
+         SELECT id,$2::numeric,$5::numeric,$6::numeric,$7::int,$9::int,$8::integer[],$3::jsonb,$4::timestamptz FROM customers WHERE external_id=$1 AND active=TRUE
          ON CONFLICT (customer_id) DO UPDATE SET credit_limit=EXCLUDED.credit_limit,
            open_titles_amount=EXCLUDED.open_titles_amount, open_orders_amount=EXCLUDED.open_orders_amount,
            price_region=COALESCE(EXCLUDED.price_region, customer_commercial_conditions.price_region),
+           stock_branch=COALESCE(EXCLUDED.stock_branch, customer_commercial_conditions.stock_branch),
            restricted_supplier_ids=EXCLUDED.restricted_supplier_ids,
            payment_plans=EXCLUDED.payment_plans, source_updated_at=EXCLUDED.source_updated_at,
            updated_at=CURRENT_TIMESTAMP
          RETURNING customer_id`,
         [condition.externalId, condition.creditLimit, JSON.stringify(condition.paymentPlans), condition.sourceUpdatedAt || null,
           condition.openTitlesAmount, condition.openOrdersAmount, condition.priceRegion ?? null,
-          postgresIntegerArray(condition.restrictedSupplierIds)],
+          postgresIntegerArray(condition.restrictedSupplierIds), condition.stockBranch ?? null],
       )
       updatedCount += result.rowCount
     }
@@ -1294,6 +1340,95 @@ app.post('/api/integrations/prices/sync', async (request, response, next) => {
     await client.query('DROP TABLE ecommerce_price_stage')
     await client.query('COMMIT')
     return response.json({ regions: regions.length, sourceCount: rows.length, changedCount: changed.rowCount, removedCount })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    return next(error)
+  } finally {
+    client.release()
+  }
+})
+
+app.post('/api/integrations/stocks/sync', async (request, response, next) => {
+  if (!validIntegrationToken(request)) return response.status(401).json({ message: 'Credencial de integração inválida.' })
+  const parsed = productStocksSyncSchema.safeParse(request.body)
+  if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+
+  const uniqueRows = [...new Map(parsed.data.stocks.map((row) => [`${row[1]}:${row[0]}`, row])).values()]
+  const branches = [...new Set(uniqueRows.map((row) => row[1]))].sort()
+  if (branches.length !== 2 || branches[0] !== 1 || branches[1] !== 3) {
+    return response.status(409).json({ message: 'A sincronização de estoque precisa conter as filiais 1 e 3.' })
+  }
+  const minimumPerBranch = Math.max(1, Number(process.env.STOCK_SYNC_MIN_COUNT) || 100)
+  for (const branch of branches) {
+    const count = uniqueRows.filter((row) => row[1] === branch).length
+    if (count < minimumPerBranch) {
+      return response.status(409).json({ message: `Sincronização da filial ${branch} cancelada: ${count} itens, abaixo do mínimo de segurança (${minimumPerBranch}).` })
+    }
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    if (process.env.DATABASE_URL) await client.query("SELECT pg_advisory_xact_lock(hashtext('omega_ecommerce_stock_sync'))")
+    const stockStageKind = process.env.DATABASE_URL ? 'TEMP ' : ''
+    await client.query(`CREATE ${stockStageKind}TABLE ecommerce_stock_stage (
+      external_id INTEGER NOT NULL, branch INTEGER NOT NULL,
+      total_units NUMERIC(14,2) NOT NULL, reserved_units NUMERIC(14,2) NOT NULL,
+      blocked_units NUMERIC(14,2) NOT NULL, available_units NUMERIC(14,2) NOT NULL
+    )`)
+    for (let offset = 0; offset < uniqueRows.length; offset += 500) {
+      const batch = uniqueRows.slice(offset, offset + 500)
+      const params = []
+      const values = batch.map(([externalId, branch, total, reserved, blocked]) => {
+        const available = Math.max(0, Number(total) - Number(reserved) - Number(blocked))
+        return `(${[externalId, branch, total, reserved, blocked, available].map((value) => {
+          params.push(value); return `$${params.length}`
+        }).join(',')})`
+      })
+      await client.query(`INSERT INTO ecommerce_stock_stage VALUES ${values.join(',')}`, params)
+    }
+    const stockDifferenceOperator = process.env.DATABASE_URL ? 'IS DISTINCT FROM' : '<>'
+    const changed = await client.query(
+      `INSERT INTO product_stocks
+        (product_id,branch,total_units,reserved_units,blocked_units,available_units,source_updated_at)
+       SELECT p.id,s.branch,s.total_units,s.reserved_units,s.blocked_units,s.available_units,$1::timestamptz
+       FROM ecommerce_stock_stage s
+       JOIN products p ON p.company='Filial' AND p.external_id=s.external_id AND p.active=TRUE
+       ON CONFLICT (product_id,branch) DO UPDATE SET
+         total_units=EXCLUDED.total_units,reserved_units=EXCLUDED.reserved_units,
+         blocked_units=EXCLUDED.blocked_units,available_units=EXCLUDED.available_units,
+         source_updated_at=EXCLUDED.source_updated_at,updated_at=CURRENT_TIMESTAMP
+       WHERE product_stocks.total_units ${stockDifferenceOperator} EXCLUDED.total_units
+          OR product_stocks.reserved_units ${stockDifferenceOperator} EXCLUDED.reserved_units
+          OR product_stocks.blocked_units ${stockDifferenceOperator} EXCLUDED.blocked_units
+          OR product_stocks.available_units ${stockDifferenceOperator} EXCLUDED.available_units`,
+      [parsed.data.sourceUpdatedAt],
+    )
+    const removed = process.env.DATABASE_URL
+      ? await client.query(
+        `DELETE FROM product_stocks ps
+         WHERE ps.branch=ANY($1::integer[])
+           AND NOT EXISTS (
+             SELECT 1 FROM ecommerce_stock_stage s
+             JOIN products p ON p.company='Filial' AND p.external_id=s.external_id AND p.active=TRUE
+             WHERE p.id=ps.product_id AND s.branch=ps.branch
+           )`,
+        [branches],
+      )
+      : { rowCount: 0 }
+    for (const branch of branches) {
+      const sourceCount = uniqueRows.filter((row) => row[1] === branch).length
+      await client.query(
+        `INSERT INTO stock_sync_state(branch,source_updated_at,source_count)
+         VALUES ($1,$2::timestamptz,$3)
+         ON CONFLICT (branch) DO UPDATE SET source_updated_at=EXCLUDED.source_updated_at,
+           source_count=EXCLUDED.source_count,updated_at=CURRENT_TIMESTAMP`,
+        [branch, parsed.data.sourceUpdatedAt, sourceCount],
+      )
+    }
+    await client.query('DROP TABLE ecommerce_stock_stage')
+    await client.query('COMMIT')
+    return response.json({ sourceCount: uniqueRows.length, changedCount: changed.rowCount, removedCount: removed.rowCount, branches })
   } catch (error) {
     await client.query('ROLLBACK')
     return next(error)
@@ -1394,7 +1529,7 @@ app.get('/api/products', async (request, response, next) => {
        SELECT p.id, p.external_id, p.supplier_id, p.brand, p.name, p.package, p.master_package,
               p.units_per_box, p.sales_multiple, p.min_boxes, p.unit_price, p.list_unit_price,
               p.retail_unit_price, p.network_unit_price,
-              p.category, p.department_code, p.department, p.section_code, p.section, p.stock_units, p.image_path,
+              p.category, p.department_code, p.department, p.section_code, p.section, p.image_path,
               p.image_data IS NOT NULL AS image_uploaded, p.image_hidden, p.image_updated_at, p.ean,
               p.manufacturer_code, p.ncm_code,
               p.price_date, COALESCE(w.units, 0) AS weekly_sales${priceColumns}
@@ -1429,7 +1564,6 @@ app.get('/api/products', async (request, response, next) => {
         department: row.department,
         sectionCode: Number(row.section_code || 0),
         section: row.section,
-        stockUnits: Number(row.stock_units),
         image: productImageUrl(row),
         ean: row.ean || '',
         manufacturerCode: row.manufacturer_code || '',
@@ -1530,7 +1664,7 @@ app.get('/api/products/:code', async (request, response, next) => {
     const result = await pool.query(
       `SELECT id, external_id, supplier_id, brand, name, package, master_package, units_per_box,
               sales_multiple, min_boxes, unit_price, list_unit_price, retail_unit_price,
-              network_unit_price, category, department_code, department, section_code, section, stock_units, image_path,
+              network_unit_price, category, department_code, department, section_code, section, image_path,
               image_data IS NOT NULL AS image_uploaded, image_hidden, image_updated_at,
               ean, manufacturer_code, ncm_code, price_date
        FROM products WHERE external_id=$1 AND active=TRUE LIMIT 1`,
@@ -1557,6 +1691,25 @@ app.get('/api/products/:code', async (request, response, next) => {
         .sort((a, b) => a.unitPrice - b.unitPrice)
       unitPrice = planPrices[0]?.unitPrice ?? null
     }
+    let staffStocks = []
+    if (request.staff) {
+      const stocksResult = await pool.query(
+        `SELECT b.branch,ps.total_units,ps.reserved_units,ps.blocked_units,ps.available_units,ss.source_updated_at
+         FROM (VALUES (1),(3)) AS b(branch)
+         LEFT JOIN product_stocks ps ON ps.branch=b.branch AND ps.product_id=$1
+         LEFT JOIN stock_sync_state ss ON ss.branch=b.branch
+         ORDER BY b.branch`,
+        [row.id],
+      )
+      staffStocks = stocksResult.rows.map((stock) => ({
+        branch: Number(stock.branch),
+        totalUnits: stock.total_units == null ? null : Number(stock.total_units),
+        reservedUnits: stock.reserved_units == null ? null : Number(stock.reserved_units),
+        blockedUnits: stock.blocked_units == null ? null : Number(stock.blocked_units),
+        availableUnits: stock.available_units == null ? null : Number(stock.available_units),
+        updatedAt: stock.source_updated_at || null,
+      }))
+    }
     return response.json({ product: {
       id: Number(row.id), code: Number(row.external_id), supplierId: Number(row.supplier_id || 0),
       brand: row.brand, name: row.name, package: row.package || '', masterPackage: row.master_package || '',
@@ -1565,8 +1718,9 @@ app.get('/api/products/:code', async (request, response, next) => {
       category: row.category || 'Sem categoria', categories: [],
       departmentCode: Number(row.department_code || 0), department: row.department || '',
       sectionCode: Number(row.section_code || 0), section: row.section || '',
-      stockUnits: Number(row.stock_units), image: productImageUrl(row), priceDate: row.price_date, weeklySales: 0,
+      image: productImageUrl(row), priceDate: row.price_date, weeklySales: 0,
       ean: row.ean || '', manufacturerCode: row.manufacturer_code || '', ncm: row.ncm_code || '',
+      ...(request.staff ? { stocks: staffStocks } : {}),
     } })
   } catch (error) {
     return next(error)
@@ -2333,9 +2487,20 @@ app.post('/api/orders', async (request, response, next) => {
       })
     }
 
+    if (pricing.stockBranch == null) {
+      await client.query('ROLLBACK')
+      return response.status(503).json({ message: 'A filial de atendimento deste cadastro ainda não foi sincronizada com o WinThor.' })
+    }
+    // Uma trava curta por filial serializa checkouts concorrentes. Assim, o segundo
+    // pedido ja enxerga a reserva local criada pelo primeiro antes de validar o saldo.
+    if (process.env.DATABASE_URL) {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`omega_ecommerce_checkout_stock_${pricing.stockBranch}`])
+    }
+    await validateOrderStock(client, pricing.stockBranch, lines)
+
     const orderResult = await client.query(
-      'INSERT INTO orders (customer_id, payment_plan, payment_plan_label, total, notes) VALUES ($1,$2,$3,$4,$5) RETURNING id, created_at',
-      [request.customer.id, parsed.data.paymentPlan, String(selectedPlan.label).slice(0, 160), total.toFixed(2), parsed.data.notes],
+      'INSERT INTO orders (customer_id, payment_plan, payment_plan_label, stock_branch, total, notes) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, created_at',
+      [request.customer.id, parsed.data.paymentPlan, String(selectedPlan.label).slice(0, 160), pricing.stockBranch, total.toFixed(2), parsed.data.notes],
     )
     const order = orderResult.rows[0]
     for (const line of lines) {

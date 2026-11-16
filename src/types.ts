@@ -20,13 +20,20 @@ export type Product = {
   department: string
   sectionCode: number
   section: string
-  stockUnits: number
   weeklySales: number
   priceDate: string
   manufacturerCode: string
   ncm: string
   ean: string
   planPrices?: Array<{ code: string; label: string; unitPrice: number }>
+  stocks?: Array<{
+    branch: 1 | 3
+    totalUnits: number | null
+    reservedUnits: number | null
+    blockedUnits: number | null
+    availableUnits: number | null
+    updatedAt: string | null
+  }>
 }
 
 export type PricePlan = { code: string; label: string }

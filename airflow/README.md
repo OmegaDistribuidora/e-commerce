@@ -32,6 +32,24 @@ No Railway, crie `PRODUCT_SYNC_TOKEN` no serviço `e-commerce` com um valor long
 
 Execute a DAG manualmente uma vez e confira os totais do log antes de habilitar o agendamento.
 
+## DAG de estoque
+
+Copie tambem `dags/dag_ecommerce_estoque.py` para a pasta de DAGs do Airflow. Ela reutiliza as mesmas Connections `lancamentos_oracle_filial` e `ecommerce_api` e executa `scripts/sync-ecommerce-stock.py` a cada 5 minutos.
+
+A carga de estoque e separada da carga completa para ser leve e frequente. Ela:
+
+1. consulta apenas `PCPRODUT` e `PCEST` para as filiais 1 e 3;
+2. mantem somente produtos ativos, fora de `OBS2 = 'FL'` e com `ENVIARFORCAVENDAS = 'S'`;
+3. calcula o saldo disponivel como `QTESTGER - QTRESERV - QTBLOQUEADA`, limitado a zero;
+4. envia uma carga compacta por HTTPS para uma rota autenticada;
+5. atualiza no PostgreSQL somente os produtos cujo saldo mudou e renova separadamente o horario do snapshot;
+6. rejeita cargas vazias ou parciais antes de alterar o banco;
+7. faz o checkout falhar de forma segura se o snapshot estiver ausente ou desatualizado.
+
+A filial de estoque do cliente segue, nesta ordem, `PCCLIENT.CODFILIALESTOQUE`, `PCCLIENT.CODFILIALNF`, a filial do representante em `PCUSUARI` e a filial do pedido mais recente. Somente os codigos 1 e 3 sao aceitos. Se o WinThor nao permitir determinar a filial com seguranca, o pedido nao e finalizado ate a proxima sincronizacao cadastral.
+
+O saldo detalhado das duas filiais e retornado exclusivamente para sessoes de gestao na pagina do produto. A API publica e as sessoes de clientes nao recebem nenhum campo de estoque.
+
 ### Preço por cliente
 
 Cada cliente aprovado compra pelo preço da própria região e do plano de pagamento escolhido:

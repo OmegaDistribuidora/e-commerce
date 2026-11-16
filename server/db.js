@@ -100,9 +100,17 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS open_titles_amount NUMERIC(14,2) NOT NULL DEFAULT 0')
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS open_orders_amount NUMERIC(14,2) NOT NULL DEFAULT 0')
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS price_region INTEGER')
+  await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS stock_branch INTEGER')
   await pool.query("ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS restricted_supplier_ids INTEGER[] NOT NULL DEFAULT '{}'")
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_by VARCHAR(160)')
+  await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_branch INTEGER')
+  if (process.env.DATABASE_URL) {
+    await pool.query('ALTER TABLE customer_commercial_conditions DROP CONSTRAINT IF EXISTS customer_commercial_conditions_stock_branch_check')
+    await pool.query('ALTER TABLE customer_commercial_conditions ADD CONSTRAINT customer_commercial_conditions_stock_branch_check CHECK (stock_branch IN (1, 3))')
+    await pool.query('ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_stock_branch_check')
+    await pool.query('ALTER TABLE orders ADD CONSTRAINT orders_stock_branch_check CHECK (stock_branch IN (1, 3))')
+  }
   if (process.env.DATABASE_URL) {
     // Preços da PCTABPR podem ter até 6 casas decimais.
     const unitPriceScale = await pool.query(

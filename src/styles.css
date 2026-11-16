@@ -703,6 +703,20 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .product-detail-quantity button { border: 0; background: #edf5ff; color: var(--blue); display: grid; place-items: center; }
 .product-detail-quantity span { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; }
 .product-detail-quantity strong { font-size: 20px; }
+.staff-product-stock { margin: 22px 0 0; padding: 16px; border: 1px solid #cfe0f2; border-radius: 10px; background: #f6faff; }
+.staff-product-stock > header { margin-bottom: 12px; display: flex; align-items: center; gap: 10px; }
+.staff-product-stock > header svg { color: var(--blue); }
+.staff-product-stock h2 { margin: 0; font-size: 16px; }
+.staff-product-stock header span { color: var(--muted); font-size: 10px; }
+.staff-product-stock > div { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.staff-product-stock article { min-width: 0; padding: 12px; border: 1px solid #dce7f3; border-radius: 8px; background: #fff; display: grid; gap: 8px; }
+.staff-product-stock article > div:first-child { display: grid; gap: 2px; }
+.staff-product-stock article > div small,.staff-product-stock time { color: var(--muted); font-size: 9px; }
+.staff-product-stock article > b { color: var(--blue); font-size: 15px; }
+.staff-product-stock article > b.stock-unavailable { color: #9b5c13; }
+.staff-product-stock dl { margin: 0; display: grid; grid-template-columns: repeat(3,1fr); gap: 5px; }
+.staff-product-stock dl span { padding: 6px; border-radius: 5px; background: #f2f6fb; display: grid; gap: 2px; color: var(--muted); font-size: 8px; }
+.staff-product-stock dl strong { color: var(--navy); font-size: 10px; }
 .product-specifications { margin-top: 24px; padding-top: 24px; border-top: 1px solid #e2e8f0; }
 .product-specifications h2 { margin: 0 0 14px; font-size: 18px; }
 .product-specifications dl { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid #e1e8f1; border-radius: 10px; overflow: hidden; }
@@ -755,6 +769,7 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
   .product-detail-image img { height: 300px; }
   .product-detail-content h1 { font-size: 28px; }
   .product-specifications dl { grid-template-columns: 1fr; }
+  .staff-product-stock > div { grid-template-columns: 1fr; }
   .product-specifications dl > div:nth-child(odd) { border-right: 0; }
   .product-zoom { padding: 16px; }
   .banner-schedule { grid-template-columns: 1fr; }

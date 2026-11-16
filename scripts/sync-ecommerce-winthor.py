@@ -300,9 +300,18 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
                 # Região de preço: NUMREGIAOCLI do cliente ou, se vazia, a região da praça.
                 cursor.execute(
                     f"""SELECT c.codcli, NVL(c.limcred, 0), c.codplpag,
-                               NVL(NULLIF(c.numregiaocli, 0), pr.numregiao), c.codpraca
+                               NVL(NULLIF(c.numregiaocli, 0), pr.numregiao), c.codpraca,
+                               COALESCE(
+                                 CASE WHEN TRIM(TO_CHAR(c.codfilialestoque)) IN ('1','3') THEN TRIM(TO_CHAR(c.codfilialestoque)) END,
+                                 CASE WHEN TRIM(TO_CHAR(c.codfilialnf)) IN ('1','3') THEN TRIM(TO_CHAR(c.codfilialnf)) END,
+                                 CASE WHEN TRIM(TO_CHAR(u.codfilial)) IN ('1','3') THEN TRIM(TO_CHAR(u.codfilial)) END,
+                                 (SELECT MAX(TRIM(TO_CHAR(ped.codfilial))) KEEP (DENSE_RANK LAST ORDER BY ped.data, ped.numped)
+                                    FROM pcpedc ped
+                                   WHERE ped.codcli=c.codcli AND ped.codfilial IN ('1','3'))
+                               ) AS filial_estoque
                         FROM pcclient c
                         LEFT JOIN pcpraca pr ON pr.codpraca = c.codpraca
+                        LEFT JOIN pcusuari u ON u.codusur = c.codusur1
                         WHERE c.codcli IN ({binds})""",
                     params,
                 )
@@ -372,7 +381,7 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
 
     conditions = []
     regions = set()
-    for code, credit_limit, primary_plan, price_region, plaza_code in customer_rows:
+    for code, credit_limit, primary_plan, price_region, plaza_code, stock_branch in customer_rows:
         # PCPLPAGCLI define os planos do cliente; sem linhas nela, vale o plano do PCCLIENT.
         allowed_codes = customer_plans.get(int(code)) or ([int(primary_plan)] if primary_plan is not None else [])
         unique_codes = sorted(
@@ -391,6 +400,7 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
             "openTitlesAmount": round(max(0.0, open_titles.get(int(code), 0.0)), 2),
             "openOrdersAmount": round(max(0.0, open_orders.get(int(code), 0.0)), 2),
             "priceRegion": region,
+            "stockBranch": int(stock_branch) if stock_branch is not None and int(stock_branch) in (1, 3) else None,
             "restrictedSupplierIds": sorted(restricted_suppliers),
             "paymentPlans": [
                 {"code": str(value), "label": plan_map[value]["label"], "priceTable": plan_map[value]["priceTable"]}
