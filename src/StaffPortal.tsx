@@ -192,8 +192,7 @@ export default function StaffPortal() {
     try {
       await Promise.all([supabase.auth.signOut(), fetch('/api/staff/auth/logout', { method: 'POST' })])
     } finally {
-      setUser(null); setOrders([]); setPendingCustomers([]); setApprovedCustomers([]); setBanners([]); setCatalogDepartments([]); setUsers([]); setCategories([]); setCatalogProducts([])
-      setTab('orders'); setError(''); setNotice('')
+      window.location.reload()
     }
   }
 
@@ -568,7 +567,7 @@ function BannerEditorModal({ banner, departments, suppliers, products, loading, 
         <label>Título<input value={banner.title} onChange={(event) => onChange({ title: event.target.value })} required minLength={2} maxLength={160} /></label>
         <label>Texto alternativo<input value={banner.altText} onChange={(event) => onChange({ altText: event.target.value })} required minLength={3} maxLength={240} /></label>
         <div className="staff-form-row banner-schedule"><label>Início opcional <small>Data e hora de Brasília</small><input type="datetime-local" value={toBrasiliaInput(banner.startsAt)} onChange={(event) => onChange({ startsAt: fromBrasiliaInput(event.target.value) })} /></label><label>Encerramento opcional <small>Sem data, não expira</small><input type="datetime-local" value={toBrasiliaInput(banner.endsAt)} onChange={(event) => onChange({ endsAt: fromBrasiliaInput(event.target.value) })} /></label></div>
-        <div className="banner-size-guide"><ImagePlus /><div><b>{banner.placement === 'hero' ? 'Tamanho recomendado: 1920 × 650 px' : 'Tamanho recomendado: 1920 × 320 px'}</b><span>{banner.placement === 'hero' ? 'Proporção 2,95:1 para o carrossel principal.' : 'Proporção 6:1 para o banner entre produtos.'} Mantenha textos importantes afastados das bordas.</span></div></div>
+        <div className="banner-size-guide"><ImagePlus /><div><b>{banner.placement === 'hero' ? 'Tamanho recomendado: 1920 × 640 px' : 'Tamanho recomendado: 1920 × 320 px'}</b><span>{banner.placement === 'hero' ? 'Proporção 3:1 para o carrossel principal.' : 'Proporção 6:1 para o banner entre produtos.'} Imagens maiores funcionam normalmente quando mantêm a mesma proporção. Mantenha textos importantes afastados das bordas.</span></div></div>
         <label>Imagem <small>{banner.id > 0 ? 'Selecione apenas se quiser substituir a atual' : 'PNG, JPG ou WEBP · máximo 5 MB'}</small><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => onImage(event.target.files?.[0])} /></label>
         <label className="staff-check"><input type="checkbox" checked={banner.active} onChange={(event) => onChange({ active: event.target.checked })} /> Exibir na loja</label>
         <footer className="banner-modal-actions"><button className="banner-delete-button" type="button" onClick={() => onDelete(banner)} disabled={loading}><Trash2 /> Excluir</button><span /><button className="secondary-button" type="button" onClick={onClose} disabled={loading}>Cancelar</button><button className="primary-button" disabled={loading || !destinationIsValid}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar banner</>}</button></footer>

@@ -79,7 +79,7 @@ img { display: block; max-width: 100%; }
 .icon-btn { display: grid; place-items: center; border: 0; background: transparent; color: var(--navy); padding: 7px; border-radius: 8px; }
 .icon-btn:hover { background: #edf3fa; }
 
-.hero { position: relative; width: 100%; aspect-ratio: 1920 / 650; overflow: hidden; background: #fff; }
+.hero { position: relative; width: 100%; aspect-ratio: 3 / 1; overflow: hidden; background: #fff; }
 .hero-track { height: 100%; display: flex; transition: transform .8s cubic-bezier(.65,0,.35,1); will-change: transform; }
 .hero-slide { flex: 0 0 100%; height: 100%; padding: 0; border: 0; background: transparent; }
 .hero-slide img { width: 100%; height: 100%; object-fit: contain; }
@@ -189,19 +189,18 @@ img { display: block; max-width: 100%; }
 .empty-results h2 { color: var(--navy); margin-bottom: 6px; }
 .primary-button { min-height: 44px; padding: 0 20px; margin: 22px auto 0; }
 
-.benefits { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: #dfe8f3; border: 1px solid #dfe8f3; border-radius: 12px; overflow: hidden; margin-bottom: 72px; }
-.benefits article, .benefits .benefit-card { background: #f4f8fd; display: flex; align-items: center; gap: 13px; padding: 23px 24px; }
-.benefits article > span, .benefits .benefit-card > span { color: var(--blue); }
-.benefits .benefit-card { transition: background-color .2s ease, transform .2s ease; }
-.benefits .benefit-card:hover { background: #e9f3ff; transform: translateY(-2px); }
-.benefits strong { color: var(--navy); font-size: 13px; }
-.benefits p { color: var(--muted); font-size: 11px; line-height: 1.45; margin: 3px 0 0; }
 .brands-section { background: #f2f6fb; padding: 58px 0 68px; }
-.brands-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
-.brand-card { min-height: 102px; padding: 14px; display: grid; place-items: center; background: #fff; border: 1px solid #dfe7f1; border-radius: 10px; transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
-.brand-card:hover { transform: translateY(-3px); border-color: #cad9ea; box-shadow: 0 12px 26px rgba(8,43,86,.08); }
-.brand-card img { width: 100%; height: 65px; object-fit: contain; }
-.brand-card span { color: #75849a; font-size: 9px; font-weight: 700; }
+.brands-section .section-heading { margin-bottom: 26px; }
+.brands-section .section-heading p { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+.brands-carousel { width: 100%; overflow: hidden; mask-image: linear-gradient(to right,transparent,#000 5%,#000 95%,transparent); }
+.brands-track { width: max-content; display: flex; animation: partner-marquee 55s linear infinite; will-change: transform; }
+.brands-carousel:hover .brands-track, .brands-carousel:focus-within .brands-track { animation-play-state: paused; }
+.brands-loop { display: flex; gap: 14px; padding-right: 14px; }
+.brand-card { width: clamp(170px, 14vw, 235px); min-height: 105px; padding: 16px 22px; display: grid; place-items: center; background: #fff; border: 1px solid #dfe7f1; border-radius: 10px; transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
+.brand-card:hover, .brand-card:focus-visible { transform: translateY(-3px); border-color: #9ebada; box-shadow: 0 12px 26px rgba(8,43,86,.1); outline: 0; }
+.brand-card img { width: 100%; height: 68px; object-fit: contain; }
+@keyframes partner-marquee { to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .brands-track { animation-play-state: paused; } }
 footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .footer-grid { display: grid; grid-template-columns: 1.5fr 1fr 1.2fr 1fr; gap: 50px; }
 .footer-brand img { width: 210px; filter: brightness(0) invert(1); }
@@ -840,11 +839,8 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
   .price-row > span { display: none; }
   .favorite { display: none; }
   .buy-button { font-size: 12px; }
-  .benefits { grid-template-columns: 1fr; margin-bottom: 48px; }
-  .benefits article, .benefits .benefit-card { padding: 18px; }
   .brands-section { padding: 45px 0; }
-  .brands-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-  .brand-card { min-height: 84px; padding: 10px; }
+  .brand-card { width: 155px; min-height: 84px; padding: 10px 16px; }
   .brand-card img { height: 55px; }
   .footer-grid { grid-template-columns: 1fr 1fr; gap: 35px 25px; }
   .footer-brand { grid-column: 1 / -1; }

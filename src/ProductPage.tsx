@@ -74,7 +74,7 @@ export default function ProductPage({ code }: { code: number }) {
       fetch('/api/staff/auth/logout', { method: 'POST' }).catch(() => undefined),
     ])
     localStorage.removeItem('omega-cart-v2')
-    window.location.href = '/'
+    window.location.reload()
   }
 
   if (loading) return <main className="product-page-state"><LoaderCircle className="spin" /><span>Carregando produto...</span></main>

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight, BadgePercent, ChevronDown, ChevronLeft, ChevronRight,
-  CircleUserRound, Headphones, Heart, ImageOff, LoaderCircle, LockKeyhole,
-  LogOut, MapPin, Menu, Minus, PackageCheck, Plus, Search, ShieldCheck,
-  ShoppingCart, SlidersHorizontal, Store, Trash2, Truck, X,
+  CircleUserRound, Heart, ImageOff, LoaderCircle, LockKeyhole,
+  LogOut, MapPin, Menu, Minus, PackageCheck, Plus, Search,
+  ShoppingCart, SlidersHorizontal, Store, Trash2, X,
 } from 'lucide-react'
 import AccountPage from './AccountPage'
 import OrdersPage from './OrdersPage'
@@ -268,11 +268,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
       fetch('/api/staff/auth/logout', { method: 'POST' }).catch(() => undefined),
     ])
     localStorage.removeItem('omega-cart-v2')
-    setCart([])
-    setCustomer(null)
-    setStaffUser(null)
-    setMenuOpen(false)
-    setToast('Você saiu da sua conta')
+    window.location.reload()
   }
 
   function clearFilters() {
@@ -503,9 +499,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
           {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : catalogRows.length > 0 ? <><div className="catalog-flow">{catalogRows.map((row, rowIndex) => <div className="catalog-row-group" key={`row-${rowIndex}`}><div className="product-grid">{row.products.map((product, productIndex) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? rowIndex * 5 + productIndex + 1 : undefined} addToCart={addToCart} changeQuantity={changeQuantity} quantity={cart.find((item) => item.id === product.id)?.quantity ?? 0} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} />)}</div>{row.bannerAfter && <a className="catalog-banner" href={bannerTarget(row.bannerAfter)}><img src={row.bannerAfter.imageUrl} alt={row.bannerAfter.altText} /></a>}</div>)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 25)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={clearFilters}>Limpar filtros</button></div>}
         </section>
 
-        <section className="container benefits" id="atendimento"><article><span><Truck /></span><div><strong>Entrega programada</strong><p>Agilidade e segurança no seu abastecimento</p></div></article><article><span><ShieldCheck /></span><div><strong>Compra segura</strong><p>Seus dados e seu pedido protegidos</p></div></article><article><span><PackageCheck /></span><div><strong>Quantidade sob medida</strong><p>Compre respeitando o múltiplo de cada produto</p></div></article><a className="benefit-card" href={whatsappUrl} target="_blank" rel="noreferrer" aria-label="Falar com o atendimento da Ômega pelo WhatsApp"><span><Headphones /></span><div><strong>Atendimento próximo</strong><p>Fale agora com nossa equipe pelo WhatsApp</p></div></a></section>
-
-        <section className="brands-section" id="parceiros"><div className="container"><div className="section-heading"><div><span className="eyebrow">BONS NEGÓCIOS COMEÇAM COM BOAS PARCERIAS</span><h2>Nossos parceiros</h2><p>Selecione uma marca para ver todos os produtos desse fornecedor.</p></div></div><div className="brands-grid">{partnerLogos.map((partner) => <button className="brand-card" onClick={() => selectPartner(partner)} key={partner.supplierId} aria-label={`Filtrar produtos de ${partner.name}`}><img src={partner.logo} alt={`Logo ${partner.name}`} loading="lazy" /><span>{partner.productCount} produtos</span></button>)}</div></div></section>
+        {partnerLogos.length > 0 && <section className="brands-section" id="parceiros"><div className="container"><div className="section-heading"><div><h2>Nossos parceiros</h2><p>Selecione uma marca para ver todos os produtos desse fornecedor.</p></div></div></div><div className="brands-carousel"><div className="brands-track">{[0, 1].map((copy) => <div className="brands-loop" aria-hidden={copy === 1 || undefined} key={copy}>{partnerLogos.map((partner) => <button className="brand-card" onClick={() => selectPartner(partner)} key={`${copy}-${partner.supplierId}`} tabIndex={copy === 1 ? -1 : undefined} aria-label={`Filtrar produtos de ${partner.name}`}><img src={partner.logo} alt={copy === 0 ? `Logo ${partner.name}` : ''} loading="lazy" /></button>)}</div>)}</div></div></section>}
       </main>
 
       <footer><div className="container footer-grid"><div className="footer-brand"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /><p>Distribuindo mais do que produtos: parcerias de sucesso.</p></div><div><strong>Institucional</strong><a href="#top">Sobre a Ômega</a><a href="#parceiros">Nossos parceiros</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Fale conosco</a></div><div><strong>Atendimento</strong><span>Segunda a sexta, 8h às 17h</span><a href={whatsappUrl} target="_blank" rel="noreferrer">WhatsApp: (85) 9202-0207</a></div><div><strong>Compra protegida</strong><p className="security-copy"><LockKeyhole size={19} /> Ambiente seguro para seus pedidos.</p></div></div><div className="container footer-bottom"><span>© 2026 Ômega Distribuidora. Todos os direitos reservados.</span><span>Preços unitários sujeitos à confirmação comercial.</span></div></footer>
