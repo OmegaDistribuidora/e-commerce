@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
 import { createConfirmedSupabaseUser, deleteSupabaseUser, findSupabaseUserByEmail, removeSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
-import { bannerSchema, bannersBulkSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerCreateSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
+import { bannerSchema, bannersBulkSchema, campaignSyncSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerCreateSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -464,6 +464,13 @@ function productImageUrl(row) {
 }
 
 const money2 = (value) => Math.round(Number(value || 0) * 100) / 100
+function currentBrasiliaDate() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date())
+  const part = (type) => parts.find((item) => item.type === type)?.value || ''
+  return `${part('year')}-${part('month')}-${part('day')}`
+}
 const PRICE_TABLES = [1, 2, 3, 4, 5, 6, 7]
 const priceTableOf = (value) => (PRICE_TABLES.includes(Number(value)) ? Number(value) : 1)
 // Coluna segura: o número é validado contra PRICE_TABLES antes de entrar no SQL.
@@ -508,6 +515,20 @@ async function priceCartItems(database, pricing, plan, items) {
     [pricing.region, ...productIds],
   )
   const productMap = new Map(result.rows.map((product) => [Number(product.id), product]))
+  const campaignResult = await database.query(
+    `SELECT dcp.product_id,dc.external_id,dc.description,dcp.min_quantity,dcp.max_quantity,dcp.discount_percent
+     FROM discount_campaign_products dcp
+     JOIN discount_campaigns dc ON dc.id=dcp.campaign_id
+     WHERE dc.active=TRUE AND dc.starts_on<=$1::date AND dc.ends_on>=$1::date
+       AND dcp.product_id IN (${placeholders})
+     ORDER BY dcp.discount_percent DESC,dc.external_id`,
+    [currentBrasiliaDate(), ...productIds],
+  )
+  const campaignRules = new Map()
+  for (const rule of campaignResult.rows) {
+    const productId = Number(rule.product_id)
+    campaignRules.set(productId, [...(campaignRules.get(productId) || []), rule])
+  }
   const restrictedSuppliers = new Set(pricing.restrictedSupplierIds || [])
   const restrictedProduct = result.rows.find((product) => restrictedSuppliers.has(Number(product.supplier_id)))
   if (restrictedProduct) {
@@ -524,12 +545,21 @@ async function priceCartItems(database, pricing, plan, items) {
     if (units < salesMultiple || units % salesMultiple !== 0) {
       throw new RequestError(`A quantidade do produto ${product.external_id} deve ser um múltiplo de ${salesMultiple} unidades.`)
     }
-    const unitPrice = Number(product.price)
+    const eligibleCampaign = (campaignRules.get(Number(product.id)) || []).find((rule) => (
+      units >= Number(rule.min_quantity) && (rule.max_quantity == null || units <= Number(rule.max_quantity))
+    ))
+    const discountPercent = eligibleCampaign ? Number(eligibleCampaign.discount_percent) : 0
+    const baseUnitPrice = Number(product.price)
+    const unitPrice = money2(baseUnitPrice * (1 - discountPercent / 100))
     return {
       product,
       units,
       boxes: Math.max(1, Math.ceil(units / Number(product.units_per_box))),
+      baseUnitPrice,
       unitPrice,
+      discountPercent,
+      campaignCode: eligibleCampaign ? Number(eligibleCampaign.external_id) : null,
+      campaignDescription: eligibleCampaign?.description || null,
       lineTotal: money2(units * unitPrice),
     }
   })
@@ -577,6 +607,35 @@ async function validateOrderStock(database, stockBranch, lines) {
       throw new RequestError(`A quantidade solicitada do produto ${stock.external_id} - ${stock.name} não está disponível no momento. Ajuste o carrinho e tente novamente.`, 409)
     }
   }
+}
+
+async function activeCampaignOffers(database, productIds) {
+  const ids = [...new Set(productIds.map(Number).filter((value) => Number.isSafeInteger(value) && value > 0))]
+  if (!ids.length) return new Map()
+  const placeholders = ids.map((_, index) => `$${index + 2}`).join(',')
+  const result = await database.query(
+    `SELECT dcp.product_id,dc.external_id,dc.description,dcp.min_quantity,dcp.max_quantity,
+            dcp.discount_percent,dcp.discount_type
+     FROM discount_campaign_products dcp
+     JOIN discount_campaigns dc ON dc.id=dcp.campaign_id
+     WHERE dc.active=TRUE AND dc.starts_on<=$1::date AND dc.ends_on>=$1::date
+       AND dcp.product_id IN (${placeholders})
+     ORDER BY dcp.product_id,dcp.discount_percent DESC,dc.external_id`,
+    [currentBrasiliaDate(), ...ids],
+  )
+  const offers = new Map()
+  for (const row of result.rows) {
+    const productId = Number(row.product_id)
+    offers.set(productId, [...(offers.get(productId) || []), {
+      campaignCode: Number(row.external_id),
+      campaign: row.description,
+      minQuantity: Number(row.min_quantity),
+      maxQuantity: row.max_quantity == null ? null : Number(row.max_quantity),
+      discountPercent: Number(row.discount_percent),
+      discountType: row.discount_type || '',
+    }])
+  }
+  return offers
 }
 
 // Só pedidos ainda em análise e sem NUMPED podem ser cancelados.
@@ -1228,6 +1287,75 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
   }
 })
 
+app.post('/api/integrations/campaigns/sync', async (request, response, next) => {
+  if (!validIntegrationToken(request)) return response.status(401).json({ message: 'Credencial de integração inválida.' })
+  const parsed = campaignSyncSchema.safeParse(request.body)
+  if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+  const campaigns = [...new Map(parsed.data.campaigns.map((campaign) => [campaign.externalId, campaign])).values()]
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    if (process.env.DATABASE_URL) await client.query("SELECT pg_advisory_xact_lock(hashtext('omega_ecommerce_campaign_sync'))")
+    const externalIds = campaigns.map((campaign) => campaign.externalId)
+    const receivedIds = new Set(externalIds)
+    const currentCampaigns = await client.query('SELECT id,external_id,active FROM discount_campaigns')
+    const removedCampaigns = currentCampaigns.rows.filter((row) => row.active && !receivedIds.has(Number(row.external_id)))
+    for (const removed of removedCampaigns) {
+      await client.query('UPDATE discount_campaigns SET active=FALSE,updated_at=CURRENT_TIMESTAMP WHERE id=$1', [removed.id])
+      await client.query('DELETE FROM discount_campaign_products WHERE campaign_id=$1', [removed.id])
+    }
+    const deactivatedCount = removedCampaigns.length
+
+    let productCount = 0
+    let skippedProducts = 0
+    for (const campaign of campaigns) {
+      const campaignResult = await client.query(
+        `INSERT INTO discount_campaigns
+          (external_id,description,starts_on,ends_on,branch_code,uses_product_family,active,source_updated_at)
+         VALUES ($1,$2,$3::date,$4::date,$5,$6,TRUE,$7::timestamptz)
+         ON CONFLICT (external_id) DO UPDATE SET description=EXCLUDED.description,
+           starts_on=EXCLUDED.starts_on,ends_on=EXCLUDED.ends_on,branch_code=EXCLUDED.branch_code,
+           uses_product_family=EXCLUDED.uses_product_family,active=TRUE,
+           source_updated_at=EXCLUDED.source_updated_at,updated_at=CURRENT_TIMESTAMP
+         RETURNING id`,
+        [campaign.externalId, campaign.description, campaign.startsOn, campaign.endsOn,
+          campaign.branchCode, campaign.usesProductFamily, parsed.data.sourceUpdatedAt],
+      )
+      const campaignId = Number(campaignResult.rows[0].id)
+      await client.query('DELETE FROM discount_campaign_products WHERE campaign_id=$1', [campaignId])
+      const uniqueProducts = [...new Map(campaign.products.map((product) => [
+        `${product.externalId}:${product.sequence}`, product,
+      ])).values()]
+      for (const product of uniqueProducts) {
+        const inserted = await client.query(
+          `INSERT INTO discount_campaign_products
+            (campaign_id,product_id,sequence,registered_product_code,product_origin,min_quantity,max_quantity,discount_percent,discount_type)
+           SELECT $1::bigint,p.id,$3::integer,$4::integer,$5::varchar,$6::integer,
+                  $7::integer,$8::numeric,$9::text
+           FROM products p WHERE p.company='Filial' AND p.external_id=$2 AND p.active=TRUE
+           ON CONFLICT (campaign_id,product_id,sequence) DO UPDATE SET
+             registered_product_code=EXCLUDED.registered_product_code,product_origin=EXCLUDED.product_origin,
+             min_quantity=EXCLUDED.min_quantity,max_quantity=EXCLUDED.max_quantity,
+             discount_percent=EXCLUDED.discount_percent,discount_type=EXCLUDED.discount_type
+           RETURNING product_id`,
+          [campaignId, product.externalId, product.sequence, product.registeredProductCode,
+            product.origin, product.minQuantity, product.maxQuantity ?? null,
+            product.discountPercent, product.discountType],
+        )
+        if (inserted.rowCount) productCount += 1
+        else skippedProducts += 1
+      }
+    }
+    await client.query('COMMIT')
+    return response.json({ synchronized: true, campaignCount: campaigns.length, productCount, skippedProducts, deactivatedCount })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    return next(error)
+  } finally {
+    client.release()
+  }
+})
+
 app.get('/api/integrations/customers', async (request, response) => {
   if (!validIntegrationToken(request)) return response.status(401).json({ message: 'Credencial de integração inválida.' })
   const result = await pool.query(
@@ -1474,7 +1602,11 @@ app.post('/api/customer/quote', async (request, response, next) => {
     if (selected.error) return response.status(selected.error.status).json({ message: selected.error.message })
     return response.json({
       paymentPlan: { code: selected.plan.code, label: selected.plan.label },
-      items: selected.lines.map((line) => ({ productId: Number(line.product.id), units: line.units, unitPrice: line.unitPrice, lineTotal: line.lineTotal })),
+      items: selected.lines.map((line) => ({
+        productId: Number(line.product.id), units: line.units, baseUnitPrice: line.baseUnitPrice,
+        unitPrice: line.unitPrice, lineTotal: line.lineTotal, discountPercent: line.discountPercent,
+        campaignCode: line.campaignCode, campaignDescription: line.campaignDescription,
+      })),
       total: selected.total,
       planTotals: quotes.map((quote) => ({ code: quote.plan.code, label: quote.plan.label, total: quote.error ? null : quote.total })),
     })
@@ -1519,12 +1651,57 @@ app.post('/api/customer/stock-check', async (request, response, next) => {
   }
 })
 
+app.get('/api/campaigns', async (request, response, next) => {
+  try {
+    const pricing = await customerPricing(pool, request.customer)
+    const restrictedSupplierIds = pricing?.restrictedSupplierIds || []
+    const result = await pool.query(
+      `SELECT dc.external_id,dc.description,dc.starts_on,dc.ends_on,dc.uses_product_family,
+              p.id AS product_id,p.external_id AS product_code,p.name,p.brand,p.supplier_id,
+              p.image_path,p.image_data IS NOT NULL AS image_uploaded,p.image_hidden,p.image_updated_at,
+              dcp.min_quantity,dcp.max_quantity,dcp.discount_percent,dcp.discount_type
+       FROM discount_campaigns dc
+       JOIN discount_campaign_products dcp ON dcp.campaign_id=dc.id
+       JOIN products p ON p.id=dcp.product_id AND p.active=TRUE
+       WHERE dc.active=TRUE AND dc.starts_on<=$1::date AND dc.ends_on>=$1::date
+         AND ($2::integer[]='{}'::integer[] OR NOT (p.supplier_id=ANY($2::integer[])))
+       ORDER BY dc.starts_on DESC,dc.external_id,p.name,dcp.discount_percent DESC`,
+      [currentBrasiliaDate(), postgresIntegerArray(restrictedSupplierIds)],
+    )
+    const campaigns = new Map()
+    for (const row of result.rows) {
+      const code = Number(row.external_id)
+      const campaign = campaigns.get(code) || {
+        code, description: row.description, startsOn: row.starts_on, endsOn: row.ends_on,
+        usesProductFamily: Boolean(row.uses_product_family), products: [],
+      }
+      let product = campaign.products.find((item) => item.id === Number(row.product_id))
+      if (!product) {
+        product = {
+          id: Number(row.product_id), code: Number(row.product_code), name: row.name, brand: row.brand,
+          supplierId: Number(row.supplier_id || 0), image: productImageUrl(row), offers: [],
+        }
+        campaign.products.push(product)
+      }
+      product.offers.push({
+        minQuantity: Number(row.min_quantity), maxQuantity: row.max_quantity == null ? null : Number(row.max_quantity),
+        discountPercent: Number(row.discount_percent), discountType: row.discount_type || '',
+      })
+      campaigns.set(code, campaign)
+    }
+    return response.json({ campaigns: [...campaigns.values()] })
+  } catch (error) {
+    return next(error)
+  }
+})
+
 app.get('/api/products', async (request, response, next) => {
   try {
     const search = String(request.query.search ?? '').trim()
     const supplier = Number(request.query.supplier)
     const department = Number(request.query.department)
     const section = Number(request.query.section)
+    const campaign = Number(request.query.campaign)
     const sort = request.query.sort === 'bestsellers' ? 'bestsellers' : 'featured'
     const limit = Math.min(Math.max(Number(request.query.limit) || 180, 1), 5000)
     const cutoff = new Date()
@@ -1547,6 +1724,15 @@ app.get('/api/products', async (request, response, next) => {
     if (Number.isSafeInteger(section) && section > 0) {
       params.push(section)
       conditions.push(`p.section_code = $${params.length}`)
+    }
+    if (Number.isSafeInteger(campaign) && campaign > 0) {
+      params.push(campaign, currentBrasiliaDate())
+      conditions.push(`p.id IN (
+        SELECT dcpf.product_id FROM discount_campaign_products dcpf
+        JOIN discount_campaigns dcf ON dcf.id=dcpf.campaign_id
+        WHERE dcf.external_id=$${params.length - 1}
+          AND dcf.active=TRUE AND dcf.starts_on<=$${params.length}::date AND dcf.ends_on>=$${params.length}::date
+      )`)
     }
     const pricing = await customerPricing(pool, request.customer)
     if (pricing?.restrictedSupplierIds?.length) {
@@ -1587,6 +1773,7 @@ app.get('/api/products', async (request, response, next) => {
       params,
     )
 
+    const campaignOffers = await activeCampaignOffers(pool, result.rows.map((row) => Number(row.id)))
     response.json({
       products: result.rows.map((row) => {
         const customerPrice = request.customer ? lowestPlanPrice(row, priceTables) : null
@@ -1615,6 +1802,7 @@ app.get('/api/products', async (request, response, next) => {
         ncm: row.ncm_code || '',
         priceDate: row.price_date,
         weeklySales: Number(row.weekly_sales),
+        campaignOffers: campaignOffers.get(Number(row.id)) || [],
       }}),
       sort,
       count: result.rows.length,
@@ -1755,6 +1943,7 @@ app.get('/api/products/:code', async (request, response, next) => {
         updatedAt: stock.source_updated_at || null,
       }))
     }
+    const campaignOffers = await activeCampaignOffers(pool, [Number(row.id)])
     return response.json({ product: {
       id: Number(row.id), code: Number(row.external_id), supplierId: Number(row.supplier_id || 0),
       brand: row.brand, name: row.name, package: row.package || '', masterPackage: row.master_package || '',
@@ -1765,6 +1954,7 @@ app.get('/api/products/:code', async (request, response, next) => {
       sectionCode: Number(row.section_code || 0), section: row.section || '',
       image: productImageUrl(row), priceDate: row.price_date, weeklySales: 0,
       ean: row.ean || '', manufacturerCode: row.manufacturer_code || '', ncm: row.ncm_code || '',
+      campaignOffers: campaignOffers.get(Number(row.id)) || [],
       ...(request.staff ? { stocks: staffStocks } : {}),
     } })
   } catch (error) {
@@ -2424,6 +2614,39 @@ app.get('/api/staff/banners', requireMarketingAccess, async (_request, response,
       departmentName: banner.department_name || '',
       startsAt: banner.starts_at, endsAt: banner.ends_at,
     })) })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.get('/api/staff/campaigns', requireStaff, async (_request, response, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT dc.external_id,dc.description,dc.starts_on,dc.ends_on,dc.branch_code,
+              dc.uses_product_family,dc.active,dc.source_updated_at,
+              p.external_id AS product_code,p.name,p.brand,
+              dcp.min_quantity,dcp.max_quantity,dcp.discount_percent,dcp.discount_type,dcp.product_origin
+       FROM discount_campaigns dc
+       LEFT JOIN discount_campaign_products dcp ON dcp.campaign_id=dc.id
+       LEFT JOIN products p ON p.id=dcp.product_id
+       ORDER BY dc.starts_on DESC,dc.external_id,p.name,dcp.discount_percent DESC`,
+    )
+    const campaigns = new Map()
+    for (const row of result.rows) {
+      const code = Number(row.external_id)
+      const campaign = campaigns.get(code) || {
+        code, description: row.description, startsOn: row.starts_on, endsOn: row.ends_on,
+        branchCode: row.branch_code || '', usesProductFamily: Boolean(row.uses_product_family),
+        active: Boolean(row.active), sourceUpdatedAt: row.source_updated_at, products: [],
+      }
+      if (row.product_code != null) campaign.products.push({
+        code: Number(row.product_code), name: row.name, brand: row.brand,
+        minQuantity: Number(row.min_quantity), maxQuantity: row.max_quantity == null ? null : Number(row.max_quantity),
+        discountPercent: Number(row.discount_percent), discountType: row.discount_type || '', origin: row.product_origin,
+      })
+      campaigns.set(code, campaign)
+    }
+    return response.json({ campaigns: [...campaigns.values()] })
   } catch (error) {
     return next(error)
   }

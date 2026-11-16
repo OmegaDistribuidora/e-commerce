@@ -24,7 +24,11 @@ A DAG `ecommerce_produtos_precos` está configurada para executar a cada 30 minu
 7. registra os totais em `product_sync_runs`;
 8. atualiza código do fabricante, NCM, EAN, múltiplo e embalagem master;
 9. atualiza os planos de pagamento liberados, o `LIMCRED`, os títulos em aberto (`PCPREST` sem `DTPAG`, sem cancelamento/estorno e sem cobranças que não são dívida) e os pedidos não faturados (`PCPEDC` nas posições L, M, B e P, exceto bonificação e transferência) dos clientes aprovados;
-10. sincroniza as restrições de fornecedor da `PCRESTRICAOVENDA` por praça e por cliente. O catálogo, a página do produto, o orçamento e o envio do pedido aplicam a mesma restrição no backend.
+10. sincroniza as restrições de fornecedor da `PCRESTRICAOVENDA` por praça e por cliente. O catálogo, a página do produto, o orçamento e o envio do pedido aplicam a mesma restrição no backend;
+11. sincroniza todas as campanhas da rotina 3306 autorizadas para o RCA 3068, inclusive produtos expandidos por `CODPRODPRINC`; o site publica somente as campanhas vigentes na data de Brasília e aplica o desconto no backend quando a quantidade atende ao mínimo e ao máximo;
+12. trata a carga de campanhas como um snapshot completo: campanhas que deixam de vir do WinThor são desativadas e seus vínculos antigos de produtos são removidos.
+
+O WinThor é a fonte oficial das campanhas. A área do cliente mostra somente campanhas vigentes com pelo menos um produto permitido para seu cadastro. A área de gestão mantém uma consulta somente leitura de campanhas vigentes, futuras, encerradas e removidas. Restrições de fornecedor são reaplicadas no catálogo, na campanha, na cotação e no fechamento do pedido.
 
 O crédito disponível no checkout é `LIMCRED − títulos em aberto − pedidos não faturados no WinThor − pedidos do e-commerce que ainda não estavam no WinThor na última leitura`. Quando o cliente paga um título, o valor volta a ficar disponível na sincronização seguinte.
 

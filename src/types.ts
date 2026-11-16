@@ -26,6 +26,7 @@ export type Product = {
   ncm: string
   ean: string
   planPrices?: Array<{ code: string; label: string; unitPrice: number }>
+  campaignOffers?: CampaignOffer[]
   stocks?: Array<{
     branch: 1 | 3
     totalUnits: number | null
@@ -40,9 +41,43 @@ export type PricePlan = { code: string; label: string }
 
 export type OrderQuote = {
   paymentPlan: PricePlan
-  items: Array<{ productId: number; units: number; unitPrice: number; lineTotal: number }>
+  items: Array<{ productId: number; units: number; baseUnitPrice: number; unitPrice: number; lineTotal: number; discountPercent: number; campaignCode: number | null; campaignDescription: string | null }>
   total: number
   planTotals: Array<{ code: string; label: string; total: number | null }>
+}
+
+export type CampaignOffer = {
+  campaignCode: number
+  campaign: string
+  minQuantity: number
+  maxQuantity: number | null
+  discountPercent: number
+  discountType: string
+}
+
+export type DiscountCampaign = {
+  code: number
+  description: string
+  startsOn: string
+  endsOn: string
+  usesProductFamily: boolean
+  branchCode?: string
+  active?: boolean
+  sourceUpdatedAt?: string | null
+  products: Array<{
+    id?: number
+    code: number
+    name: string
+    brand: string
+    supplierId?: number
+    image?: string | null
+    offers?: Array<{ minQuantity: number; maxQuantity: number | null; discountPercent: number; discountType: string }>
+    minQuantity?: number
+    maxQuantity?: number | null
+    discountPercent?: number
+    discountType?: string
+    origin?: string
+  }>
 }
 
 export type CatalogSection = {

@@ -82,6 +82,39 @@ WHERE t.numregiao IN ({regions})
   AND NVL(UPPER(TRIM(p.enviarforcavendas)), 'N') = 'S'
 """
 
+# Campanhas da rotina 3306 autorizadas para o RCA exclusivo do e-commerce.
+# A consulta retorna também os itens expandidos pela família CODPRODPRINC.
+CAMPAIGN_QUERY = """
+WITH campanhas AS (
+    SELECT c.codigo,c.descricao,c.dtinicio,c.dtfim,c.codfilial,c.utilizacodprodprinc,
+           i.sequencia,i.codprod AS codprod_cadastrado,i.qtminima,i.qtmaxima,
+           i.perdesc,i.tipodesconto,p.codprodprinc,
+           NVL(NULLIF(p.codprodprinc,0),p.codprod) AS cod_familia
+    FROM pcdescontoc c
+    JOIN pcdescontoi i ON i.codigo=c.codigo
+    JOIN pcprodut p ON p.codprod=i.codprod
+    WHERE EXISTS (
+      SELECT 1 FROM pcdescontorestricao r
+      WHERE r.codigo=c.codigo AND r.tipo=5 AND r.codigon=3068
+    )
+)
+SELECT c.codigo,c.descricao,c.dtinicio,c.dtfim,c.codfilial,c.utilizacodprodprinc,
+       c.sequencia,c.codprod_cadastrado,pf.codprod,
+       CASE WHEN pf.codprod=c.codprod_cadastrado THEN 'CADASTRADO' ELSE 'FAMILIA' END AS origem_produto,
+       c.qtminima,c.qtmaxima,c.perdesc,c.tipodesconto
+FROM campanhas c
+JOIN pcprodut pf ON (
+  (UPPER(TRIM(c.utilizacodprodprinc))='S'
+   AND (pf.codprod=c.cod_familia OR pf.codprodprinc=c.cod_familia))
+  OR
+  (NVL(UPPER(TRIM(c.utilizacodprodprinc)),'N')<>'S'
+   AND pf.codprod=c.codprod_cadastrado)
+)
+WHERE NVL(UPPER(TRIM(pf.obs2)),'ATIVO')<>'FL'
+  AND NVL(UPPER(TRIM(pf.enviarforcavendas)),'N')='S'
+ORDER BY c.codigo,c.sequencia,pf.codprod
+"""
+
 SUPPLIER_DISPLAY_NAMES = {
     117: "Bombril S.A.",
 }
@@ -207,6 +240,7 @@ def main() -> None:
     )
 
     token = required("ECOMMERCE_PRODUCT_SYNC_TOKEN")
+    sync_campaigns(dsn, token)
     customer_regions = sync_customer_conditions(dsn, token)
     sync_region_prices(dsn, token, set(DEFAULT_PRICE_REGIONS) | customer_regions)
 
@@ -216,6 +250,70 @@ def price_value(value):
         return None
     price = round(number(value), 6)
     return price if price > 0 else None
+
+
+def sync_campaigns(dsn, token: str) -> None:
+    with oracledb.connect(
+        user=required("ORACLE_FILIAL_USER"),
+        password=required("ORACLE_FILIAL_PASSWORD"),
+        dsn=dsn,
+    ) as connection:
+        with connection.cursor() as cursor:
+            cursor.arraysize = 5000
+            cursor.execute(CAMPAIGN_QUERY)
+            rows = cursor.fetchall()
+
+    campaigns = {}
+    for row in rows:
+        (
+            campaign_code, description, starts_on, ends_on, branch_code, uses_family,
+            sequence, registered_product, product_code, origin,
+            min_quantity, max_quantity, discount_percent, discount_type,
+        ) = row
+        code = int(campaign_code)
+        campaign = campaigns.setdefault(code, {
+            "externalId": code,
+            "description": text(description) or f"Campanha {code}",
+            "startsOn": iso_date(starts_on),
+            "endsOn": iso_date(ends_on),
+            "branchCode": text(branch_code),
+            "usesProductFamily": text(uses_family).upper() == "S",
+            "products": [],
+        })
+        minimum = max(1, int(number(min_quantity) or 1))
+        maximum_value = int(number(max_quantity)) if max_quantity is not None else 0
+        campaign["products"].append({
+            "externalId": int(product_code),
+            "sequence": int(number(sequence)),
+            "registeredProductCode": int(registered_product),
+            "origin": text(origin) or "CADASTRADO",
+            "minQuantity": minimum,
+            "maxQuantity": maximum_value if maximum_value > 0 else None,
+            "discountPercent": round(max(0.0, number(discount_percent)), 4),
+            "discountType": text(discount_type),
+        })
+
+    invalid_dates = [campaign["externalId"] for campaign in campaigns.values() if not campaign["startsOn"] or not campaign["endsOn"]]
+    if invalid_dates:
+        raise RuntimeError(f"Campanhas sem período válido: {invalid_dates[:20]}")
+    payload = {
+        "sourceUpdatedAt": datetime.now().astimezone().isoformat(),
+        "campaigns": list(campaigns.values()),
+    }
+    response = requests.post(
+        f"{required('ECOMMERCE_API_URL').rstrip('/')}/api/integrations/campaigns/sync",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=(15, 180),
+    )
+    if not response.ok:
+        raise RuntimeError(f"Campanhas: API respondeu HTTP {response.status_code}: {response.text[:500]}")
+    result = response.json()
+    print(
+        "Campanhas concluídas: "
+        f"campanhas={result.get('campaignCount')}, produtos={result.get('productCount')}, "
+        f"ignorados={result.get('skippedProducts')}, desativadas={result.get('deactivatedCount')}"
+    )
 
 
 def sync_region_prices(dsn, token: str, regions: set[int]) -> None:

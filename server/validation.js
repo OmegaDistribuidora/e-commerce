@@ -113,6 +113,30 @@ export const stockCheckSchema = z.object({
   quantity: z.coerce.number().int().positive().max(100000),
 })
 
+const campaignProductSyncSchema = z.object({
+  externalId: z.coerce.number().int().positive(),
+  sequence: z.coerce.number().int().nonnegative().max(1000000).default(0),
+  registeredProductCode: z.coerce.number().int().positive(),
+  origin: z.enum(['CADASTRADO', 'FAMILIA']).default('CADASTRADO'),
+  minQuantity: z.coerce.number().int().positive().max(1000000),
+  maxQuantity: z.coerce.number().int().positive().max(1000000).nullable().optional(),
+  discountPercent: z.coerce.number().min(0).max(100),
+  discountType: z.string().trim().max(80).optional().default(''),
+})
+
+export const campaignSyncSchema = z.object({
+  sourceUpdatedAt: z.string().datetime({ offset: true }),
+  campaigns: z.array(z.object({
+    externalId: z.coerce.number().int().positive(),
+    description: z.string().trim().min(1).max(500),
+    startsOn: z.string().date(),
+    endsOn: z.string().date(),
+    branchCode: z.string().trim().max(80).optional().default(''),
+    usesProductFamily: z.boolean().default(false),
+    products: z.array(campaignProductSyncSchema).max(100000),
+  })).max(10000),
+})
+
 const priceValue = z.coerce.number().nonnegative().max(99999999).nullable()
 
 // Linhas compactas: [região, CODPROD, PTABELA1..PTABELA7].

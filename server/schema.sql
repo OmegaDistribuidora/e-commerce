@@ -209,6 +209,41 @@ CREATE TABLE IF NOT EXISTS region_prices (
   PRIMARY KEY (region, product_id)
 );
 
+-- Campanhas comerciais da rotina 3306 do WinThor autorizadas para o RCA do
+-- e-commerce. O WinThor continua sendo a fonte oficial e a sincronização é
+-- sempre tratada como um snapshot completo.
+CREATE TABLE IF NOT EXISTS discount_campaigns (
+  id BIGSERIAL PRIMARY KEY,
+  external_id INTEGER NOT NULL UNIQUE,
+  description TEXT NOT NULL,
+  starts_on DATE NOT NULL,
+  ends_on DATE NOT NULL,
+  branch_code TEXT,
+  uses_product_family BOOLEAN NOT NULL DEFAULT FALSE,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  source_updated_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS discount_campaign_products (
+  campaign_id BIGINT NOT NULL REFERENCES discount_campaigns(id) ON DELETE CASCADE,
+  product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  sequence INTEGER NOT NULL DEFAULT 0,
+  registered_product_code INTEGER NOT NULL,
+  product_origin VARCHAR(20) NOT NULL DEFAULT 'CADASTRADO',
+  min_quantity INTEGER NOT NULL DEFAULT 1 CHECK (min_quantity > 0),
+  max_quantity INTEGER,
+  discount_percent NUMERIC(8,4) NOT NULL CHECK (discount_percent >= 0 AND discount_percent <= 100),
+  discount_type TEXT,
+  PRIMARY KEY (campaign_id, product_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_discount_campaigns_period
+  ON discount_campaigns(active, starts_on, ends_on);
+CREATE INDEX IF NOT EXISTS idx_discount_campaign_products_product
+  ON discount_campaign_products(product_id, campaign_id);
+
 CREATE TABLE IF NOT EXISTS product_sync_runs (
   id BIGSERIAL PRIMARY KEY,
   started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

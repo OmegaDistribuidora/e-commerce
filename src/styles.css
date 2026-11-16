@@ -184,6 +184,7 @@ img { display: block; max-width: 100%; }
 .product-quantity-control span { min-width: 0; display: flex; justify-content: center; align-items: center; gap: 7px; color: var(--navy); line-height: 1; white-space: nowrap; }
 .product-quantity-control strong { font-size: 19px; font-weight: 850; letter-spacing: -.02em; }
 .product-quantity-control small { color: #5e7087; font-size: 12px; font-weight: 650; }
+.product-campaign-offer { width: fit-content; margin: -7px 0 8px; padding: 4px 7px; border-radius: 5px; color: #8b3d00; background: #fff0df; font-size: 9px; font-weight: 850; }
 .load-more { min-height: 46px; margin: 28px auto 0; padding: 0 22px; display: flex; align-items: center; gap: 9px; border: 1px solid #cbd9e9; border-radius: 8px; color: var(--blue); background: #fff; font-weight: 800; }
 .load-more:hover { border-color: var(--blue); box-shadow: 0 8px 20px rgba(8,61,130,.1); }
 .catalog-loading { min-height: 280px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #6c7c90; font-size: 13px; }
@@ -711,6 +712,7 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .product-detail-content h1 { margin: 9px 0; font-size: clamp(27px, 3vw, 42px); line-height: 1.1; letter-spacing: -.035em; }
 .product-detail-brand { margin: 0 0 28px; color: #66788e; font-size: 14px; font-weight: 700; }
 .product-detail-price { margin-bottom: 18px; display: flex; align-items: baseline; gap: 8px; }
+.product-detail-price del { color: #8592a4; font-size: 15px; }
 .product-detail-price strong { font-size: 32px; }
 .product-detail-price span { color: #718198; font-size: 11px; }
 .product-detail-unavailable { margin-bottom: 18px; color: #9c2525; font-size: 13px; font-weight: 700; }
@@ -727,6 +729,59 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .product-detail-quantity label:focus-within { box-shadow: inset 0 0 0 2px rgba(8,116,231,.2); }
 .product-detail-quantity span { color: #617187; font-size: 12px; font-weight: 700; }
 .product-quantity-error { display: block; margin: -14px 0 22px; }
+.product-detail-campaign { width: fit-content; margin: 0 0 12px; padding: 9px 12px; border: 1px solid #ffd4ad; border-radius: 8px; display: grid; gap: 2px; color: #9b4700; background: #fff7ef; }
+.product-detail-campaign strong { font-size: 14px; }
+.product-detail-campaign span { font-size: 10px; }
+
+.nav-campaigns { padding: 0 12px; color: #fff; display: flex; align-items: center; font-size: 12px; font-weight: 800; white-space: nowrap; }
+.nav-campaigns:hover,.nav-campaigns.active { color: #fff; background: rgba(255,255,255,.12); }
+.campaigns-main { padding: 52px 0 80px; }
+.campaigns-main > header { max-width: 820px; margin-bottom: 28px; }
+.campaigns-main > header h1 { margin: 6px 0 8px; color: var(--navy); font-size: clamp(30px,4vw,48px); }
+.campaigns-main > header p { color: var(--muted); line-height: 1.6; }
+.campaign-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; }
+.campaign-card { min-width: 0; padding: 22px; border: 1px solid #dce6f1; border-radius: 14px; background: #fff; box-shadow: 0 10px 30px rgba(5,43,104,.06); display: flex; flex-direction: column; }
+.campaign-card > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.campaign-card > header > span { padding: 6px 9px; border-radius: 16px; color: #a34800; background: #fff0df; display: flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 850; }
+.campaign-card > header svg { width: 14px; }
+.campaign-card > header small { color: #8290a3; font-size: 9px; font-weight: 750; }
+.campaign-card h2 { margin: 16px 0 9px; color: var(--navy); font-size: 19px; line-height: 1.25; }
+.campaign-period { margin: 0 0 16px; color: #6c7c90; display: flex; align-items: center; gap: 6px; font-size: 10px; }
+.campaign-period svg { width: 15px; }
+.campaign-products-preview { min-height: 58px; display: flex; align-items: center; }
+.campaign-products-preview span { width: 54px; height: 54px; margin-right: -8px; border: 2px solid #fff; border-radius: 50%; overflow: hidden; background: #f5f8fc; display: grid; place-items: center; }
+.campaign-products-preview img { width: 88%; height: 88%; object-fit: contain; }
+.campaign-products-preview b { color: var(--blue); }
+.campaign-card > p strong { display: block; color: var(--navy); font-size: 12px; }
+.campaign-card > p small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
+.campaign-rule-preview { margin: 8px 0 18px; display: grid; gap: 5px; }
+.campaign-rule-preview span { overflow: hidden; color: #64768c; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.campaign-rule-preview b { color: var(--orange); }
+.campaign-open { min-height: 43px; margin-top: auto; border-radius: 8px; color: #fff; background: var(--blue); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 11px; font-weight: 850; }
+.campaign-open svg { width: 16px; }
+
+.staff-campaign-list { display: grid; gap: 10px; }
+.staff-campaign-list details { border: 1px solid #dce5ef; border-radius: 11px; background: #fff; overflow: hidden; }
+.staff-campaign-list summary { padding: 15px 17px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.staff-campaign-list summary > span { display: flex; align-items: center; gap: 10px; }
+.staff-campaign-list summary > span:last-child { text-align: right; flex-direction: column; align-items: end; gap: 3px; }
+.staff-campaign-list summary svg { color: var(--orange); }
+.staff-campaign-list summary strong,.staff-campaign-list summary small { display: block; }
+.staff-campaign-list summary strong { color: var(--navy); font-size: 12px; }
+.staff-campaign-list summary small { color: var(--muted); font-size: 9px; }
+.campaign-admin-status { padding: 4px 8px; border-radius: 12px; color: #6b7481; background: #edf1f5; font-size: 8px; text-transform: uppercase; }
+.campaign-admin-status.vigente { color: #087744; background: #e4f6ed; }
+.campaign-admin-status.futura { color: #805500; background: #fff5d9; }
+.campaign-admin-status.removida { color: #a12e2e; background: #fdeaea; }
+.staff-campaign-list details > div { padding: 0 17px 17px; border-top: 1px solid #edf1f5; }
+.staff-campaign-list details > div > p { color: var(--muted); font-size: 10px; }
+.staff-campaign-products { max-height: 430px; overflow: auto; display: grid; gap: 5px; }
+.staff-campaign-products > div { padding: 9px 10px; border-radius: 7px; background: #f6f9fc; display: flex; justify-content: space-between; gap: 15px; }
+.staff-campaign-products span { display: grid; gap: 2px; }
+.staff-campaign-products span:last-child { text-align: right; }
+.staff-campaign-products strong { color: var(--navy); font-size: 10px; }
+.staff-campaign-products small { color: var(--muted); font-size: 8px; }
+.staff-campaign-products b { color: var(--orange); font-size: 12px; }
 .staff-product-stock { margin: 22px 0 0; padding: 16px; border: 1px solid #cfe0f2; border-radius: 10px; background: #f6faff; }
 .staff-product-stock > header { margin-bottom: 12px; display: flex; align-items: center; gap: 10px; }
 .staff-product-stock > header svg { color: var(--blue); }
@@ -757,6 +812,7 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 @keyframes zoom-backdrop { from { background: rgba(1,16,39,0); } to { background: rgba(1,16,39,.86); } }
 
 @media (max-width: 1100px) {
+  .campaign-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .product-photo-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .product-detail-layout { grid-template-columns: minmax(300px, .8fr) 1.2fr; gap: 28px; padding: 28px; }
   .container { width: min(100% - 36px, 1100px); }
@@ -784,6 +840,10 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 }
 
 @media (max-width: 760px) {
+  .campaigns-main { padding: 28px 14px 55px; }
+  .campaign-grid { grid-template-columns: 1fr; }
+  .campaign-card { padding: 17px; }
+  .staff-campaign-list summary { align-items: flex-start; }
   .photo-manager-filters { grid-template-columns: 1fr; }
   .product-photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .product-photo-grid article { grid-template-rows: 145px 1fr auto; }
