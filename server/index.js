@@ -451,6 +451,7 @@ function decodeProductImage(dataUrl) {
   if (!match) throw new Error('Imagem inválida. A foto do produto deve estar no formato WEBP.')
   const data = Buffer.from(match[2], 'base64')
   if (!data.length || data.length > 5 * 1024 * 1024) throw new Error('A foto deve ter no máximo 5 MB.')
+  if (data.toString('ascii', 0, 4) !== 'RIFF' || data.toString('ascii', 8, 12) !== 'WEBP') throw new Error('O arquivo não é uma imagem WEBP válida.')
   return { mime: match[1], data }
 }
 
@@ -1827,6 +1828,57 @@ const partnerNameBySupplier = new Map([
   [4698, 'Assim'],
 ])
 
+async function supplierLogoMap() {
+  const logos = new Map(partnerLogoBySupplier)
+  const result = await pool.query('SELECT supplier_id, image_data IS NOT NULL AS uploaded, updated_at FROM supplier_logos')
+  for (const row of result.rows) {
+    if (row.uploaded) logos.set(Number(row.supplier_id), `/api/suppliers/${row.supplier_id}/image?v=${new Date(row.updated_at).getTime()}`)
+    else logos.delete(Number(row.supplier_id))
+  }
+  return logos
+}
+
+app.get('/api/suppliers/:id/image', async (request, response, next) => {
+  try {
+    const id = Number(request.params.id)
+    if (!Number.isSafeInteger(id) || id < 1) return response.status(400).end()
+    const result = await pool.query('SELECT image_data FROM supplier_logos WHERE supplier_id=$1', [id])
+    if (!result.rows[0]?.image_data) return response.status(404).end()
+    response.set('Cache-Control', 'public, max-age=300')
+    return response.type('image/webp').send(result.rows[0].image_data)
+  } catch (error) { return next(error) }
+})
+
+async function changeSupplierLogo(request, response, next) {
+  const id = Number(request.params.id)
+  if (!Number.isSafeInteger(id) || id < 1) return response.status(400).json({ message: 'Código de fornecedor inválido.' })
+  try {
+    const exists = await pool.query('SELECT id FROM products WHERE supplier_id=$1 AND active=TRUE LIMIT 1', [id])
+    if (!exists.rows.length) return response.status(404).json({ message: 'Fornecedor não encontrado no catálogo ativo.' })
+    let data = null
+    if (request.method === 'PUT') {
+      try { data = decodeProductImage(request.body?.imageDataUrl).data }
+      catch (error) { return response.status(400).json({ message: error.message }) }
+    }
+    const onlyMissing = request.method === 'PUT' && request.body?.onlyMissing === true
+    // Static logos count as existing unless explicitly removed by a stored override.
+    if (onlyMissing) {
+      const override = await pool.query('SELECT image_data IS NOT NULL AS uploaded FROM supplier_logos WHERE supplier_id=$1', [id])
+      if (override.rows[0]?.uploaded || (!override.rows.length && partnerLogoBySupplier.has(id))) return response.json({ skipped: true })
+    }
+    const result = await pool.query(
+      `INSERT INTO supplier_logos (supplier_id,image_data) VALUES ($1,$2)
+       ON CONFLICT (supplier_id) DO UPDATE SET image_data=EXCLUDED.image_data,updated_at=CURRENT_TIMESTAMP
+       WHERE $3=FALSE OR supplier_logos.image_data IS NULL RETURNING updated_at`,
+      [id, data, onlyMissing],
+    )
+    if (!result.rows.length) return response.json({ skipped: true })
+    return response.json({ image: data ? `/api/suppliers/${id}/image?v=${new Date(result.rows[0].updated_at).getTime()}` : null })
+  } catch (error) { return next(error) }
+}
+app.put('/api/staff/suppliers/:id/image', requireMarketingAccess, changeSupplierLogo)
+app.delete('/api/staff/suppliers/:id/image', requireMarketingAccess, changeSupplierLogo)
+
 app.get('/api/catalog/navigation', async (request, response, next) => {
   try {
     const pricing = await customerPricing(pool, request.customer)
@@ -1864,7 +1916,8 @@ app.get('/api/catalog/navigation', async (request, response, next) => {
       a.name.localeCompare(b.name, 'pt-BR'),
     )
 
-    const supplierIds = [...partnerLogoBySupplier.keys()]
+    const logos = await supplierLogoMap()
+    const supplierIds = [...logos.keys()].filter((id) => !restrictedSupplierIds.includes(id))
     const partnerResult = await pool.query(
       `SELECT supplier_id, MIN(brand) AS name, COUNT(*)::int AS product_count
        FROM products
@@ -1881,7 +1934,7 @@ app.get('/api/catalog/navigation', async (request, response, next) => {
         supplierId,
         name: partnerNameBySupplier.get(supplierId) || row?.name || `Fornecedor ${supplierId}`,
         productCount: Number(row?.product_count || 0),
-        logo: partnerLogoBySupplier.get(supplierId),
+        logo: logos.get(supplierId),
       }
     })
     return response.json({ departments, partners })
@@ -2533,6 +2586,7 @@ app.get('/api/staff/catalog-products', requireMarketingAccess, async (request, r
        FROM products WHERE active=TRUE AND supplier_id IS NOT NULL
        GROUP BY supplier_id ORDER BY MIN(brand)`,
     )
+    const logos = await supplierLogoMap()
     return response.json({
       products: result.rows.map((product) => ({
         id: Number(product.id), code: Number(product.external_id), supplierId: Number(product.supplier_id),
@@ -2541,6 +2595,7 @@ app.get('/api/staff/catalog-products', requireMarketingAccess, async (request, r
       })),
       suppliers: suppliersResult.rows.map((supplier) => ({
         id: Number(supplier.supplier_id), name: supplier.name, productCount: Number(supplier.product_count),
+        logo: logos.get(Number(supplier.supplier_id)) || null,
       })),
     })
   } catch (error) {
@@ -2558,9 +2613,14 @@ app.put('/api/staff/products/:id/image', requireMarketingAccess, async (request,
       `UPDATE products SET image_data=$1,image_mime=$2,image_path=NULL,image_hidden=FALSE,
          image_updated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
        WHERE id=$3 AND active=TRUE
+         AND ($4=FALSE OR image_hidden=TRUE OR (image_data IS NULL AND image_path IS NULL))
        RETURNING id,image_updated_at`,
-      [image.data, image.mime, request.params.id],
+      [image.data, image.mime, request.params.id, request.body?.onlyMissing === true],
     )
+    if (!result.rows.length && request.body?.onlyMissing === true) {
+      const existing = await pool.query('SELECT id FROM products WHERE id=$1 AND active=TRUE', [request.params.id])
+      if (existing.rows.length) return response.json({ skipped: true })
+    }
     if (!result.rows.length) return response.status(404).json({ message: 'Produto não encontrado ou inativo.' })
     const version = new Date(result.rows[0].image_updated_at).getTime()
     return response.json({ image: `/api/products/${result.rows[0].id}/image?v=${version}` })

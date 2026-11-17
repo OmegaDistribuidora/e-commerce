@@ -90,7 +90,17 @@ Os perfis internos são:
 
 - `ADMIN`: acesso completo, clientes, pedidos, marketing e criação de usuários;
 - `COMERCIAL`: pedidos, aprovação/cadastro de clientes e configurações da própria conta;
-- `MARKETING`: banners, fotos de produtos e configurações da própria conta.
+- `MARKETING`: banners, fotos de produtos, logos de fornecedores e configurações da própria conta.
+
+### Fotos de produtos e fornecedores
+
+Em **Gestão → Fotos**, as abas **Produtos** e **Fornecedores** permitem adicionar, substituir e excluir imagens individualmente ou importar um lote de até 500 arquivos. O código no nome identifica o cadastro: `16449.webp`, `16449_A.png` ou `nome-16449.webp`; para fornecedores, use o código do fornecedor.
+
+O lote mostra uma prévia por arquivo, bloqueia códigos duplicados e desconhecidos e permite escolher entre preencher somente imagens ausentes (padrão) ou substituir existentes. Os envios são sequenciais, com progresso e resultado individual; falhas podem ser tentadas novamente pelo botão de continuar. Ao parar ou sair do módulo, os envios seguintes são interrompidos e os já concluídos permanecem salvos. O lote não é persistido ao recarregar a página.
+
+São aceitos PNG, JPEG e WEBP de até 20 MB na entrada, convertidos no navegador para WEBP de até 1600 px no maior lado e 5 MB na saída, mantendo proporção e transparência. As fotos dos produtos continuam na tabela `products`; logos enviadas ficam na nova tabela `supplier_logos`, criada automaticamente na inicialização. As logos estáticas existentes são preservadas até serem substituídas ou excluídas pela gestão. A exclusão registra uma substituição vazia, evitando que a logo antiga reapareça. Não é necessário alterar a DAG para importar imagens.
+
+Validação local isolada (sem carregar `.env`, sem usar o banco de produção): `npm run build` e `node scripts/test-photos.mjs`. O teste usa o PostgreSQL em memória e Chrome instalado para verificar API, permissões e importação pela interface.
 
 ### Preços, planos e crédito
 

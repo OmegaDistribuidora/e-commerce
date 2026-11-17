@@ -464,6 +464,24 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .product-photo-actions label input { display: none; }
 .product-photo-actions svg { width: 14px; }
 .photo-delete { border: 0; color: #b12d2d; background: #fff0f0; }
+.photo-tabs { display: flex; gap: 8px; margin-bottom: 24px; }
+.photo-tabs button { padding: 12px 24px; border: 1px solid #dfe7f1; border-radius: 10px; background: white; color: var(--navy); font-weight: 700; }
+.photo-tabs button.active { background: var(--blue); color: white; }
+.photo-batch { margin: 20px 0; padding: 24px; background: white; border: 1px solid #dfe7f1; border-radius: 14px; }
+.photo-batch p { line-height: 1.6; color: #52677e; }
+.photo-batch-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.photo-batch-controls label { display: grid; gap: 8px; font-size: 13px; }
+.photo-batch-controls .secondary-button { display: flex; align-items: center; cursor: pointer; }
+.photo-batch-controls input[type=file] { display: none; }
+.photo-batch-controls select { padding: 12px; border: 1px solid #d2dce8; border-radius: 8px; max-width: 100%; }
+.photo-batch-preview { max-height: 360px; overflow: auto; margin: 16px 0; border: 1px solid #dfe7f1; border-radius: 8px; }
+.photo-batch-preview table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.photo-batch-preview th, .photo-batch-preview td { padding: 12px; text-align: left; border-bottom: 1px solid #e9eef5; overflow-wrap: anywhere; min-width: 120px; }
+.photo-batch-preview th { background: #f5f8fc; position: sticky; top: 0; }
+.photo-batch-error { color: #b12d2d; }
+.photo-batch progress { width: 100%; margin-bottom: 16px; accent-color: #0055b8; }
+.product-photo-preview img { max-height: 148px; }
+@media (max-width: 600px) { .photo-batch { padding: 14px; } .product-photo-preview img { max-height: 130px; } }
 .product-photo-actions button:disabled, .product-photo-actions label:has(input:disabled) { opacity: .55; cursor: wait; }
 .banner-manager-heading { align-items: center; }
 .banner-manager-heading > div { display: grid; gap: 5px; }

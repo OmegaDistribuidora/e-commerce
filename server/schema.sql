@@ -291,3 +291,8 @@ CREATE INDEX IF NOT EXISTS idx_staff_sessions_user ON staff_sessions(staff_user_
 CREATE INDEX IF NOT EXISTS idx_banners_active_position ON banners(active, position);
 CREATE INDEX IF NOT EXISTS idx_product_categories_category ON product_categories(category_id, product_id);
 CREATE INDEX IF NOT EXISTS idx_product_categories_product ON product_categories(product_id, category_id);
+CREATE TABLE IF NOT EXISTS supplier_logos (
+  supplier_id INTEGER PRIMARY KEY,
+  image_data BYTEA,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

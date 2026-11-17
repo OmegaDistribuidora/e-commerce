@@ -192,6 +192,7 @@ export type CatalogSupplier = {
   id: number
   name: string
   productCount: number
+  logo?: string | null
 }
 
 export type OrderItem = {
