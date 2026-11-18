@@ -53,7 +53,7 @@ export default function PublicSiteHeader({ active }: { active?: 'about' | 'partn
         {(customer || staffUser) && <button className="logout-button" onClick={logout}><LogOut size={19} /><span>Sair</span></button>}
         <a className="cart-button" href="/?carrinho=1"><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{cartCount ? `${cartCount} ${cartCount === 1 ? 'item' : 'itens'}` : 'Está vazio'}</strong></span></a>
       </div>
-      <nav className="main-nav"><div className="container nav-inner content-page-nav"><a className="categories-button" href="/#produtos"><Menu size={19} /> Departamentos</a><a href="/#produtos">Produtos</a><a href="/campanhas">Campanhas</a><a className={active === 'partners' ? 'active' : ''} href="/parceiros">Parceiros</a><a className={active === 'about' ? 'active' : ''} href="/sobre">Sobre a Ômega</a><a className="nav-support" href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a></div></nav>
+      <nav className="main-nav"><div className="container nav-inner content-page-nav"><a className="categories-button" href="/#produtos"><Menu size={19} /> Departamentos</a><a href="/#produtos">Produtos</a><a className="nav-campaigns" href="/campanhas">Campanhas</a><a className={active === 'partners' ? 'active' : ''} href="/parceiros">Parceiros</a><a className={active === 'about' ? 'active' : ''} href="/sobre">Sobre a Ômega</a><a className="nav-support" href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a></div></nav>
     </header>
   </>
 }

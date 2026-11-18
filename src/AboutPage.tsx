@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Building2, Handshake, ImageOff } from 'lucide-react'
 import PublicSiteHeader from './PublicSiteHeader'
+import PublicSiteFooter from './PublicSiteFooter'
 import type { InstitutionalContent } from './types'
 
 export default function AboutPage() {
@@ -24,5 +25,6 @@ export default function AboutPage() {
         <section className="about-values"><div className="container"><Handshake /><div><span className="eyebrow">PARCERIAS QUE CONSTROEM RESULTADOS</span><h2>{content.valuesTitle}</h2>{content.valuesText.split(/\n+/).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div></div></section>
       </>}
     </main>
+    <PublicSiteFooter />
   </div>
 }
