@@ -16,7 +16,7 @@ PRODUCT_QUERY = """
 SELECT
     p.codprod,
     p.codfornec,
-    NVL(NULLIF(TRIM(f.fantasia), ''), NVL(f.fornecedor, 'Fornecedor ' || TO_CHAR(p.codfornec))) AS fornecedor,
+    NVL(NULLIF(TRIM(f.fantasia), ''), 'Fornecedor ' || TO_CHAR(p.codfornec)) AS fornecedor,
     INITCAP(p.descricao) AS produto,
     p.embalagem,
     p.embalagemmaster,
