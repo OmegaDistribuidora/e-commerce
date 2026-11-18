@@ -72,6 +72,7 @@ img { display: block; max-width: 100%; }
 .partners-nav-item > a, .nav-support { height: 100%; padding: 0 13px; display: flex; align-items: center; border-bottom: 3px solid transparent; font-size: 12px; font-weight: 750; }
 .partners-nav-item > a:hover, .nav-support:hover { border-bottom-color: var(--orange); }
 .partners-dropdown { left: auto; right: 0; width: 290px; display: grid; gap: 5px; }
+.partners-nav-item.closed .partners-dropdown { opacity: 0 !important; visibility: hidden !important; transform: translateY(8px) !important; pointer-events: none; }
 .partners-dropdown button, .partners-dropdown a { min-height: 48px; padding: 6px 9px; border: 0; border-radius: 7px; display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: 10px; background: transparent; color: var(--navy); text-align: left; font-size: 11px; font-weight: 750; }
 .partners-dropdown button:hover, .partners-dropdown a:hover { background: #edf5ff; }
 .partners-dropdown img { width: 58px; height: 35px; object-fit: contain; }

@@ -83,6 +83,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   const [authReady, setAuthReady] = useState(false)
   const [cartOpen, setCartOpen] = useState(initialCartOpen)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [partnersMenuClosed, setPartnersMenuClosed] = useState(false)
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [sendingOrder, setSendingOrder] = useState(false)
   const [orderError, setOrderError] = useState('')
@@ -232,7 +233,6 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   const catalogRows = useMemo(() => {
     const remaining = [...filteredProducts]
     const rows: Array<{ products: Product[]; bannerBefore: Banner | null }> = []
-    let displayed = 0
     const takeMatching = (predicate: (product: Product) => boolean, limit: number) => {
       const selected: Product[] = []
       for (let index = 0; index < remaining.length && selected.length < limit;) {
@@ -243,8 +243,8 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
     }
     const productsPerPage = 25
     const bannersPerPage = 2
-    for (let pageIndex = 0; remaining.length > 0 && displayed < visibleCount; pageIndex += 1) {
-      const pageProductLimit = Math.min(visibleCount, (pageIndex + 1) * productsPerPage)
+    const visiblePages = Math.max(1, Math.ceil(visibleCount / productsPerPage))
+    for (let pageIndex = 0; remaining.length > 0 && pageIndex < visiblePages; pageIndex += 1) {
       const pageBanners = isBannerDestination ? [] : catalogBanners.slice(pageIndex * bannersPerPage, (pageIndex + 1) * bannersPerPage)
       const matchesBanner = (product: Product, banner: Banner) => {
         if (banner.destinationType === 'sections') return banner.destinationValues.includes(product.sectionCode)
@@ -253,27 +253,33 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
         if (banner.destinationType === 'campaigns') return product.campaignOffers?.some((offer) => banner.destinationValues.includes(offer.campaignCode)) ?? false
         return true
       }
+      let addedBannerGroup = false
       for (const banner of pageBanners) {
-        if (!remaining.length || displayed >= pageProductLimit) break
+        if (!remaining.length) break
         const hasSpecificDestination = banner.destinationType !== 'navigation' && banner.destinationValues.length > 0
         if (hasSpecificDestination && !remaining.some((product) => matchesBanner(product, banner))) continue
-        const groupLimit = Math.min(10, pageProductLimit - displayed)
         const bannerProducts = hasSpecificDestination
-          ? takeMatching((product) => matchesBanner(product, banner), groupLimit)
-          : remaining.splice(0, groupLimit)
+          ? takeMatching((product) => matchesBanner(product, banner), 10)
+          : remaining.splice(0, 10)
         if (!bannerProducts.length) continue
         rows.push({ products: bannerProducts, bannerBefore: banner })
-        displayed += bannerProducts.length
+        addedBannerGroup = true
       }
-      while (remaining.length > 0 && displayed < pageProductLimit) {
-        const limit = Math.min(5, pageProductLimit - displayed)
-        const rowProducts = remaining.splice(0, limit)
-        displayed += rowProducts.length
-        rows.push({ products: rowProducts, bannerBefore: null })
+      // Se há um banner válido nesta página, somente os produtos daquele banner
+      // ficam abaixo dele. Produtos gerais são exibidos apenas quando os banners
+      // da página acabam, evitando que pareçam pertencer ao último banner.
+      if (!addedBannerGroup) {
+        let pageProducts = 0
+        while (remaining.length > 0 && pageProducts < productsPerPage) {
+          const rowProducts = remaining.splice(0, Math.min(5, productsPerPage - pageProducts))
+          pageProducts += rowProducts.length
+          rows.push({ products: rowProducts, bannerBefore: null })
+        }
       }
     }
     return rows
   }, [catalogBanners, filteredProducts, isBannerDestination, visibleCount])
+  const displayedCatalogProductCount = catalogRows.reduce((total, row) => total + row.products.length, 0)
   const cartCount = cart.length
   const cartTotal = cart.reduce((sum, item) => sum + (productPriceForQuantity(item, item.quantity).unitPrice ?? 0) * item.quantity, 0)
   const minimumOrder = 200
@@ -573,7 +579,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
 
   return (
     <div className="app-shell">
-      <div className="topbar"><div className="container topbar-inner"><p>{customer ? <>Bem-vindo(a), <strong>{customer.tradeName || customer.legalName}</strong></> : staffUser ? <>Sessão de gestão: <strong>{staffUser.name}</strong></> : <>Tudo o que você precisa, <strong>sempre por perto.</strong></>}</p><div className="topbar-links"><span><MapPin size={15} /> Entregamos em todo o Ceará</span><a href={whatsappUrl} target="_blank" rel="noreferrer">Central de ajuda</a></div></div></div>
+      <div className="topbar"><div className="container topbar-inner"><p aria-busy={!authReady}>{!authReady ? <>&nbsp;</> : customer ? <>Bem-vindo(a), <strong>{customer.tradeName || customer.legalName}</strong></> : staffUser ? <>Sessão de gestão: <strong>{staffUser.name}</strong></> : <>Tudo o que você precisa, <strong>sempre por perto.</strong></>}</p><div className="topbar-links"><span><MapPin size={15} /> Entregamos em todo o Ceará</span><a href={whatsappUrl} target="_blank" rel="noreferrer">Central de ajuda</a></div></div></div>
       <header className="site-header">
         <div className="container header-main">
           <button className="mobile-menu-btn icon-btn" aria-label="Abrir menu" onClick={() => setMenuOpen(true)}><Menu /></button>
@@ -594,7 +600,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
               </div>
             </div>)}
             <a className="nav-campaigns" href="/campanhas">Campanhas</a>
-            <div className="partners-nav-item"><a href="#parceiros">Parceiros</a>{partnerLogos.length > 0 && <div className="partners-dropdown">{partnerLogos.map((partner) => <button key={partner.supplierId} onClick={() => selectPartner(partner)}><img src={partner.logo} alt="" /><span>{partner.name}</span></button>)}</div>}</div>
+            <div className={`partners-nav-item${partnersMenuClosed ? ' closed' : ''}`} onMouseLeave={() => setPartnersMenuClosed(false)}><a href="#parceiros">Parceiros</a>{partnerLogos.length > 0 && <div className="partners-dropdown">{partnerLogos.map((partner) => <button key={partner.supplierId} onClick={(event) => { selectPartner(partner); setPartnersMenuClosed(true); event.currentTarget.blur() }}><img src={partner.logo} alt="" /><span>{partner.name}</span></button>)}</div>}</div>
             <a className="nav-support" href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a>
           </div>
         </nav>
@@ -618,9 +624,9 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
               </div>
             })}</div>
           </aside>}
-          <div className="section-heading"><div>{!isBannerDestination && <span className="eyebrow">DEPARTAMENTO → SEÇÃO → PRODUTOS</span>}<h1>{isBannerDestination ? bannerPageTitle || (initialCampaignCode > 0 ? `Produtos da campanha #${initialCampaignCode}` : selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : selectedSupplierName ? `Produtos ${selectedSupplierName}` : 'Produtos') : selectedSupplierName ? `Produtos ${selectedSupplierName}` : query ? `Resultados para “${query}”` : selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : catalogMode === 'bestsellers' ? 'Mais vendidos nos últimos 7 dias' : 'Todos os produtos'}</h1>{initialCampaignCode > 0 && <p className="taxonomy-breadcrumb"><a href="/campanhas">Campanhas de desconto</a> → campanha #{initialCampaignCode}</p>}{selectedDepartment && <p className="taxonomy-breadcrumb">{formatCatalogName(selectedDepartment.name)}{selectedSection ? ` → ${formatCatalogName(selectedSection.name)}` : ''}</p>}</div><span className="result-count">{filteredProducts.length} {filteredProducts.length === 1 ? 'produto' : 'produtos'}</span></div>
+          <div className="section-heading"><div><h1>{isBannerDestination ? bannerPageTitle || (initialCampaignCode > 0 ? `Produtos da campanha #${initialCampaignCode}` : selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : selectedSupplierName ? `Produtos ${selectedSupplierName}` : 'Produtos') : selectedSupplierName ? `Produtos ${selectedSupplierName}` : query ? `Resultados para “${query}”` : selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : catalogMode === 'bestsellers' ? 'Mais vendidos nos últimos 7 dias' : 'Todos os produtos'}</h1>{initialCampaignCode > 0 && <p className="taxonomy-breadcrumb"><a href="/campanhas">Campanhas de desconto</a> → campanha #{initialCampaignCode}</p>}{selectedDepartment && <p className="taxonomy-breadcrumb">{formatCatalogName(selectedDepartment.name)}{selectedSection ? ` → ${formatCatalogName(selectedSection.name)}` : ''}</p>}</div><span className="result-count">{filteredProducts.length} {filteredProducts.length === 1 ? 'produto' : 'produtos'}</span></div>
           {!isBannerDestination && <div className="catalog-filters"><span className="filter-title"><SlidersHorizontal size={18} /> Refinar catálogo</span><label>Fornecedor<select value={supplierFilter} onChange={(event) => selectSupplier(event.target.value)}><option value="">Todos os fornecedores</option>{supplierOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Departamento<select value={departmentFilter} onChange={(event) => event.target.value ? selectDepartment(event.target.value) : clearFilters()}><option value="">Todos os departamentos</option>{departments.map((department) => <option value={department.name} key={department.code || department.name}>{formatCatalogName(department.name)}</option>)}</select></label><label>Seção<select value={sectionFilter} onChange={(event) => event.target.value ? selectSection(departmentFilter, event.target.value) : selectDepartment(departmentFilter)} disabled={!selectedDepartment}><option value="">Todas as seções</option>{selectedDepartment?.sections.map((section) => <option value={section.name} key={section.code || section.name}>{formatCatalogName(section.name)}</option>)}</select></label><button onClick={clearFilters}>Limpar filtros</button></div>}
-          {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : catalogRows.length > 0 ? <><div className="catalog-flow">{catalogRows.map((row, rowIndex) => <div className="catalog-row-group" key={`row-${rowIndex}`}>{row.bannerBefore && <a className="catalog-banner" href={bannerTarget(row.bannerBefore)}><img src={row.bannerBefore.imageUrl} alt={row.bannerBefore.altText} /></a>}<div className="product-grid">{row.products.map((product, productIndex) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? rowIndex * 5 + productIndex + 1 : undefined} addToCart={addToCart} changeQuantity={changeQuantity} setQuantity={setQuantity} toggleFavorite={toggleFavorite} favorite={favoriteIds.has(product.id)} quantity={cart.find((item) => item.id === product.id)?.quantity ?? 0} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} commercialBlocked={Boolean(customer?.commercialBlocked)} checkingStock={stockCheckingIds.has(product.id)} onInvalid={setToast} />)}</div></div>)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 25)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={isBannerDestination ? resetBannerRefinements : clearFilters}>Limpar filtros</button></div>}
+          {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : catalogRows.length > 0 ? <><div className="catalog-flow">{catalogRows.map((row, rowIndex) => <div className="catalog-row-group" key={`row-${rowIndex}`}>{row.bannerBefore && <a className="catalog-banner" href={bannerTarget(row.bannerBefore)}><img src={row.bannerBefore.imageUrl} alt={row.bannerBefore.altText} /></a>}<div className="product-grid">{row.products.map((product, productIndex) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? rowIndex * 5 + productIndex + 1 : undefined} addToCart={addToCart} changeQuantity={changeQuantity} setQuantity={setQuantity} toggleFavorite={toggleFavorite} favorite={favoriteIds.has(product.id)} quantity={cart.find((item) => item.id === product.id)?.quantity ?? 0} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} commercialBlocked={Boolean(customer?.commercialBlocked)} checkingStock={stockCheckingIds.has(product.id)} onInvalid={setToast} />)}</div></div>)}</div>{displayedCatalogProductCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 25)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={isBannerDestination ? resetBannerRefinements : clearFilters}>Limpar filtros</button></div>}
         </section>
 
         {!isBannerDestination && partnerLogos.length > 0 && <section className="brands-section" id="parceiros"><div className="container"><div className="section-heading"><div><h2>Nossos parceiros</h2><p>Selecione uma marca para ver todos os produtos desse fornecedor.</p></div></div></div><div className="brands-carousel"><div className="brands-track">{[0, 1].map((copy) => <div className="brands-loop" aria-hidden={copy === 1 || undefined} key={copy}>{partnerLogos.map((partner) => <button className="brand-card" onClick={() => selectPartner(partner)} key={`${copy}-${partner.supplierId}`} tabIndex={copy === 1 ? -1 : undefined} aria-label={`Filtrar produtos de ${partner.name}`}><img src={partner.logo} alt={copy === 0 ? `Logo ${partner.name}` : ''} loading="lazy" /></button>)}</div>)}</div></div></section>}
