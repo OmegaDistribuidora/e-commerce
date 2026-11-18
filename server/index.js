@@ -191,7 +191,7 @@ function omegaApiConfig() {
 
 async function fetchWinthorOrderStatuses(orderNumbers) {
   const config = omegaApiConfig()
-  if (!config) throw new OmegaApiError('A consulta de pedidos do WinThor ainda não está configurada.', 503)
+  if (!config) throw new OmegaApiError('A consulta de pedidos do sistema comercial ainda não está configurada.', 503)
   let response
   try {
     response = await fetch(`${config.url}/v1/winthor/pedidos/status`, {
@@ -205,14 +205,14 @@ async function fetchWinthorOrderStatuses(orderNumbers) {
       signal: AbortSignal.timeout(12_000),
     })
   } catch {
-    throw new OmegaApiError('Não foi possível consultar o status no WinThor agora.', 503)
+    throw new OmegaApiError('Não foi possível consultar o status do pedido agora.', 503)
   }
   const text = await response.text()
   let data = {}
   try { data = text ? JSON.parse(text) : {} } catch { data = {} }
   if (!response.ok) {
     const status = response.status === 401 ? 502 : (response.status >= 500 ? 503 : 502)
-    throw new OmegaApiError(data.detail || 'Não foi possível consultar o status no WinThor.', status)
+    throw new OmegaApiError('Não foi possível consultar o status do pedido.', status)
   }
   const statuses = new Map()
   for (const order of Array.isArray(data.pedidos) ? data.pedidos : []) {
@@ -232,7 +232,7 @@ async function fetchWinthorOrderStatuses(orderNumbers) {
 
 async function fetchWinthorCustomerByDocument(document) {
   const config = omegaApiConfig()
-  if (!config) throw new OmegaApiError('A consulta de clientes do WinThor ainda não está configurada.', 503)
+  if (!config) throw new OmegaApiError('A consulta do cadastro comercial ainda não está configurada.', 503)
   let response
   try {
     response = await fetch(`${config.url}/v1/winthor/clientes/por-documento`, {
@@ -246,7 +246,7 @@ async function fetchWinthorCustomerByDocument(document) {
       signal: AbortSignal.timeout(12_000),
     })
   } catch {
-    throw new OmegaApiError('Não foi possível consultar o cliente no WinThor agora.', 503)
+    throw new OmegaApiError('Não foi possível consultar o cadastro do cliente agora.', 503)
   }
   const text = await response.text()
   let data = {}
@@ -281,14 +281,14 @@ async function fetchWinthorCustomerByDocument(document) {
         return null
       }
     } catch {
-      throw new OmegaApiError('Não foi possível consultar o cliente no WinThor agora.', 503)
+      throw new OmegaApiError('Não foi possível consultar o cadastro do cliente agora.', 503)
     }
   } else if (response.status === 404) {
     return null
   }
   if (!response.ok) {
     const status = response.status === 401 ? 502 : (response.status >= 500 ? 503 : 502)
-    throw new OmegaApiError(data.detail || 'Não foi possível consultar o cliente no WinThor.', status)
+    throw new OmegaApiError('Não foi possível consultar o cadastro do cliente.', status)
   }
   const customer = data.cliente
   const code = Number(customer?.codigo)
@@ -314,14 +314,14 @@ async function refreshStaleOrderStatuses(orders) {
       // anteriormente confirmado desaparece da PCPEDC/PCPEDI, ele foi removido no WinThor
       // (caso observado em cancelamentos) e não deve permanecer como liberado no e-commerce.
       const winthorStatus = statuses.get(winthorOrderNumber) || {
-        status: 'cancelled', code: 'C', label: 'Cancelado no WinThor',
+        status: 'cancelled', code: 'C', label: 'Cancelado no sistema comercial',
       }
       const checkedAt = new Date()
       await pool.query(
         `UPDATE orders SET status=$2::varchar, winthor_status_code=$3, winthor_status_label=$4,
            winthor_status_checked_at=$5,
            cancelled_at=CASE WHEN $2::varchar='cancelled' THEN COALESCE(cancelled_at,$5) ELSE cancelled_at END,
-           cancelled_by=CASE WHEN $2::varchar='cancelled' THEN COALESCE(NULLIF(cancelled_by,''),'WinThor') ELSE cancelled_by END,
+           cancelled_by=CASE WHEN $2::varchar='cancelled' THEN COALESCE(NULLIF(cancelled_by,''),'Sistema comercial') ELSE cancelled_by END,
            updated_at=CASE WHEN status<>$2::varchar THEN CURRENT_TIMESTAMP ELSE updated_at END
          WHERE id=$1 AND winthor_order_number=$6`,
         [order.id, winthorStatus.status, winthorStatus.code, winthorStatus.label, checkedAt, winthorOrderNumber],
@@ -332,7 +332,7 @@ async function refreshStaleOrderStatuses(orders) {
       order.winthor_status_checked_at = checkedAt
       if (winthorStatus.status === 'cancelled') {
         order.cancelled_at ||= checkedAt
-        order.cancelled_by ||= 'WinThor'
+        order.cancelled_by ||= 'Sistema comercial'
       }
     }))
   } catch (error) {
@@ -420,8 +420,18 @@ async function findMissingBannerDestination(database, banners) {
   }
   for (const banner of banners) {
     if (banner.destinationType === 'navigation') continue
-    const configuration = configurations[banner.destinationType]
     const codes = [...new Set(banner.destinationValues.map(Number))]
+    if (banner.destinationType === 'campaigns') {
+      const result = await database.query(
+        'SELECT external_id AS code FROM discount_campaigns WHERE external_id = ANY($1::int[])',
+        [codes],
+      )
+      const availableCodes = new Set(result.rows.map((row) => Number(row.code)))
+      const missingCode = codes.find((code) => !availableCodes.has(code))
+      if (missingCode) return { label: 'campanha', code: missingCode }
+      continue
+    }
+    const configuration = configurations[banner.destinationType]
     const result = await database.query(
       `SELECT DISTINCT ${configuration.column} AS code FROM products
        WHERE active=TRUE AND ${configuration.column} = ANY($1::int[])`,
@@ -439,6 +449,7 @@ function bannerDestinationUrl(banner) {
   if (banner.destinationType === 'sections') return `/?secoes=${codes}#produtos`
   if (banner.destinationType === 'products') return `/?produtos=${codes}#produtos`
   if (banner.destinationType === 'suppliers') return `/?fornecedores=${codes}#produtos`
+  if (banner.destinationType === 'campaigns') return `/?campanha=${banner.destinationValues[0]}#produtos`
   return banner.navigationPath || '/#produtos'
 }
 
@@ -657,7 +668,7 @@ async function cancelOrder(orderId, { customerId = null, cancelledBy }) {
   if (!current.rows.length) throw new RequestError('Pedido não encontrado.', 404)
   if (current.rows[0].status === 'cancelled') throw new RequestError('Este pedido já foi cancelado.', 409)
   throw new RequestError(
-    `Este pedido já foi vinculado ao WinThor (NUMPED ${current.rows[0].winthor_order_number}) e não pode mais ser cancelado pelo e-commerce.`,
+    `Este pedido já foi vinculado ao número ${current.rows[0].winthor_order_number} e não pode mais ser cancelado pelo e-commerce.`,
     409,
   )
 }
@@ -1052,7 +1063,7 @@ app.get('/api/banners', async (request, response, next) => {
          AND (b.ends_at IS NULL OR b.ends_at > CURRENT_TIMESTAMP)
          AND (
            b.destination_type = 'navigation'
-           OR EXISTS (
+           OR (b.destination_type IN ('sections','products','suppliers') AND EXISTS (
              SELECT 1
              FROM products bp
              WHERE bp.active = TRUE
@@ -1062,10 +1073,19 @@ app.get('/api/banners', async (request, response, next) => {
                  OR (b.destination_type = 'suppliers' AND bp.supplier_id = ANY(b.destination_values))
                )
                AND ($2::integer[] = '{}'::integer[] OR NOT (bp.supplier_id = ANY($2::integer[])))
-           )
+           ))
+           OR (b.destination_type = 'campaigns' AND EXISTS (
+             SELECT 1
+             FROM discount_campaigns bdc
+             JOIN discount_campaign_products bdcp ON bdcp.campaign_id=bdc.id
+             JOIN products bp ON bp.id=bdcp.product_id AND bp.active=TRUE
+             WHERE bdc.external_id=ANY(b.destination_values)
+               AND bdc.active=TRUE AND bdc.starts_on<=$3::date AND bdc.ends_on>=$3::date
+               AND ($2::integer[] = '{}'::integer[] OR NOT (bp.supplier_id = ANY($2::integer[])))
+           ))
          )
        ORDER BY b.position, b.id`,
-      [placement, postgresIntegerArray(restrictedSupplierIds)],
+      [placement, postgresIntegerArray(restrictedSupplierIds), currentBrasiliaDate()],
     )
     return response.json({ banners: result.rows.map((banner) => ({
       id: Number(banner.id),
@@ -1274,7 +1294,7 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
     await client.query(
       `INSERT INTO product_sync_runs
        (finished_at,source_count,inserted_count,updated_count,deactivated_count,status,details)
-       VALUES (CURRENT_TIMESTAMP,$1,$2,$3,$4,'success','WinThor via API HTTPS')`,
+       VALUES (CURRENT_TIMESTAMP,$1,$2,$3,$4,'success','Sistema comercial via API HTTPS')`,
       [stats.sourceCount, stats.insertedCount, stats.updatedCount, stats.deactivatedCount],
     )
     await client.query('DROP TABLE ecommerce_product_stage')
@@ -1583,7 +1603,7 @@ app.post('/api/customer/quote', async (request, response, next) => {
       return response.status(403).json({ message: 'Seu cadastro está bloqueado para compras. Fale com a equipe Ômega.' })
     }
     if (pricing.region == null || !pricing.plans.length) {
-      return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda estão sendo atualizadas pelo WinThor.' })
+      return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda estão sendo atualizadas.' })
     }
     const requested = parsed.data.paymentPlan
     if (requested && !pricing.plans.some((item) => item.code === requested)) {
@@ -2088,7 +2108,7 @@ app.get('/api/customer/commercial-conditions', async (request, response, next) =
   try {
     const summary = await customerCreditSummary(pool, request.customer.id)
     if (!summary) {
-      return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda estão sendo atualizadas pelo WinThor.' })
+      return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda estão sendo atualizadas.' })
     }
     return response.json(summary)
   } catch (error) {
@@ -2247,10 +2267,10 @@ app.post('/api/staff/customers', requireCommercialAccess, async (request, respon
       })
     }
     const winthorCustomer = await fetchWinthorCustomerByDocument(data.document)
-    if (!winthorCustomer) return response.status(422).json({ message: 'CPF ou CNPJ não encontrado no WinThor.' })
+    if (!winthorCustomer) return response.status(422).json({ message: 'CPF ou CNPJ não encontrado no cadastro comercial.' })
     const linked = await pool.query('SELECT id FROM customers WHERE external_id=$1 AND active=TRUE LIMIT 1', [winthorCustomer.code])
     if (linked.rows.length) {
-      return response.status(409).json({ message: `O código WinThor ${winthorCustomer.code} já está vinculado a outro cliente do e-commerce.` })
+      return response.status(409).json({ message: `O código de cliente ${winthorCustomer.code} já está vinculado a outro cliente do e-commerce.` })
     }
     authUser = await createConfirmedSupabaseUser({
       email: data.email,
@@ -2348,7 +2368,7 @@ app.post('/api/staff/customers/:id/approve', requireCommercialAccess, async (req
     const winthorCustomer = await fetchWinthorCustomerByDocument(current.rows[0].document)
     if (!winthorCustomer) {
       return response.status(422).json({
-        message: 'CPF ou CNPJ não encontrado no WinThor. O cadastro continua em análise.',
+        message: 'CPF ou CNPJ não encontrado no cadastro comercial. O cadastro continua em análise.',
       })
     }
     const result = await pool.query(
@@ -2389,7 +2409,7 @@ app.put('/api/staff/orders/:id/winthor', requireCommercialAccess, async (request
     const winthorOrderNumber = parsed.data.winthorOrderNumber
     const statuses = await fetchWinthorOrderStatuses([winthorOrderNumber])
     const winthorStatus = statuses.get(winthorOrderNumber)
-    if (!winthorStatus) return response.status(404).json({ message: 'NUMPED não encontrado no WinThor.' })
+    if (!winthorStatus) return response.status(404).json({ message: 'Número do pedido não encontrado no sistema comercial.' })
     const result = await pool.query(
       `UPDATE orders SET winthor_order_number=$2, status=$3,
          winthor_status_code=$4, winthor_status_label=$5,
@@ -2403,7 +2423,7 @@ app.put('/api/staff/orders/:id/winthor', requireCommercialAccess, async (request
     if (!result.rows.length) {
       const exists = await pool.query('SELECT 1 FROM orders WHERE id=$1', [orderId])
       return exists.rows.length
-        ? response.status(409).json({ message: 'Este pedido foi cancelado e não pode ser vinculado ao WinThor.' })
+        ? response.status(409).json({ message: 'Este pedido foi cancelado e não pode mais ser vinculado.' })
         : response.status(404).json({ message: 'Pedido do e-commerce não encontrado.' })
     }
     const orders = await listOrders('WHERE o.id = $1', [orderId])
@@ -2459,7 +2479,7 @@ app.post('/api/staff/users', requireAdmin, async (request, response, next) => {
 })
 
 app.all(/^\/api\/staff\/categories(?:\/.*)?$/, requireStaff, (_request, response) => (
-  response.status(410).json({ message: 'As categorias manuais foram desativadas. Use os departamentos e seções sincronizados do WinThor.' })
+  response.status(410).json({ message: 'As categorias manuais foram desativadas. Use os departamentos e seções disponíveis no catálogo.' })
 ))
 
 app.get('/api/staff/categories', requireStaff, async (_request, response, next) => {
@@ -2858,7 +2878,7 @@ app.post('/api/orders', async (request, response, next) => {
     const conditions = await customerCreditSummary(client, request.customer.id, { lock: true })
     if (!conditions) {
       await client.query('ROLLBACK')
-      return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda não foram sincronizadas com o WinThor.' })
+      return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda estão sendo atualizadas.' })
     }
     if (conditions.isBlocked) {
       await client.query('ROLLBACK')
@@ -2867,7 +2887,7 @@ app.post('/api/orders', async (request, response, next) => {
     const pricing = await customerPricing(client, request.customer)
     if (pricing.region == null) {
       await client.query('ROLLBACK')
-      return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda não foram sincronizadas com o WinThor.' })
+      return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda estão sendo atualizadas.' })
     }
     const selectedPlan = pricing.plans.find((plan) => plan.code === parsed.data.paymentPlan)
     if (!selectedPlan) {
@@ -2889,7 +2909,7 @@ app.post('/api/orders', async (request, response, next) => {
 
     if (pricing.stockBranch == null) {
       await client.query('ROLLBACK')
-      return response.status(503).json({ message: 'A filial de atendimento deste cadastro ainda não foi sincronizada com o WinThor.' })
+      return response.status(503).json({ message: 'A filial de atendimento deste cadastro ainda está sendo atualizada.' })
     }
     // Uma trava curta por filial serializa checkouts concorrentes. Assim, o segundo
     // pedido ja enxerga a reserva local criada pelo primeiro antes de validar o saldo.

@@ -143,7 +143,7 @@ export type Banner = {
   imageUrl: string
   targetUrl: string
   sectionCode: number | null
-  destinationType: 'navigation' | 'sections' | 'products' | 'suppliers'
+  destinationType: 'navigation' | 'sections' | 'products' | 'suppliers' | 'campaigns'
   destinationValues: number[]
   navigationPath: string
   sectionName?: string

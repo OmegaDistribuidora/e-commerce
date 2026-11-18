@@ -56,10 +56,11 @@ function App() {
     initialCartOpen={parameters.get('carrinho') === '1'}
     initialMode={parameters.get('modo') === 'mais-vendidos' ? 'bestsellers' : 'featured'}
     initialCampaignCode={Number(parameters.get('campanha')) || 0}
+    initialBannerId={Number(parameters.get('banner')) || 0}
   />
 }
 
-function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCodes, initialDepartment, initialSection, initialQuery, initialCartOpen, initialMode, initialCampaignCode }: { initialSupplierIds: number[]; initialSectionCodes: number[]; initialProductCodes: number[]; initialDepartment: string; initialSection: string; initialQuery: string; initialCartOpen: boolean; initialMode: 'featured' | 'bestsellers'; initialCampaignCode: number }) {
+function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCodes, initialDepartment, initialSection, initialQuery, initialCartOpen, initialMode, initialCampaignCode, initialBannerId }: { initialSupplierIds: number[]; initialSectionCodes: number[]; initialProductCodes: number[]; initialDepartment: string; initialSection: string; initialQuery: string; initialCartOpen: boolean; initialMode: 'featured' | 'bestsellers'; initialCampaignCode: number; initialBannerId: number }) {
   const [products, setProducts] = useState<Product[]>([])
   const [loadingProducts, setLoadingProducts] = useState(true)
   const [productsError, setProductsError] = useState('')
@@ -68,7 +69,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   const [destinationSupplierIds, setDestinationSupplierIds] = useState(initialSupplierIds)
   const [destinationSectionCodes, setDestinationSectionCodes] = useState(initialSectionCodes)
   const [destinationProductCodes, setDestinationProductCodes] = useState(initialProductCodes)
-  const isBannerDestination = destinationSupplierIds.length > 0 || destinationSectionCodes.length > 0 || destinationProductCodes.length > 0
+  const isBannerDestination = destinationSupplierIds.length > 0 || destinationSectionCodes.length > 0 || destinationProductCodes.length > 0 || initialCampaignCode > 0
   const [departmentFilter, setDepartmentFilter] = useState(initialDepartment)
   const [sectionFilter, setSectionFilter] = useState(initialSection)
   const [departments, setDepartments] = useState<CatalogDepartment[]>([])
@@ -92,6 +93,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   const [orderNumber, setOrderNumber] = useState('')
   const [slides, setSlides] = useState<Banner[]>(fallbackSlides)
   const [catalogBanners, setCatalogBanners] = useState<Banner[]>([])
+  const [bannerPageTitle, setBannerPageTitle] = useState('')
   const [slide, setSlide] = useState(0)
   const [toast, setToast] = useState('')
   const [favoriteIds, setFavoriteIds] = useState<Set<number>>(new Set())
@@ -162,16 +164,24 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   useEffect(() => {
     if (!authReady) return
     authenticatedFetch('/api/banners').then((response) => response.json()).then((data) => {
-      if (Array.isArray(data.banners)) setSlides(data.banners.length ? data.banners : fallbackSlides)
+      if (Array.isArray(data.banners)) {
+        setSlides(data.banners.length ? data.banners : fallbackSlides)
+        const selected = data.banners.find((banner: Banner) => banner.id === initialBannerId)
+        if (selected) setBannerPageTitle(selected.altText)
+      }
     }).catch(() => undefined)
     authenticatedFetch('/api/banners?placement=catalog').then((response) => response.json()).then((data) => {
-      if (Array.isArray(data.banners)) setCatalogBanners(data.banners)
+      if (Array.isArray(data.banners)) {
+        setCatalogBanners(data.banners)
+        const selected = data.banners.find((banner: Banner) => banner.id === initialBannerId)
+        if (selected) setBannerPageTitle(selected.altText)
+      }
     }).catch(() => undefined)
     authenticatedFetch('/api/catalog/navigation').then((response) => response.json()).then((data) => {
       if (Array.isArray(data.departments)) setDepartments(data.departments)
       if (Array.isArray(data.partners)) setPartnerLogos(data.partners)
     }).catch(() => undefined)
-  }, [authReady, customer?.id])
+  }, [authReady, customer?.id, initialBannerId])
   useEffect(() => {
     const timer = window.setInterval(() => setSlide((current) => (current + 1) % slides.length), 6500)
     return () => window.clearInterval(timer)
@@ -240,6 +250,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
         if (banner.destinationType === 'sections') return banner.destinationValues.includes(product.sectionCode)
         if (banner.destinationType === 'products') return banner.destinationValues.includes(product.code)
         if (banner.destinationType === 'suppliers') return banner.destinationValues.includes(product.supplierId)
+        if (banner.destinationType === 'campaigns') return product.campaignOffers?.some((offer) => banner.destinationValues.includes(offer.campaignCode)) ?? false
         return true
       }
       for (const banner of pageBanners) {
@@ -451,9 +462,10 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
 
   function bannerTarget(banner: Banner) {
     const codes = banner.destinationValues.join(',')
-    if (banner.destinationType === 'sections') return `/?secoes=${codes}#produtos`
-    if (banner.destinationType === 'products') return `/?produtos=${codes}#produtos`
-    if (banner.destinationType === 'suppliers') return `/?fornecedores=${codes}#produtos`
+    if (banner.destinationType === 'sections') return `/?secoes=${codes}&banner=${banner.id}#produtos`
+    if (banner.destinationType === 'products') return `/?produtos=${codes}&banner=${banner.id}#produtos`
+    if (banner.destinationType === 'suppliers') return `/?fornecedores=${codes}&banner=${banner.id}#produtos`
+    if (banner.destinationType === 'campaigns') return `/?campanha=${banner.destinationValues[0]}&banner=${banner.id}#produtos`
     return banner.navigationPath || '/#produtos'
   }
 
@@ -594,9 +606,9 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
         {!isBannerDestination && <section className="hero" aria-label="Destaques"><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item) => <a key={item.id} className="hero-slide" href={bannerTarget(item)}><img src={item.imageUrl} alt={item.altText} /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => setSlide((slide - 1 + slides.length) % slides.length)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => setSlide((slide + 1) % slides.length)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => setSlide(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section>}
 
         <section className={`container products-section ${selectedDepartment || isBannerDestination ? 'has-taxonomy' : 'catalog-home'}`} id="produtos" ref={productsRef}>
-          {(selectedDepartment || isBannerDestination) && <aside className="taxonomy-sidebar" aria-label={isBannerDestination ? 'Filtros dos produtos do banner' : 'Departamentos e seções'}>
-            <div className="taxonomy-sidebar-title"><SlidersHorizontal size={18} /><div><strong>{isBannerDestination ? 'Produtos do banner' : 'Departamentos'}</strong><span>{initialSupplierIds.length > 1 ? 'Escolha um fornecedor' : 'Escolha uma seção'}</span></div></div>
-            <button className={!departmentFilter && (!initialSupplierIds.length || !supplierFilter || initialSupplierIds.length === 1) ? 'active taxonomy-all' : 'taxonomy-all'} onClick={isBannerDestination ? resetBannerRefinements : clearFilters}>{isBannerDestination ? 'Todos deste banner' : 'Todos os produtos'}</button>
+          {(selectedDepartment || isBannerDestination) && <aside className="taxonomy-sidebar" aria-label={isBannerDestination ? 'Filtros dos produtos' : 'Departamentos e seções'}>
+            <div className="taxonomy-sidebar-title"><SlidersHorizontal size={18} /><div><strong>{isBannerDestination ? 'Filtros' : 'Departamentos'}</strong><span>{isBannerDestination ? 'Refine os produtos' : initialSupplierIds.length > 1 ? 'Escolha um fornecedor' : 'Escolha uma seção'}</span></div></div>
+            <button className={!departmentFilter && (!initialSupplierIds.length || !supplierFilter || initialSupplierIds.length === 1) ? 'active taxonomy-all' : 'taxonomy-all'} onClick={isBannerDestination ? resetBannerRefinements : clearFilters}>{isBannerDestination ? 'Todos os resultados' : 'Todos os produtos'}</button>
             {isBannerDestination && initialSupplierIds.length > 1 && <div className="taxonomy-suppliers">{contextualSuppliers.map(([id, name]) => <button className={supplierFilter === String(id) ? 'active' : ''} key={id} onClick={() => { setSupplierFilter(String(id)); setDepartmentFilter(''); setSectionFilter(''); setExpandedDepartment('') }}>{formatCatalogName(name)}</button>)}</div>}
             <div className="taxonomy-list">{(isBannerDestination ? contextualDepartments : departments).map((department) => {
               const open = expandedDepartment === department.name
@@ -606,7 +618,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
               </div>
             })}</div>
           </aside>}
-          <div className="section-heading"><div>{!isBannerDestination && <span className="eyebrow">DEPARTAMENTO → SEÇÃO → PRODUTOS</span>}<h1>{isBannerDestination ? selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : selectedSupplierName ? `Produtos ${selectedSupplierName}` : 'Produtos selecionados' : initialCampaignCode > 0 ? `Produtos da campanha #${initialCampaignCode}` : selectedSupplierName ? `Produtos ${selectedSupplierName}` : query ? `Resultados para “${query}”` : selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : catalogMode === 'bestsellers' ? 'Mais vendidos nos últimos 7 dias' : 'Todos os produtos'}</h1>{initialCampaignCode > 0 && <p className="taxonomy-breadcrumb"><a href="/campanhas">Campanhas de desconto</a> → campanha #{initialCampaignCode}</p>}{selectedDepartment && <p className="taxonomy-breadcrumb">{formatCatalogName(selectedDepartment.name)}{selectedSection ? ` → ${formatCatalogName(selectedSection.name)}` : ''}</p>}</div><span className="result-count">{filteredProducts.length} {filteredProducts.length === 1 ? 'produto' : 'produtos'}</span></div>
+          <div className="section-heading"><div>{!isBannerDestination && <span className="eyebrow">DEPARTAMENTO → SEÇÃO → PRODUTOS</span>}<h1>{isBannerDestination ? bannerPageTitle || (initialCampaignCode > 0 ? `Produtos da campanha #${initialCampaignCode}` : selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : selectedSupplierName ? `Produtos ${selectedSupplierName}` : 'Produtos') : selectedSupplierName ? `Produtos ${selectedSupplierName}` : query ? `Resultados para “${query}”` : selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : catalogMode === 'bestsellers' ? 'Mais vendidos nos últimos 7 dias' : 'Todos os produtos'}</h1>{initialCampaignCode > 0 && <p className="taxonomy-breadcrumb"><a href="/campanhas">Campanhas de desconto</a> → campanha #{initialCampaignCode}</p>}{selectedDepartment && <p className="taxonomy-breadcrumb">{formatCatalogName(selectedDepartment.name)}{selectedSection ? ` → ${formatCatalogName(selectedSection.name)}` : ''}</p>}</div><span className="result-count">{filteredProducts.length} {filteredProducts.length === 1 ? 'produto' : 'produtos'}</span></div>
           {!isBannerDestination && <div className="catalog-filters"><span className="filter-title"><SlidersHorizontal size={18} /> Refinar catálogo</span><label>Fornecedor<select value={supplierFilter} onChange={(event) => selectSupplier(event.target.value)}><option value="">Todos os fornecedores</option>{supplierOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Departamento<select value={departmentFilter} onChange={(event) => event.target.value ? selectDepartment(event.target.value) : clearFilters()}><option value="">Todos os departamentos</option>{departments.map((department) => <option value={department.name} key={department.code || department.name}>{formatCatalogName(department.name)}</option>)}</select></label><label>Seção<select value={sectionFilter} onChange={(event) => event.target.value ? selectSection(departmentFilter, event.target.value) : selectDepartment(departmentFilter)} disabled={!selectedDepartment}><option value="">Todas as seções</option>{selectedDepartment?.sections.map((section) => <option value={section.name} key={section.code || section.name}>{formatCatalogName(section.name)}</option>)}</select></label><button onClick={clearFilters}>Limpar filtros</button></div>}
           {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : catalogRows.length > 0 ? <><div className="catalog-flow">{catalogRows.map((row, rowIndex) => <div className="catalog-row-group" key={`row-${rowIndex}`}>{row.bannerBefore && <a className="catalog-banner" href={bannerTarget(row.bannerBefore)}><img src={row.bannerBefore.imageUrl} alt={row.bannerBefore.altText} /></a>}<div className="product-grid">{row.products.map((product, productIndex) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? rowIndex * 5 + productIndex + 1 : undefined} addToCart={addToCart} changeQuantity={changeQuantity} setQuantity={setQuantity} toggleFavorite={toggleFavorite} favorite={favoriteIds.has(product.id)} quantity={cart.find((item) => item.id === product.id)?.quantity ?? 0} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} commercialBlocked={Boolean(customer?.commercialBlocked)} checkingStock={stockCheckingIds.has(product.id)} onInvalid={setToast} />)}</div></div>)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 25)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={isBannerDestination ? resetBannerRefinements : clearFilters}>Limpar filtros</button></div>}
         </section>
@@ -624,7 +636,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
 
       {checkoutOpen && customer && commercialConditions && <div className="overlay modal-overlay" onMouseDown={() => setCheckoutOpen(false)}><div className="checkout-modal" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">CONFIRMAR PEDIDO</span><h2>Identificação do cliente</h2></div><button className="icon-btn" onClick={() => setCheckoutOpen(false)}><X /></button></div><form onSubmit={submitOrder}><div className="checkout-customer"><CircleUserRound /><div><strong>{customer.tradeName || customer.legalName}</strong><span>{formatDocument(customer.document)} · {customer.email}</span></div><a href="/conta">Alterar</a></div><label>Plano de pagamento<select name="paymentPlan" value={quote?.paymentPlan.code ?? ''} onChange={(event) => requestQuote(event.target.value)} disabled={quoting} required>{!quote && <option value="" disabled>Calculando...</option>}{(quote?.planTotals ?? commercialConditions.paymentPlans.map((plan) => ({ ...plan, total: null }))).map((plan) => <option key={plan.code} value={plan.code} disabled={quote !== null && plan.total === null}>{plan.label}{plan.total !== null ? ` · ${money.format(plan.total)}` : quote ? ' · indisponível' : ''}</option>)}</select></label><div className={`checkout-credit ${checkoutTotal > commercialConditions.availableCredit ? 'exceeded' : ''}`}><span>Crédito disponível</span><strong>{money.format(commercialConditions.availableCredit)}</strong>{commercialConditions.availableCredit < commercialConditions.creditLimit && <small>Limite de {money.format(commercialConditions.creditLimit)}, com {money.format(commercialConditions.creditLimit - commercialConditions.availableCredit)} comprometidos em títulos e pedidos em aberto.</small>}<small>{checkoutTotal > commercialConditions.availableCredit ? `Reduza o pedido em ${money.format(checkoutTotal - commercialConditions.availableCredit)}.` : `Após este pedido: ${money.format(commercialConditions.availableCredit - checkoutTotal)}`}</small></div><label>Observações<textarea name="notes" placeholder="Informe preferências de entrega, contato ou condições." rows={3} /></label>{orderError && <span className="field-error">{orderError}</span>}<div className="checkout-total"><span>Total no plano escolhido</span><strong>{quoting ? <LoaderCircle className="spin" /> : money.format(checkoutTotal)}</strong></div><button className="checkout-button" type="submit" disabled={sendingOrder || quoting || !quote || checkoutTotal < minimumOrder || checkoutTotal > commercialConditions.availableCredit || commercialConditions.paymentPlans.length === 0}>{sendingOrder ? <LoaderCircle className="spin" /> : <>Enviar pedido <ArrowRight size={19} /></>}</button></form></div></div>}
 
-      {orderNumber && <div className="overlay modal-overlay"><div className="success-modal"><span><PackageCheck /></span><h2>Pedido recebido!</h2><p>Sua solicitação foi registrada como <strong>{orderNumber}</strong>. Nossa equipe comercial fará a análise e associará o número do pedido no WinThor.</p><a className="primary-button" href="/pedidos">Ver meus pedidos</a><button className="secondary-button" onClick={() => setOrderNumber('')}>Continuar comprando</button></div></div>}
+      {orderNumber && <div className="overlay modal-overlay"><div className="success-modal"><span><PackageCheck /></span><h2>Pedido recebido!</h2><p>Sua solicitação foi registrada como <strong>{orderNumber}</strong>. Nossa equipe comercial fará a análise e dará continuidade ao atendimento.</p><a className="primary-button" href="/pedidos">Ver meus pedidos</a><button className="secondary-button" onClick={() => setOrderNumber('')}>Continuar comprando</button></div></div>}
       {toast && <div className="toast"><PackageCheck size={19} />{toast}</div>}
     </div>
   )

@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS banners (
   image_mime VARCHAR(50),
   target_url TEXT NOT NULL DEFAULT '#produtos',
   section_code INTEGER,
-  destination_type VARCHAR(20) NOT NULL DEFAULT 'navigation' CHECK (destination_type IN ('navigation', 'sections', 'products', 'suppliers')),
+  destination_type VARCHAR(20) NOT NULL DEFAULT 'navigation' CHECK (destination_type IN ('navigation', 'sections', 'products', 'suppliers', 'campaigns')),
   destination_values INTEGER[] NOT NULL DEFAULT '{}',
   navigation_path TEXT NOT NULL DEFAULT '/#produtos',
   placement VARCHAR(20) NOT NULL DEFAULT 'hero' CHECK (placement IN ('hero', 'catalog')),
@@ -209,8 +209,8 @@ CREATE TABLE IF NOT EXISTS region_prices (
   PRIMARY KEY (region, product_id)
 );
 
--- Campanhas comerciais da rotina 3306 do WinThor autorizadas para o RCA do
--- e-commerce. O WinThor continua sendo a fonte oficial e a sincronização é
+-- Campanhas comerciais autorizadas para o canal do e-commerce. O sistema
+-- comercial continua sendo a fonte oficial e a sincronização é
 -- sempre tratada como um snapshot completo.
 CREATE TABLE IF NOT EXISTS discount_campaigns (
   id BIGSERIAL PRIMARY KEY,
