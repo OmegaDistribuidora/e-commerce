@@ -81,10 +81,10 @@ img { display: block; max-width: 100%; }
 .icon-btn { display: grid; place-items: center; border: 0; background: transparent; color: var(--navy); padding: 7px; border-radius: 8px; }
 .icon-btn:hover { background: #edf3fa; }
 
-.hero { position: relative; width: 100%; aspect-ratio: 3 / 1; overflow: hidden; background: #fff; }
+.hero { position: relative; width: 100%; aspect-ratio: 3 / 1; overflow: hidden; background: #fff; touch-action: pan-y; }
 .hero-track { height: 100%; display: flex; transition: transform .8s cubic-bezier(.65,0,.35,1); will-change: transform; }
 .hero-slide { flex: 0 0 100%; height: 100%; padding: 0; border: 0; background: transparent; }
-.hero-slide img { width: 100%; height: 100%; object-fit: contain; }
+.hero-slide img { width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; }
 .slider-arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; border: 1px solid rgba(255,255,255,.36); background: rgba(3,30,72,.48); color: #fff; backdrop-filter: blur(8px); opacity: 0; transition: .2s; }
 .hero:hover .slider-arrow { opacity: 1; }
 .slider-arrow.prev { left: 28px; }
@@ -757,8 +757,8 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .product-detail-campaign span { font-size: 10px; }
 
 @property --campaign-glow-angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
-.nav-campaigns { --campaign-glow-angle: 0deg; height: calc(100% - 10px) !important; margin: 5px 4px; padding: 0 13px; border: 1px solid transparent !important; border-radius: 8px; color: #fff; display: flex; align-items: center; font-size: 12px; font-weight: 900 !important; white-space: nowrap; background: linear-gradient(#074d9d,#074d9d) padding-box, conic-gradient(from var(--campaign-glow-angle), transparent 0 55%, rgba(255,255,255,.75) 64%, rgba(252,199,28,.95) 72%, rgba(252,104,0,.7) 79%, transparent 88%) border-box; animation: campaign-border-glow 5s linear infinite; }
-.nav-campaigns:hover,.nav-campaigns.active { color: #fff; background: linear-gradient(#185eaa,#185eaa) padding-box, conic-gradient(from var(--campaign-glow-angle), transparent 0 48%, rgba(255,255,255,.8) 60%, rgba(252,199,28,.95) 72%, transparent 88%) border-box; }
+.nav-campaigns { --campaign-glow-angle: 0deg; height: calc(100% - 10px) !important; margin: 5px 4px; padding: 0 13px; border: 2px solid transparent !important; border-radius: 8px; color: #fff; display: flex; align-items: center; font-size: 12px; font-weight: 900 !important; white-space: nowrap; background: linear-gradient(#074d9d,#074d9d) padding-box, conic-gradient(from var(--campaign-glow-angle), transparent 0 52%, #fe993c 66%, #fe993c 76%, transparent 90%) border-box; box-shadow: 0 0 9px rgba(254,153,60,.28); animation: campaign-border-glow 4.5s linear infinite; }
+.nav-campaigns:hover,.nav-campaigns.active { color: #fff; background: linear-gradient(#185eaa,#185eaa) padding-box, conic-gradient(from var(--campaign-glow-angle), transparent 0 48%, #fe993c 63%, #fe993c 78%, transparent 92%) border-box; box-shadow: 0 0 11px rgba(254,153,60,.38); }
 @keyframes campaign-border-glow { to { --campaign-glow-angle: 360deg; } }
 .campaigns-main { padding: 52px 0 80px; }
 .campaigns-main > header { max-width: 820px; margin-bottom: 28px; }

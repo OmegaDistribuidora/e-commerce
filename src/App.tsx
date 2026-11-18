@@ -101,11 +101,14 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   const [catalogBanners, setCatalogBanners] = useState<Banner[]>([])
   const [bannerPageTitle, setBannerPageTitle] = useState('')
   const [slide, setSlide] = useState(0)
+  const [slidePausedUntil, setSlidePausedUntil] = useState(0)
   const [toast, setToast] = useState('')
   const [favoriteIds, setFavoriteIds] = useState<Set<number>>(new Set())
   const [stockCheckingIds, setStockCheckingIds] = useState<Set<number>>(new Set())
   const stockChecksRef = useRef(new Set<number>())
   const productsRef = useRef<HTMLElement>(null)
+  const heroTouchStartRef = useRef<{ x: number; y: number } | null>(null)
+  const suppressHeroClickRef = useRef(false)
 
   useEffect(() => {
     authenticatedFetch('/api/auth/me')
@@ -189,9 +192,11 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
     }).catch(() => undefined)
   }, [authReady, customer?.id, initialBannerId])
   useEffect(() => {
-    const timer = window.setInterval(() => setSlide((current) => (current + 1) % slides.length), 6500)
-    return () => window.clearInterval(timer)
-  }, [slides.length])
+    if (slides.length <= 1) return
+    const delay = Math.max(6500, slidePausedUntil - Date.now())
+    const timer = window.setTimeout(() => setSlide((current) => (current + 1) % slides.length), delay)
+    return () => window.clearTimeout(timer)
+  }, [slide, slidePausedUntil, slides.length])
   useEffect(() => { if (slide >= slides.length) setSlide(0) }, [slide, slides.length])
   useEffect(() => {
     if (!toast) return
@@ -411,6 +416,30 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
     setVisibleCount(25)
   }
 
+  function selectSlideManually(nextSlide: number) {
+    if (slides.length <= 1) return
+    setSlide((nextSlide + slides.length) % slides.length)
+    setSlidePausedUntil(Date.now() + 10000)
+  }
+
+  function startHeroSwipe(event: React.TouchEvent<HTMLElement>) {
+    const touch = event.touches[0]
+    heroTouchStartRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null
+  }
+
+  function finishHeroSwipe(event: React.TouchEvent<HTMLElement>) {
+    const start = heroTouchStartRef.current
+    const touch = event.changedTouches[0]
+    heroTouchStartRef.current = null
+    if (!start || !touch) return
+    const horizontal = touch.clientX - start.x
+    const vertical = touch.clientY - start.y
+    if (Math.abs(horizontal) < 45 || Math.abs(horizontal) <= Math.abs(vertical) * 1.15) return
+    suppressHeroClickRef.current = true
+    selectSlideManually(slide + (horizontal < 0 ? 1 : -1))
+    window.setTimeout(() => { suppressHeroClickRef.current = false }, 300)
+  }
+
   function selectSearch(value: string) {
     setQuery(value)
     setSupplierFilter('')
@@ -614,7 +643,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
       {customer && !customer.canOrder && <div className="store-pending-banner"><LoaderCircle /><div><strong>{customer.commercialBlocked ? 'Cadastro bloqueado para compras' : 'Cadastro em análise'}</strong><span>{customer.commercialBlocked ? 'Entre em contato com a equipe Ômega para verificar a situação do seu cadastro.' : 'Você já pode consultar o catálogo e os preços. A compra será liberada após a validação do seu cadastro.'}</span></div><a href="/pedidos">Ver meu cadastro</a></div>}
 
       <main id="top">
-        {!isBannerDestination && <section className="hero" aria-label="Destaques"><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item) => <a key={item.id} className="hero-slide" href={bannerTarget(item)}><img src={item.imageUrl} alt={item.altText} /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => setSlide((slide - 1 + slides.length) % slides.length)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => setSlide((slide + 1) % slides.length)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => setSlide(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section>}
+        {!isBannerDestination && <section className="hero" aria-label="Destaques" onTouchStart={startHeroSwipe} onTouchEnd={finishHeroSwipe} onTouchCancel={() => { heroTouchStartRef.current = null }}><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item) => <a key={item.id} className="hero-slide" href={bannerTarget(item)} onClick={(event) => { if (suppressHeroClickRef.current) event.preventDefault() }}><img src={item.imageUrl} alt={item.altText} draggable="false" /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => selectSlideManually(slide - 1)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => selectSlideManually(slide + 1)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => selectSlideManually(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section>}
 
         <section className={`container products-section ${selectedDepartment || isBannerDestination ? 'has-taxonomy' : 'catalog-home'}`} id="produtos" ref={productsRef}>
           {(selectedDepartment || isBannerDestination) && <aside className="taxonomy-sidebar" aria-label={isBannerDestination ? 'Filtros dos produtos' : 'Departamentos e seções'}>

@@ -403,13 +403,13 @@ async function listOrders(whereClause = '', params = []) {
   }))
 }
 
-function decodeBannerImage(dataUrl, allowGif = false) {
+function decodeBannerImage(dataUrl, allowGif = false, maxSizeMb = 5) {
   if (!dataUrl) return null
   const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
   if (!match) throw new Error('Imagem inválida. Use PNG, JPG ou WEBP.')
   if (match[1] === 'image/gif' && !allowGif) throw new Error('GIF animado é permitido somente no banner principal.')
   const data = Buffer.from(match[2], 'base64')
-  if (!data.length || data.length > 5 * 1024 * 1024) throw new Error('A imagem deve ter no máximo 5 MB.')
+  if (!data.length || data.length > maxSizeMb * 1024 * 1024) throw new Error(`A imagem deve ter no máximo ${maxSizeMb} MB.`)
   return { mime: match[1], data }
 }
 
@@ -2827,7 +2827,7 @@ app.put('/api/staff/banners', requireMarketingAccess, async (request, response, 
     }
     for (const banner of parsed.data.banners) {
       let image = null
-      try { image = decodeBannerImage(banner.imageDataUrl, banner.placement === 'hero') } catch (error) {
+      try { image = decodeBannerImage(banner.imageDataUrl, banner.placement === 'hero', 10) } catch (error) {
         await client.query('ROLLBACK')
         return response.status(400).json({ message: error.message })
       }
@@ -2880,7 +2880,7 @@ app.put('/api/staff/banners/:id', requireMarketingAccess, async (request, respon
     const missingDestination = await findMissingBannerDestination(pool, [parsed.data])
     if (missingDestination) return response.status(400).json({ message: `O ${missingDestination.label} ${missingDestination.code} não está disponível no catálogo ativo.` })
     let image = null
-    try { image = decodeBannerImage(parsed.data.imageDataUrl, parsed.data.placement === 'hero') } catch (error) {
+    try { image = decodeBannerImage(parsed.data.imageDataUrl, parsed.data.placement === 'hero', 10) } catch (error) {
       return response.status(400).json({ message: error.message })
     }
     const values = [
@@ -2916,7 +2916,7 @@ app.post('/api/staff/banners', requireMarketingAccess, async (request, response,
     const missingDestination = await findMissingBannerDestination(pool, [parsed.data])
     if (missingDestination) return response.status(400).json({ message: `O ${missingDestination.label} ${missingDestination.code} não está disponível no catálogo ativo.` })
     let image
-    try { image = decodeBannerImage(parsed.data.imageDataUrl, parsed.data.placement === 'hero') } catch (error) {
+    try { image = decodeBannerImage(parsed.data.imageDataUrl, parsed.data.placement === 'hero', 10) } catch (error) {
       return response.status(400).json({ message: error.message })
     }
     if (!image) return response.status(400).json({ message: 'Selecione uma imagem para o novo banner.' })
