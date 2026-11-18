@@ -68,6 +68,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   const [destinationSupplierIds, setDestinationSupplierIds] = useState(initialSupplierIds)
   const [destinationSectionCodes, setDestinationSectionCodes] = useState(initialSectionCodes)
   const [destinationProductCodes, setDestinationProductCodes] = useState(initialProductCodes)
+  const isBannerDestination = destinationSupplierIds.length > 0 || destinationSectionCodes.length > 0 || destinationProductCodes.length > 0
   const [departmentFilter, setDepartmentFilter] = useState(initialDepartment)
   const [sectionFilter, setSectionFilter] = useState(initialSection)
   const [departments, setDepartments] = useState<CatalogDepartment[]>([])
@@ -201,10 +202,26 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   const selectedDepartment = departments.find((department) => department.name === departmentFilter)
   const selectedSection = selectedDepartment?.sections.find((section) => section.name === sectionFilter)
   const headerDepartments = useMemo(() => [...departments].sort((a, b) => b.productCount - a.productCount || a.name.localeCompare(b.name, 'pt-BR')).slice(0, 6), [departments])
+  const contextualDepartments = useMemo(() => {
+    if (!isBannerDestination) return departments
+    const allowedProducts = products.filter((product) => (
+      (!initialSupplierIds.length || initialSupplierIds.includes(product.supplierId))
+      && (!initialSectionCodes.length || initialSectionCodes.includes(product.sectionCode))
+      && (!initialProductCodes.length || initialProductCodes.includes(product.code))
+    ))
+    const sectionCodes = new Set(allowedProducts.map((product) => product.sectionCode))
+    const departmentNames = new Set(allowedProducts.map((product) => product.department))
+    return departments.flatMap((department) => {
+      if (!departmentNames.has(department.name)) return []
+      const sections = department.sections.filter((section) => sectionCodes.has(section.code))
+      return [{ ...department, productCount: allowedProducts.filter((product) => product.department === department.name).length, sections }]
+    })
+  }, [departments, initialProductCodes, initialSectionCodes, initialSupplierIds, isBannerDestination, products])
+  const contextualSuppliers = useMemo(() => supplierOptions.filter(([id]) => initialSupplierIds.includes(id)), [initialSupplierIds, supplierOptions])
 
   const catalogRows = useMemo(() => {
     const remaining = [...filteredProducts]
-    const rows: Array<{ products: Product[]; bannerAfter: Banner | null }> = []
+    const rows: Array<{ products: Product[]; bannerBefore: Banner | null }> = []
     let displayed = 0
     const takeMatching = (predicate: (product: Product) => boolean, limit: number) => {
       const selected: Product[] = []
@@ -218,43 +235,34 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
     const bannersPerPage = 2
     for (let pageIndex = 0; remaining.length > 0 && displayed < visibleCount; pageIndex += 1) {
       const pageProductLimit = Math.min(visibleCount, (pageIndex + 1) * productsPerPage)
-      const pageBanners = catalogBanners.slice(pageIndex * bannersPerPage, (pageIndex + 1) * bannersPerPage)
-      let pageBannerIndex = 0
-      let precedingBanner: Banner | null = null
-      const nextAvailableBanner = () => {
-        while (pageBannerIndex < pageBanners.length) {
-          const candidate = pageBanners[pageBannerIndex]
-          pageBannerIndex += 1
-          const sectionCodes = candidate.destinationType === 'sections' ? candidate.destinationValues : []
-          if (!sectionCodes.length || remaining.some((product) => sectionCodes.includes(product.sectionCode))) return candidate
-        }
-        return null
+      const pageBanners = isBannerDestination ? [] : catalogBanners.slice(pageIndex * bannersPerPage, (pageIndex + 1) * bannersPerPage)
+      const matchesBanner = (product: Product, banner: Banner) => {
+        if (banner.destinationType === 'sections') return banner.destinationValues.includes(product.sectionCode)
+        if (banner.destinationType === 'products') return banner.destinationValues.includes(product.code)
+        if (banner.destinationType === 'suppliers') return banner.destinationValues.includes(product.supplierId)
+        return true
+      }
+      for (const banner of pageBanners) {
+        if (!remaining.length || displayed >= pageProductLimit) break
+        const hasSpecificDestination = banner.destinationType !== 'navigation' && banner.destinationValues.length > 0
+        if (hasSpecificDestination && !remaining.some((product) => matchesBanner(product, banner))) continue
+        const groupLimit = Math.min(10, pageProductLimit - displayed)
+        const bannerProducts = hasSpecificDestination
+          ? takeMatching((product) => matchesBanner(product, banner), groupLimit)
+          : remaining.splice(0, groupLimit)
+        if (!bannerProducts.length) continue
+        rows.push({ products: bannerProducts, bannerBefore: banner })
+        displayed += bannerProducts.length
       }
       while (remaining.length > 0 && displayed < pageProductLimit) {
         const limit = Math.min(5, pageProductLimit - displayed)
-        const requiredSections = precedingBanner?.destinationType === 'sections' ? precedingBanner.destinationValues : []
-        const upcomingBanner = pageBanners.slice(pageBannerIndex).find((banner) => (
-          banner.destinationType !== 'sections' || !banner.destinationValues.length || remaining.some((product) => banner.destinationValues.includes(product.sectionCode))
-        )) ?? null
-        const reservedSections = requiredSections.length || upcomingBanner?.destinationType !== 'sections' ? [] : upcomingBanner.destinationValues
-        const canReserve = Boolean(reservedSections.length && remaining.some((product) => !reservedSections.includes(product.sectionCode)))
-        const rowProducts = requiredSections.length
-          ? takeMatching((product) => requiredSections.includes(product.sectionCode), limit)
-          : canReserve
-            ? takeMatching((product) => !reservedSections.includes(product.sectionCode), limit)
-            : remaining.splice(0, limit)
-        if (!rowProducts.length) {
-          precedingBanner = null
-          continue
-        }
+        const rowProducts = remaining.splice(0, limit)
         displayed += rowProducts.length
-        const bannerAfter = displayed < pageProductLimit && remaining.length ? nextAvailableBanner() : null
-        rows.push({ products: rowProducts, bannerAfter })
-        precedingBanner = bannerAfter
+        rows.push({ products: rowProducts, bannerBefore: null })
       }
     }
     return rows
-  }, [catalogBanners, filteredProducts, visibleCount])
+  }, [catalogBanners, filteredProducts, isBannerDestination, visibleCount])
   const cartCount = cart.length
   const cartTotal = cart.reduce((sum, item) => sum + (productPriceForQuantity(item, item.quantity).unitPrice ?? 0) * item.quantity, 0)
   const minimumOrder = 200
@@ -354,6 +362,31 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
     setDestinationSupplierIds([])
     setDestinationSectionCodes([])
     setDestinationProductCodes([])
+  }
+
+  function resetBannerRefinements() {
+    setQuery('')
+    setSupplierFilter(initialSupplierIds.length === 1 ? String(initialSupplierIds[0]) : '')
+    setDepartmentFilter('')
+    setSectionFilter('')
+    setExpandedDepartment('')
+  }
+
+  function refineBannerDepartment(name: string) {
+    setQuery('')
+    setSupplierFilter(initialSupplierIds.length === 1 ? String(initialSupplierIds[0]) : '')
+    setDepartmentFilter(name)
+    setSectionFilter('')
+    setExpandedDepartment(name)
+    setVisibleCount(25)
+  }
+
+  function refineBannerSection(departmentName: string, sectionName: string) {
+    setQuery('')
+    setDepartmentFilter(departmentName)
+    setSectionFilter(sectionName)
+    setExpandedDepartment(departmentName)
+    setVisibleCount(25)
   }
 
   function selectSearch(value: string) {
@@ -558,33 +591,34 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
       {customer && !customer.canOrder && <div className="store-pending-banner"><LoaderCircle /><div><strong>{customer.commercialBlocked ? 'Cadastro bloqueado para compras' : 'Cadastro em análise'}</strong><span>{customer.commercialBlocked ? 'Entre em contato com a equipe Ômega para verificar a situação do seu cadastro.' : 'Você já pode consultar o catálogo e os preços. A compra será liberada após a validação do seu cadastro.'}</span></div><a href="/pedidos">Ver meu cadastro</a></div>}
 
       <main id="top">
-        <section className="hero" aria-label="Destaques"><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item) => <a key={item.id} className="hero-slide" href={bannerTarget(item)}><img src={item.imageUrl} alt={item.altText} /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => setSlide((slide - 1 + slides.length) % slides.length)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => setSlide((slide + 1) % slides.length)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => setSlide(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section>
+        {!isBannerDestination && <section className="hero" aria-label="Destaques"><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item) => <a key={item.id} className="hero-slide" href={bannerTarget(item)}><img src={item.imageUrl} alt={item.altText} /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => setSlide((slide - 1 + slides.length) % slides.length)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => setSlide((slide + 1) % slides.length)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => setSlide(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section>}
 
-        <section className={`container products-section ${selectedDepartment ? 'has-taxonomy' : 'catalog-home'}`} id="produtos" ref={productsRef}>
-          {selectedDepartment && <aside className="taxonomy-sidebar" aria-label="Departamentos e seções">
-            <div className="taxonomy-sidebar-title"><SlidersHorizontal size={18} /><div><strong>Departamentos</strong><span>Escolha uma seção</span></div></div>
-            <button className={!departmentFilter ? 'active taxonomy-all' : 'taxonomy-all'} onClick={clearFilters}>Todos os produtos</button>
-            <div className="taxonomy-list">{departments.map((department) => {
-              const open = expandedDepartment === department.name || departmentFilter === department.name
+        <section className={`container products-section ${selectedDepartment || isBannerDestination ? 'has-taxonomy' : 'catalog-home'}`} id="produtos" ref={productsRef}>
+          {(selectedDepartment || isBannerDestination) && <aside className="taxonomy-sidebar" aria-label={isBannerDestination ? 'Filtros dos produtos do banner' : 'Departamentos e seções'}>
+            <div className="taxonomy-sidebar-title"><SlidersHorizontal size={18} /><div><strong>{isBannerDestination ? 'Produtos do banner' : 'Departamentos'}</strong><span>{initialSupplierIds.length > 1 ? 'Escolha um fornecedor' : 'Escolha uma seção'}</span></div></div>
+            <button className={!departmentFilter && (!initialSupplierIds.length || !supplierFilter || initialSupplierIds.length === 1) ? 'active taxonomy-all' : 'taxonomy-all'} onClick={isBannerDestination ? resetBannerRefinements : clearFilters}>{isBannerDestination ? 'Todos deste banner' : 'Todos os produtos'}</button>
+            {isBannerDestination && initialSupplierIds.length > 1 && <div className="taxonomy-suppliers">{contextualSuppliers.map(([id, name]) => <button className={supplierFilter === String(id) ? 'active' : ''} key={id} onClick={() => { setSupplierFilter(String(id)); setDepartmentFilter(''); setSectionFilter(''); setExpandedDepartment('') }}>{formatCatalogName(name)}</button>)}</div>}
+            <div className="taxonomy-list">{(isBannerDestination ? contextualDepartments : departments).map((department) => {
+              const open = expandedDepartment === department.name
               return <div className={`taxonomy-department ${open ? 'open' : ''}`} key={department.code || department.name}>
-                <button className={departmentFilter === department.name && !sectionFilter ? 'active' : ''} onClick={() => selectDepartment(department.name)}><span>{formatCatalogName(department.name)}<small>{department.productCount} produtos</small></span><ChevronDown size={17} /></button>
-                {open && <div className="taxonomy-sections">{department.sections.map((section) => <button className={sectionFilter === section.name ? 'active' : ''} key={`${department.name}-${section.code || section.name}`} onClick={() => selectSection(department.name, section.name)}><span>{formatCatalogName(section.name)}</span><small>{section.productCount}</small></button>)}</div>}
+                <button className={departmentFilter === department.name && !sectionFilter ? 'active' : ''} onClick={() => { if (departmentFilter === department.name) setExpandedDepartment(open ? '' : department.name); else if (isBannerDestination) refineBannerDepartment(department.name); else selectDepartment(department.name) }}><span>{formatCatalogName(department.name)}<small>{department.productCount} produtos</small></span><ChevronDown size={17} /></button>
+                {open && <div className="taxonomy-sections">{department.sections.map((section) => <button className={sectionFilter === section.name ? 'active' : ''} key={`${department.name}-${section.code || section.name}`} onClick={() => isBannerDestination ? refineBannerSection(department.name, section.name) : selectSection(department.name, section.name)}><span>{formatCatalogName(section.name)}</span><small>{section.productCount}</small></button>)}</div>}
               </div>
             })}</div>
           </aside>}
-          <div className="section-heading"><div><span className="eyebrow">DEPARTAMENTO → SEÇÃO → PRODUTOS</span><h1>{initialCampaignCode > 0 ? `Produtos da campanha #${initialCampaignCode}` : selectedSupplierName ? `Produtos ${selectedSupplierName}` : query ? `Resultados para “${query}”` : selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : catalogMode === 'bestsellers' ? 'Mais vendidos nos últimos 7 dias' : 'Todos os produtos'}</h1>{initialCampaignCode > 0 && <p className="taxonomy-breadcrumb"><a href="/campanhas">Campanhas de desconto</a> → campanha #{initialCampaignCode}</p>}{selectedDepartment && <p className="taxonomy-breadcrumb">{formatCatalogName(selectedDepartment.name)}{selectedSection ? ` → ${formatCatalogName(selectedSection.name)}` : ''}</p>}</div><span className="result-count">{filteredProducts.length} {filteredProducts.length === 1 ? 'produto' : 'produtos'}</span></div>
-          <div className="catalog-filters"><span className="filter-title"><SlidersHorizontal size={18} /> Refinar catálogo</span><label>Fornecedor<select value={supplierFilter} onChange={(event) => selectSupplier(event.target.value)}><option value="">Todos os fornecedores</option>{supplierOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Departamento<select value={departmentFilter} onChange={(event) => event.target.value ? selectDepartment(event.target.value) : clearFilters()}><option value="">Todos os departamentos</option>{departments.map((department) => <option value={department.name} key={department.code || department.name}>{formatCatalogName(department.name)}</option>)}</select></label><label>Seção<select value={sectionFilter} onChange={(event) => event.target.value ? selectSection(departmentFilter, event.target.value) : selectDepartment(departmentFilter)} disabled={!selectedDepartment}><option value="">Todas as seções</option>{selectedDepartment?.sections.map((section) => <option value={section.name} key={section.code || section.name}>{formatCatalogName(section.name)}</option>)}</select></label><button onClick={clearFilters}>Limpar filtros</button></div>
-          {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : catalogRows.length > 0 ? <><div className="catalog-flow">{catalogRows.map((row, rowIndex) => <div className="catalog-row-group" key={`row-${rowIndex}`}><div className="product-grid">{row.products.map((product, productIndex) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? rowIndex * 5 + productIndex + 1 : undefined} addToCart={addToCart} changeQuantity={changeQuantity} setQuantity={setQuantity} toggleFavorite={toggleFavorite} favorite={favoriteIds.has(product.id)} quantity={cart.find((item) => item.id === product.id)?.quantity ?? 0} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} commercialBlocked={Boolean(customer?.commercialBlocked)} checkingStock={stockCheckingIds.has(product.id)} onInvalid={setToast} />)}</div>{row.bannerAfter && <a className="catalog-banner" href={bannerTarget(row.bannerAfter)}><img src={row.bannerAfter.imageUrl} alt={row.bannerAfter.altText} /></a>}</div>)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 25)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={clearFilters}>Limpar filtros</button></div>}
+          <div className="section-heading"><div>{!isBannerDestination && <span className="eyebrow">DEPARTAMENTO → SEÇÃO → PRODUTOS</span>}<h1>{isBannerDestination ? selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : selectedSupplierName ? `Produtos ${selectedSupplierName}` : 'Produtos selecionados' : initialCampaignCode > 0 ? `Produtos da campanha #${initialCampaignCode}` : selectedSupplierName ? `Produtos ${selectedSupplierName}` : query ? `Resultados para “${query}”` : selectedSection ? formatCatalogName(selectedSection.name) : selectedDepartment ? formatCatalogName(selectedDepartment.name) : catalogMode === 'bestsellers' ? 'Mais vendidos nos últimos 7 dias' : 'Todos os produtos'}</h1>{initialCampaignCode > 0 && <p className="taxonomy-breadcrumb"><a href="/campanhas">Campanhas de desconto</a> → campanha #{initialCampaignCode}</p>}{selectedDepartment && <p className="taxonomy-breadcrumb">{formatCatalogName(selectedDepartment.name)}{selectedSection ? ` → ${formatCatalogName(selectedSection.name)}` : ''}</p>}</div><span className="result-count">{filteredProducts.length} {filteredProducts.length === 1 ? 'produto' : 'produtos'}</span></div>
+          {!isBannerDestination && <div className="catalog-filters"><span className="filter-title"><SlidersHorizontal size={18} /> Refinar catálogo</span><label>Fornecedor<select value={supplierFilter} onChange={(event) => selectSupplier(event.target.value)}><option value="">Todos os fornecedores</option>{supplierOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Departamento<select value={departmentFilter} onChange={(event) => event.target.value ? selectDepartment(event.target.value) : clearFilters()}><option value="">Todos os departamentos</option>{departments.map((department) => <option value={department.name} key={department.code || department.name}>{formatCatalogName(department.name)}</option>)}</select></label><label>Seção<select value={sectionFilter} onChange={(event) => event.target.value ? selectSection(departmentFilter, event.target.value) : selectDepartment(departmentFilter)} disabled={!selectedDepartment}><option value="">Todas as seções</option>{selectedDepartment?.sections.map((section) => <option value={section.name} key={section.code || section.name}>{formatCatalogName(section.name)}</option>)}</select></label><button onClick={clearFilters}>Limpar filtros</button></div>}
+          {loadingProducts ? <div className="catalog-loading"><LoaderCircle className="spin" /><span>Carregando produtos...</span></div> : productsError ? <div className="empty-results"><ImageOff size={36} /><h2>Catálogo indisponível</h2><p>{productsError}</p><button className="primary-button" onClick={() => window.location.reload()}>Tentar novamente</button></div> : catalogRows.length > 0 ? <><div className="catalog-flow">{catalogRows.map((row, rowIndex) => <div className="catalog-row-group" key={`row-${rowIndex}`}>{row.bannerBefore && <a className="catalog-banner" href={bannerTarget(row.bannerBefore)}><img src={row.bannerBefore.imageUrl} alt={row.bannerBefore.altText} /></a>}<div className="product-grid">{row.products.map((product, productIndex) => <ProductCard key={product.id} product={product} rank={catalogMode === 'bestsellers' ? rowIndex * 5 + productIndex + 1 : undefined} addToCart={addToCart} changeQuantity={changeQuantity} setQuantity={setQuantity} toggleFavorite={toggleFavorite} favorite={favoriteIds.has(product.id)} quantity={cart.find((item) => item.id === product.id)?.quantity ?? 0} authenticated={Boolean(customer)} canOrder={Boolean(customer?.canOrder)} commercialBlocked={Boolean(customer?.commercialBlocked)} checkingStock={stockCheckingIds.has(product.id)} onInvalid={setToast} />)}</div></div>)}</div>{visibleCount < filteredProducts.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 25)}>Ver mais produtos <ArrowRight size={18} /></button>}</> : <div className="empty-results"><Search size={36} /><h2>Nenhum produto encontrado</h2><p>Tente combinar outros filtros ou explore todo o catálogo.</p><button className="primary-button" onClick={isBannerDestination ? resetBannerRefinements : clearFilters}>Limpar filtros</button></div>}
         </section>
 
-        {partnerLogos.length > 0 && <section className="brands-section" id="parceiros"><div className="container"><div className="section-heading"><div><h2>Nossos parceiros</h2><p>Selecione uma marca para ver todos os produtos desse fornecedor.</p></div></div></div><div className="brands-carousel"><div className="brands-track">{[0, 1].map((copy) => <div className="brands-loop" aria-hidden={copy === 1 || undefined} key={copy}>{partnerLogos.map((partner) => <button className="brand-card" onClick={() => selectPartner(partner)} key={`${copy}-${partner.supplierId}`} tabIndex={copy === 1 ? -1 : undefined} aria-label={`Filtrar produtos de ${partner.name}`}><img src={partner.logo} alt={copy === 0 ? `Logo ${partner.name}` : ''} loading="lazy" /></button>)}</div>)}</div></div></section>}
+        {!isBannerDestination && partnerLogos.length > 0 && <section className="brands-section" id="parceiros"><div className="container"><div className="section-heading"><div><h2>Nossos parceiros</h2><p>Selecione uma marca para ver todos os produtos desse fornecedor.</p></div></div></div><div className="brands-carousel"><div className="brands-track">{[0, 1].map((copy) => <div className="brands-loop" aria-hidden={copy === 1 || undefined} key={copy}>{partnerLogos.map((partner) => <button className="brand-card" onClick={() => selectPartner(partner)} key={`${copy}-${partner.supplierId}`} tabIndex={copy === 1 ? -1 : undefined} aria-label={`Filtrar produtos de ${partner.name}`}><img src={partner.logo} alt={copy === 0 ? `Logo ${partner.name}` : ''} loading="lazy" /></button>)}</div>)}</div></div></section>}
       </main>
 
       <footer><div className="container footer-grid"><div className="footer-brand"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /><p>Distribuindo mais do que produtos: parcerias de sucesso.</p></div><div><strong>Institucional</strong><a href="#top">Sobre a Ômega</a><a href="#parceiros">Nossos parceiros</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Fale conosco</a></div><div><strong>Atendimento</strong><span>Segunda a sexta, 8h às 17h</span><a href={whatsappUrl} target="_blank" rel="noreferrer">WhatsApp: (85) 9202-0207</a></div><div><strong>Compra protegida</strong><p className="security-copy"><LockKeyhole size={19} /> Ambiente seguro para seus pedidos.</p></div></div><div className="container footer-bottom"><span>© 2026 Ômega Distribuidora. Todos os direitos reservados.</span><span>Preços unitários sujeitos à confirmação comercial.</span></div></footer>
 
       {customer?.canOrder && <button className={`minimum-order-widget ${minimumRemaining === 0 ? 'complete' : ''}`} onClick={() => setCartOpen(true)} aria-label={`Carrinho em ${money.format(cartTotal)} de um pedido mínimo de ${money.format(minimumOrder)}`}><span><ShoppingCart size={18} /> Pedido mínimo</span><strong>{money.format(cartTotal)} <small>/ {money.format(minimumOrder)}</small></strong><i><b style={{ width: `${minimumProgress}%` }} /></i><em>{minimumRemaining > 0 ? `Faltam ${money.format(minimumRemaining)}` : 'Mínimo atingido'}</em></button>}
 
-      {menuOpen && <div className="overlay" onMouseDown={() => setMenuOpen(false)}><aside className="side-panel menu-panel department-drawer" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">CATÁLOGO</span><h2>Departamentos</h2></div><button className="icon-btn" onClick={() => setMenuOpen(false)}><X /></button></div><button className={!departmentFilter ? 'active drawer-all-products' : 'drawer-all-products'} onClick={() => { clearFilters(); setMenuOpen(false); window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth' }), 50) }}><Store size={20} />Todos os produtos<ChevronRight size={18} /></button><div className="drawer-taxonomy">{departments.map((department) => { const open = expandedDepartment === department.name || departmentFilter === department.name; return <div className="drawer-department" key={department.code || department.name}><button className={departmentFilter === department.name && !sectionFilter ? 'active' : ''} onClick={() => setExpandedDepartment(open ? '' : department.name)}><span>{formatCatalogName(department.name)}<small>{department.productCount} produtos</small></span><ChevronDown className={open ? 'rotated' : ''} size={18} /></button>{open && <div>{<button className="drawer-department-all" onClick={() => selectDepartment(department.name)}>Todos em {formatCatalogName(department.name)}</button>}{department.sections.map((section) => <button className={sectionFilter === section.name ? 'active' : ''} key={`${department.name}-${section.code || section.name}`} onClick={() => selectSection(department.name, section.name)}>{formatCatalogName(section.name)}<small>{section.productCount}</small></button>)}</div>}</div> })}</div><a className="drawer-partners" href="#parceiros" onClick={() => setMenuOpen(false)}>Parceiros<ChevronRight size={18} /></a>{(customer || staffUser) && <button className="menu-logout" onClick={logout}><LogOut size={20} />Sair da conta</button>}</aside></div>}
+      {menuOpen && <div className="overlay" onMouseDown={() => setMenuOpen(false)}><aside className="side-panel menu-panel department-drawer" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">CATÁLOGO</span><h2>Departamentos</h2></div><button className="icon-btn" onClick={() => setMenuOpen(false)}><X /></button></div><button className={!departmentFilter ? 'active drawer-all-products' : 'drawer-all-products'} onClick={() => { clearFilters(); setMenuOpen(false); window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth' }), 50) }}><Store size={20} />Todos os produtos<ChevronRight size={18} /></button><div className="drawer-taxonomy">{departments.map((department) => { const open = expandedDepartment === department.name; return <div className="drawer-department" key={department.code || department.name}><button className={departmentFilter === department.name && !sectionFilter ? 'active' : ''} onClick={() => setExpandedDepartment(open ? '' : department.name)}><span>{formatCatalogName(department.name)}<small>{department.productCount} produtos</small></span><ChevronDown className={open ? 'rotated' : ''} size={18} /></button>{open && <div>{<button className="drawer-department-all" onClick={() => selectDepartment(department.name)}>Todos em {formatCatalogName(department.name)}</button>}{department.sections.map((section) => <button className={sectionFilter === section.name ? 'active' : ''} key={`${department.name}-${section.code || section.name}`} onClick={() => selectSection(department.name, section.name)}>{formatCatalogName(section.name)}<small>{section.productCount}</small></button>)}</div>}</div> })}</div><a className="drawer-partners" href="#parceiros" onClick={() => setMenuOpen(false)}>Parceiros<ChevronRight size={18} /></a>{(customer || staffUser) && <button className="menu-logout" onClick={logout}><LogOut size={20} />Sair da conta</button>}</aside></div>}
 
       {cartOpen && <div className="overlay" onMouseDown={() => setCartOpen(false)}><aside className="side-panel cart-panel" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-heading"><div><span className="eyebrow">SEU PEDIDO</span><h2>Meu carrinho</h2></div><button className="icon-btn" onClick={() => setCartOpen(false)}><X /></button></div>{cart.length === 0 ? <div className="empty-cart"><span><ShoppingCart /></span><h3>Seu carrinho está vazio</h3><p>Explore o catálogo e adicione os produtos que seu negócio precisa.</p><button className="primary-button" onClick={() => setCartOpen(false)}>Explorar produtos</button></div> : <><div className="cart-items">{cart.map((item) => { const price = productPriceForQuantity(item, item.quantity); return <div className="cart-item" key={item.id}><div className="cart-product-image">{item.image ? <img src={item.image} alt="" /> : <ImageOff />}</div><div className="cart-product-info"><strong>{item.name}</strong><small>Vendido em múltiplos de {item.salesMultiple} unidades</small><span>{unitMoney.format(price.unitPrice ?? 0)} / unidade{price.discountPercent > 0 ? ` · ${price.discountPercent}% de desconto` : ''}</span><div className="quantity-control"><button disabled={stockCheckingIds.has(item.id)} onClick={() => changeQuantity(item.id, -item.salesMultiple)} aria-label={`Remover ${item.salesMultiple} unidades`}><Minus size={15} /></button><CartQuantityField item={item} onChange={setQuantity} onInvalid={(message) => setToast(message)} disabled={stockCheckingIds.has(item.id)} /><button disabled={stockCheckingIds.has(item.id)} onClick={() => changeQuantity(item.id, item.salesMultiple)} aria-label={`Adicionar ${item.salesMultiple} unidades`}><Plus size={15} /></button><button className="remove-item" onClick={() => removeFromCart(item.id)} aria-label="Remover item"><Trash2 size={16} /></button></div></div></div> })}</div><div className="cart-summary"><div><span>Subtotal estimado</span><strong>{money.format(cartTotal)}</strong></div><div className={`cart-minimum ${minimumRemaining === 0 ? 'complete' : ''}`}><span>{minimumRemaining > 0 ? `Adicione mais ${money.format(minimumRemaining)} para atingir o mínimo.` : 'Pedido mínimo atingido.'}</span><i><b style={{ width: `${minimumProgress}%` }} /></i></div><p>Pedido para {customer?.tradeName || customer?.legalName}. Os preços exibidos são os menores entre os seus planos de pagamento; o total é recalculado conforme o plano escolhido na finalização. Frete confirmado pela equipe.</p><button className="checkout-button" onClick={beginCheckout} disabled={minimumRemaining > 0 || loadingConditions}>{loadingConditions ? <LoaderCircle className="spin" /> : minimumRemaining > 0 ? `Mínimo de ${money.format(minimumOrder)}` : 'Finalizar pedido'} {!loadingConditions && <ArrowRight size={19} />}</button>{orderError && <span className="field-error cart-condition-error">{orderError}</span>}<button className="keep-shopping" onClick={() => setCartOpen(false)}>Continuar comprando</button></div></>}</aside></div>}
 

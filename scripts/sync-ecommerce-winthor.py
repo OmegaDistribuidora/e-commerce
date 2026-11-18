@@ -115,11 +115,6 @@ WHERE NVL(UPPER(TRIM(pf.obs2)),'ATIVO')<>'FL'
 ORDER BY c.codigo,c.sequencia,pf.codprod
 """
 
-SUPPLIER_DISPLAY_NAMES = {
-    117: "Bombril S.A.",
-}
-
-
 def required(name: str) -> str:
     value = os.getenv(name, "").strip()
     if not value:
@@ -157,9 +152,9 @@ def text(value) -> str:
     return str(value or "").strip()
 
 
-def supplier_display_name(code, value) -> str:
+def supplier_display_name(value) -> str:
     normalized = re.sub(r"\s+", " ", text(value))
-    return SUPPLIER_DISPLAY_NAMES.get(int(code or 0), normalized)
+    return normalized.lower().title()
 
 
 def iso_date(value) -> str | None:
@@ -204,7 +199,7 @@ def main() -> None:
         products.append({
             "externalId": int(code),
             "supplierId": int(supplier_id or 0),
-            "brand": supplier_display_name(supplier_id, supplier),
+            "brand": supplier_display_name(supplier),
             "name": text(name),
             "package": text(package),
             "masterPackage": text(master_package),

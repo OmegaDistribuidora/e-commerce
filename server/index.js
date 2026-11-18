@@ -1820,14 +1820,6 @@ const partnerLogoBySupplier = new Map([
   [1630, '/assets/partners/1630.png'],
   [4698, '/assets/partners/4698.png'],
 ])
-const partnerNameBySupplier = new Map([
-  [117, 'Bombril S.A.'],
-  [967, 'Maratá'],
-  [1481, 'Realeza'],
-  [1630, 'Panasonic'],
-  [4698, 'Assim'],
-])
-
 async function supplierLogoMap() {
   const logos = new Map(partnerLogoBySupplier)
   const result = await pool.query('SELECT supplier_id, image_data IS NOT NULL AS uploaded, updated_at FROM supplier_logos')
@@ -1932,7 +1924,7 @@ app.get('/api/catalog/navigation', async (request, response, next) => {
       const row = partnerData.get(supplierId)
       return {
         supplierId,
-        name: partnerNameBySupplier.get(supplierId) || row?.name || `Fornecedor ${supplierId}`,
+        name: row?.name || `Fornecedor ${supplierId}`,
         productCount: Number(row?.product_count || 0),
         logo: logos.get(supplierId),
       }
