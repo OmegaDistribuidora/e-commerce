@@ -1044,24 +1044,10 @@ app.get('/api/banners', async (request, response, next) => {
     const placement = request.query.placement === 'catalog' ? 'catalog' : 'hero'
     const pricing = await customerPricing(pool, request.customer)
     const restrictedSupplierIds = pricing?.restrictedSupplierIds || []
-    const result = await pool.query(
-      `SELECT b.id, b.title, b.alt_text, b.image_path, b.image_data IS NOT NULL AS uploaded,
-              b.target_url, b.section_code, b.destination_type, b.destination_values, b.navigation_path,
-              b.position, b.active, b.placement,
-              b.starts_at, b.ends_at, b.updated_at,
-              tx.section_name, tx.department_code, tx.department_name
-       FROM banners b
-       LEFT JOIN (
-         SELECT section_code, MIN(section) AS section_name,
-                MIN(department_code) AS department_code, MIN(department) AS department_name
-         FROM products
-         WHERE active=TRUE AND section_code IS NOT NULL
-         GROUP BY section_code
-       ) tx ON tx.section_code=b.section_code
-       WHERE b.active = TRUE AND b.placement = $1
-         AND (b.starts_at IS NULL OR b.starts_at <= CURRENT_TIMESTAMP)
-         AND (b.ends_at IS NULL OR b.ends_at > CURRENT_TIMESTAMP)
-         AND (
+    // pg-mem não implementa referências correlacionadas dentro destes EXISTS.
+    // O PostgreSQL do Railway mantém a filtragem completa; no banco temporário
+    // local, os banners de demonstração são apenas filtrados por vigência e tipo.
+    const destinationAvailability = process.env.DATABASE_URL ? `AND (
            b.destination_type = 'navigation'
            OR (b.destination_type IN ('sections','products','suppliers') AND EXISTS (
              SELECT 1
@@ -1083,9 +1069,29 @@ app.get('/api/banners', async (request, response, next) => {
                AND bdc.active=TRUE AND bdc.starts_on<=$3::date AND bdc.ends_on>=$3::date
                AND ($2::integer[] = '{}'::integer[] OR NOT (bp.supplier_id = ANY($2::integer[])))
            ))
-         )
+         )` : ''
+    const result = await pool.query(
+      `SELECT b.id, b.title, b.alt_text, b.image_path, b.image_data IS NOT NULL AS uploaded,
+              b.target_url, b.section_code, b.destination_type, b.destination_values, b.navigation_path,
+              b.position, b.active, b.placement,
+              b.starts_at, b.ends_at, b.updated_at,
+              tx.section_name, tx.department_code, tx.department_name
+       FROM banners b
+       LEFT JOIN (
+         SELECT section_code, MIN(section) AS section_name,
+                MIN(department_code) AS department_code, MIN(department) AS department_name
+         FROM products
+         WHERE active=TRUE AND section_code IS NOT NULL
+         GROUP BY section_code
+       ) tx ON tx.section_code=b.section_code
+       WHERE b.active = TRUE AND b.placement = $1
+         AND (b.starts_at IS NULL OR b.starts_at <= CURRENT_TIMESTAMP)
+         AND (b.ends_at IS NULL OR b.ends_at > CURRENT_TIMESTAMP)
+         ${destinationAvailability}
        ORDER BY b.position, b.id`,
-      [placement, postgresIntegerArray(restrictedSupplierIds), currentBrasiliaDate()],
+      process.env.DATABASE_URL
+        ? [placement, postgresIntegerArray(restrictedSupplierIds), currentBrasiliaDate()]
+        : [placement],
     )
     return response.json({ banners: result.rows.map((banner) => ({
       id: Number(banner.id),
