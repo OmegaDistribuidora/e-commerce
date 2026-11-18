@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
 import { createConfirmedSupabaseUser, deleteSupabaseUser, findSupabaseUserByEmail, removeSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
-import { bannerSchema, bannersBulkSchema, campaignSyncSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerCreateSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
+import { bannerSchema, bannersBulkSchema, campaignSyncSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, institutionalPageSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerCreateSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -410,6 +410,21 @@ function decodeBannerImage(dataUrl) {
   const data = Buffer.from(match[2], 'base64')
   if (!data.length || data.length > 5 * 1024 * 1024) throw new Error('A imagem deve ter no máximo 5 MB.')
   return { mime: match[1], data }
+}
+
+function institutionalPageJson(row) {
+  const version = row.updated_at ? new Date(row.updated_at).getTime() : Date.now()
+  return {
+    heroTitle: row.hero_title,
+    heroSubtitle: row.hero_subtitle,
+    historyTitle: row.history_title,
+    historyText: row.history_text,
+    valuesTitle: row.values_title,
+    valuesText: row.values_text,
+    heroImageUrl: row.hero_image_data ? `/api/site/institutional/image/hero?v=${version}` : null,
+    historyImageUrl: row.history_image_data ? `/api/site/institutional/image/history?v=${version}` : null,
+    updatedAt: row.updated_at,
+  }
 }
 
 async function findMissingBannerDestination(database, banners) {
@@ -1034,6 +1049,71 @@ app.put('/api/staff/password', requireStaff, async (request, response, next) => 
       [request.staff.id, hashPassword(parsed.data.newPassword)],
     )
     return response.status(204).end()
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.get('/api/site/institutional', async (_request, response, next) => {
+  try {
+    const result = await pool.query('SELECT * FROM institutional_page WHERE id=1')
+    if (!result.rows.length) return response.status(404).json({ message: 'Conteúdo institucional indisponível.' })
+    return response.json({ content: institutionalPageJson(result.rows[0]) })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.get('/api/site/institutional/image/:slot', async (request, response, next) => {
+  try {
+    const slots = {
+      hero: ['hero_image_data', 'hero_image_mime'],
+      history: ['history_image_data', 'history_image_mime'],
+    }
+    const columns = slots[request.params.slot]
+    if (!columns) return response.status(404).end()
+    const result = await pool.query(`SELECT ${columns[0]} AS data, ${columns[1]} AS mime FROM institutional_page WHERE id=1`)
+    if (!result.rows[0]?.data) return response.status(404).end()
+    response.setHeader('Content-Type', result.rows[0].mime || 'image/webp')
+    response.setHeader('Cache-Control', 'public, max-age=86400, immutable')
+    return response.send(result.rows[0].data)
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.put('/api/staff/site/institutional', requireMarketingAccess, async (request, response, next) => {
+  try {
+    const parsed = institutionalPageSchema.safeParse(request.body)
+    if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+    const content = parsed.data
+    let heroImage = null
+    let historyImage = null
+    try {
+      heroImage = decodeBannerImage(content.heroImageDataUrl)
+      historyImage = decodeBannerImage(content.historyImageDataUrl)
+    } catch (error) {
+      return response.status(400).json({ message: error.message })
+    }
+    const result = await pool.query(
+      `UPDATE institutional_page SET
+         hero_title=$1, hero_subtitle=$2, history_title=$3, history_text=$4,
+         values_title=$5, values_text=$6,
+         hero_image_data=CASE WHEN $9 THEN NULL WHEN $7::bytea IS NOT NULL THEN $7 ELSE hero_image_data END,
+         hero_image_mime=CASE WHEN $9 THEN NULL WHEN $7::bytea IS NOT NULL THEN $8 ELSE hero_image_mime END,
+         history_image_data=CASE WHEN $12 THEN NULL WHEN $10::bytea IS NOT NULL THEN $10 ELSE history_image_data END,
+         history_image_mime=CASE WHEN $12 THEN NULL WHEN $10::bytea IS NOT NULL THEN $11 ELSE history_image_mime END,
+         updated_by=$13, updated_at=CURRENT_TIMESTAMP
+       WHERE id=1 RETURNING *`,
+      [
+        content.heroTitle, content.heroSubtitle, content.historyTitle, content.historyText,
+        content.valuesTitle, content.valuesText,
+        heroImage?.data || null, heroImage?.mime || null, content.removeHeroImage,
+        historyImage?.data || null, historyImage?.mime || null, content.removeHistoryImage,
+        request.staff.id,
+      ],
+    )
+    return response.json({ content: institutionalPageJson(result.rows[0]) })
   } catch (error) {
     return next(error)
   }

@@ -139,6 +139,17 @@ export async function initializeDatabase() {
   await pool.query('CREATE INDEX IF NOT EXISTS idx_products_supplier ON products(active, supplier_id)')
   await pool.query('DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP')
   await pool.query('DELETE FROM staff_sessions WHERE expires_at <= CURRENT_TIMESTAMP')
+  await pool.query(`INSERT INTO institutional_page (
+    id, hero_title, hero_subtitle, history_title, history_text, values_title, values_text
+  ) VALUES (
+    1,
+    'Distribuindo mais do que produtos',
+    'A Ômega Distribuidora aproxima grandes marcas dos negócios cearenses com confiança, agilidade e parceria.',
+    'Nossa história',
+    'Construímos nossa trajetória lado a lado com clientes, fornecedores e colaboradores. Nossa operação combina conhecimento do mercado, variedade de produtos e atendimento próximo para contribuir com o crescimento de cada parceiro.',
+    'O que nos move',
+    'Trabalhamos para entregar qualidade, eficiência e relações duradouras. Valorizamos a confiança, o compromisso com nossos clientes e a evolução contínua de nossos serviços.'
+  ) ON CONFLICT (id) DO NOTHING`)
   if (process.env.SUPABASE_URL) {
     await pool.query('UPDATE customers SET password_hash=NULL WHERE password_hash IS NOT NULL')
     await pool.query('DELETE FROM sessions')

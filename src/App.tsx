@@ -10,6 +10,8 @@ import OrdersPage from './OrdersPage'
 import StaffPortal from './StaffPortal'
 import ProductPage from './ProductPage'
 import CampaignsPage from './CampaignsPage'
+import AboutPage from './AboutPage'
+import PartnersPage from './PartnersPage'
 import { authenticatedFetch } from './api'
 import { money, productPriceForQuantity, unitMoney } from './data'
 import { formatCatalogName } from './catalog'
@@ -40,6 +42,8 @@ function App() {
   if (window.location.pathname === '/pedidos') return <OrdersPage />
   if (window.location.pathname === '/gestao') return <StaffPortal />
   if (window.location.pathname === '/campanhas') return <CampaignsPage />
+  if (window.location.pathname === '/sobre') return <AboutPage />
+  if (window.location.pathname === '/parceiros') return <PartnersPage />
   const productMatch = /^\/produto\/(\d+)$/.exec(window.location.pathname)
   if (productMatch) return <ProductPage code={Number(productMatch[1])} />
   const parameters = new URLSearchParams(window.location.search)
@@ -84,6 +88,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   const [cartOpen, setCartOpen] = useState(initialCartOpen)
   const [menuOpen, setMenuOpen] = useState(false)
   const [partnersMenuClosed, setPartnersMenuClosed] = useState(false)
+  const [closedDepartmentMenu, setClosedDepartmentMenu] = useState('')
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [sendingOrder, setSendingOrder] = useState(false)
   const [orderError, setOrderError] = useState('')
@@ -592,15 +597,15 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
         <nav className="main-nav" aria-label="Departamentos e seções">
           <div className="container nav-inner department-nav">
             <button className="categories-button" onClick={() => setMenuOpen(true)}><Menu size={19} /> Departamentos <ChevronDown size={17} /></button>
-            {headerDepartments.map((department) => <div className="department-nav-item" key={department.code || department.name}>
-              <button className={departmentFilter === department.name ? 'active' : ''} onClick={() => selectDepartment(department.name)}>{formatCatalogName(department.name)}<ChevronDown size={14} /></button>
+            {headerDepartments.map((department) => <div className={`department-nav-item${closedDepartmentMenu === department.name ? ' closed' : ''}`} onMouseLeave={() => setClosedDepartmentMenu('')} key={department.code || department.name}>
+              <button className={departmentFilter === department.name ? 'active' : ''} onClick={(event) => { selectDepartment(department.name); setClosedDepartmentMenu(department.name); event.currentTarget.blur() }}>{formatCatalogName(department.name)}<ChevronDown size={14} /></button>
               <div className="department-dropdown">
-                <button className="department-all" onClick={() => selectDepartment(department.name)}>Ver todos em {formatCatalogName(department.name)}</button>
-                <div>{department.sections.map((section) => <button key={`${department.name}-${section.code || section.name}`} onClick={() => selectSection(department.name, section.name)}>{formatCatalogName(section.name)}<small>{section.productCount}</small></button>)}</div>
+                <button className="department-all" onClick={(event) => { selectDepartment(department.name); setClosedDepartmentMenu(department.name); event.currentTarget.blur() }}>Ver todos em {formatCatalogName(department.name)}</button>
+                <div>{department.sections.map((section) => <button key={`${department.name}-${section.code || section.name}`} onClick={(event) => { selectSection(department.name, section.name); setClosedDepartmentMenu(department.name); event.currentTarget.blur() }}>{formatCatalogName(section.name)}<small>{section.productCount}</small></button>)}</div>
               </div>
             </div>)}
             <a className="nav-campaigns" href="/campanhas">Campanhas</a>
-            <div className={`partners-nav-item${partnersMenuClosed ? ' closed' : ''}`} onMouseLeave={() => setPartnersMenuClosed(false)}><a href="#parceiros">Parceiros</a>{partnerLogos.length > 0 && <div className="partners-dropdown">{partnerLogos.map((partner) => <button key={partner.supplierId} onClick={(event) => { selectPartner(partner); setPartnersMenuClosed(true); event.currentTarget.blur() }}><img src={partner.logo} alt="" /><span>{partner.name}</span></button>)}</div>}</div>
+            <div className={`partners-nav-item${partnersMenuClosed ? ' closed' : ''}`} onMouseLeave={() => setPartnersMenuClosed(false)}><a href="/parceiros">Parceiros</a>{partnerLogos.length > 0 && <div className="partners-dropdown">{partnerLogos.map((partner) => <button key={partner.supplierId} onClick={(event) => { selectPartner(partner); setPartnersMenuClosed(true); event.currentTarget.blur() }}><img src={partner.logo} alt="" /><span>{partner.name}</span></button>)}</div>}</div>
             <a className="nav-support" href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a>
           </div>
         </nav>
@@ -632,7 +637,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
         {!isBannerDestination && partnerLogos.length > 0 && <section className="brands-section" id="parceiros"><div className="container"><div className="section-heading"><div><h2>Nossos parceiros</h2><p>Selecione uma marca para ver todos os produtos desse fornecedor.</p></div></div></div><div className="brands-carousel"><div className="brands-track">{[0, 1].map((copy) => <div className="brands-loop" aria-hidden={copy === 1 || undefined} key={copy}>{partnerLogos.map((partner) => <button className="brand-card" onClick={() => selectPartner(partner)} key={`${copy}-${partner.supplierId}`} tabIndex={copy === 1 ? -1 : undefined} aria-label={`Filtrar produtos de ${partner.name}`}><img src={partner.logo} alt={copy === 0 ? `Logo ${partner.name}` : ''} loading="lazy" /></button>)}</div>)}</div></div></section>}
       </main>
 
-      <footer><div className="container footer-grid"><div className="footer-brand"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /><p>Distribuindo mais do que produtos: parcerias de sucesso.</p></div><div><strong>Institucional</strong><a href="#top">Sobre a Ômega</a><a href="#parceiros">Nossos parceiros</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Fale conosco</a></div><div><strong>Atendimento</strong><span>Segunda a sexta, 8h às 17h</span><a href={whatsappUrl} target="_blank" rel="noreferrer">WhatsApp: (85) 9202-0207</a></div><div><strong>Compra protegida</strong><p className="security-copy"><LockKeyhole size={19} /> Ambiente seguro para seus pedidos.</p></div></div><div className="container footer-bottom"><span>© 2026 Ômega Distribuidora. Todos os direitos reservados.</span><span>Preços unitários sujeitos à confirmação comercial.</span></div></footer>
+      <footer><div className="container footer-grid"><div className="footer-brand"><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /><p>Distribuindo mais do que produtos: parcerias de sucesso.</p></div><div><strong>Institucional</strong><a href="/sobre">Sobre a Ômega</a><a href="/parceiros">Nossos parceiros</a><a href={whatsappUrl} target="_blank" rel="noreferrer">Fale conosco</a></div><div><strong>Atendimento</strong><span>Segunda a sexta, 8h às 17h</span><a href={whatsappUrl} target="_blank" rel="noreferrer">WhatsApp: (85) 9202-0207</a></div><div><strong>Compra protegida</strong><p className="security-copy"><LockKeyhole size={19} /> Ambiente seguro para seus pedidos.</p></div></div><div className="container footer-bottom"><span>© 2026 Ômega Distribuidora. Todos os direitos reservados.</span><span>Preços unitários sujeitos à confirmação comercial.</span></div></footer>
 
       {customer?.canOrder && <button className={`minimum-order-widget ${minimumRemaining === 0 ? 'complete' : ''}`} onClick={() => setCartOpen(true)} aria-label={`Carrinho em ${money.format(cartTotal)} de um pedido mínimo de ${money.format(minimumOrder)}`}><span><ShoppingCart size={18} /> Pedido mínimo</span><strong>{money.format(cartTotal)} <small>/ {money.format(minimumOrder)}</small></strong><i><b style={{ width: `${minimumProgress}%` }} /></i><em>{minimumRemaining > 0 ? `Faltam ${money.format(minimumRemaining)}` : 'Mínimo atingido'}</em></button>}
 

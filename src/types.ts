@@ -100,6 +100,18 @@ export type Partner = {
   productCount: number
 }
 
+export type InstitutionalContent = {
+  heroTitle: string
+  heroSubtitle: string
+  historyTitle: string
+  historyText: string
+  valuesTitle: string
+  valuesText: string
+  heroImageUrl: string | null
+  historyImageUrl: string | null
+  updatedAt?: string
+}
+
 export type CartItem = Product & { quantity: number }
 
 export type Customer = {

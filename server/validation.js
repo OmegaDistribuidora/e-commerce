@@ -202,6 +202,19 @@ export const bannersBulkSchema = z.object({
   deletedIds: z.array(z.coerce.number().int().positive()).max(100).default([]),
 })
 
+export const institutionalPageSchema = z.object({
+  heroTitle: z.string().trim().min(3, 'Informe o título principal').max(180),
+  heroSubtitle: z.string().trim().min(10, 'Informe a apresentação da empresa').max(1200),
+  historyTitle: z.string().trim().min(3, 'Informe o título da história').max(180),
+  historyText: z.string().trim().min(20, 'Conte um pouco da história da empresa').max(12000),
+  valuesTitle: z.string().trim().min(3, 'Informe o título da seção final').max(180),
+  valuesText: z.string().trim().min(20, 'Informe o texto da seção final').max(12000),
+  heroImageDataUrl: z.string().optional().default(''),
+  historyImageDataUrl: z.string().optional().default(''),
+  removeHeroImage: z.boolean().optional().default(false),
+  removeHistoryImage: z.boolean().optional().default(false),
+})
+
 const syncProductSchema = z.object({
   externalId: z.coerce.number().int().positive(),
   supplierId: z.coerce.number().int().nonnegative().default(0),

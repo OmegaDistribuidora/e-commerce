@@ -73,6 +73,7 @@ img { display: block; max-width: 100%; }
 .partners-nav-item > a:hover, .nav-support:hover { border-bottom-color: var(--orange); }
 .partners-dropdown { left: auto; right: 0; width: 290px; display: grid; gap: 5px; }
 .partners-nav-item.closed .partners-dropdown { opacity: 0 !important; visibility: hidden !important; transform: translateY(8px) !important; pointer-events: none; }
+.department-nav-item.closed .department-dropdown { opacity: 0 !important; visibility: hidden !important; transform: translateY(8px) !important; pointer-events: none; }
 .partners-dropdown button, .partners-dropdown a { min-height: 48px; padding: 6px 9px; border: 0; border-radius: 7px; display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: 10px; background: transparent; color: var(--navy); text-align: left; font-size: 11px; font-weight: 750; }
 .partners-dropdown button:hover, .partners-dropdown a:hover { background: #edf5ff; }
 .partners-dropdown img { width: 58px; height: 35px; object-fit: contain; }
@@ -1061,3 +1062,81 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .approved-customers article div { display: grid; gap: 2px; min-width: 0; }
 .approved-customers small { color: var(--muted); overflow-wrap: anywhere; }
 .approved-customers .order-cancel-button { margin-top: 0; }
+
+/* Páginas institucionais públicas */
+.content-page { min-height: 100vh; background: #f4f7fb; }
+.content-page-nav > a { display: flex; align-items: center; min-height: 60px; padding: 0 22px; color: #fff; font-weight: 800; text-decoration: none; }
+.content-page-nav > a:hover, .content-page-nav > a.active { background: rgba(255,255,255,.12); box-shadow: inset 0 -3px 0 var(--orange); }
+.content-page-nav .nav-support { margin-left: auto; }
+.content-page-state { min-height: 280px; display: grid; place-content: center; justify-items: center; gap: 10px; color: var(--muted); text-align: center; }
+.content-page-state svg { width: 42px; height: 42px; color: var(--blue); }
+.content-page-state h1, .content-page-state h2 { margin: 0; color: var(--navy); }
+.about-hero { padding: 70px 0; background: linear-gradient(120deg, #031e4b, #075bbb); color: #fff; }
+.about-hero .container { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr); align-items: center; gap: 55px; }
+.about-hero h1 { max-width: 720px; margin: 10px 0 20px; font-size: clamp(38px, 4vw, 66px); line-height: 1.02; }
+.about-hero p { max-width: 680px; margin: 0; font-size: 18px; line-height: 1.7; color: #dceaff; white-space: pre-line; }
+.about-hero img, .about-image-placeholder { width: 100%; height: 370px; border-radius: 24px; object-fit: cover; box-shadow: 0 24px 60px rgba(0,0,0,.28); }
+.about-image-placeholder { display: grid; place-items: center; background: rgba(255,255,255,.12); }
+.about-image-placeholder svg { width: 100px; height: 100px; opacity: .65; }
+.about-story { padding: 85px 0; display: grid; grid-template-columns: minmax(300px, .85fr) minmax(0, 1.15fr); align-items: center; gap: 70px; }
+.about-story-image { min-height: 430px; border-radius: 24px; overflow: hidden; display: grid; place-items: center; background: #e4edf8; color: #8aa2c0; }
+.about-story-image img { width: 100%; height: 430px; object-fit: cover; }
+.about-story-image > svg { width: 90px; height: 90px; }
+.about-story h2, .about-values h2, .partners-page-main h1 { margin: 9px 0 20px; color: var(--navy); font-size: clamp(34px, 4vw, 52px); line-height: 1.07; }
+.about-story p, .about-values p { color: #526781; font-size: 16px; line-height: 1.8; white-space: pre-line; }
+.about-values { padding: 70px 0; background: #fff; }
+.about-values .container { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 30px; align-items: start; }
+.about-values .container > svg { width: 70px; height: 70px; padding: 16px; border-radius: 20px; background: #e9f3ff; color: var(--blue); }
+.partners-page-main { padding: 70px 0 90px; }
+.partners-page-main > header { max-width: 760px; margin-bottom: 38px; }
+.partners-page-main > header p { color: var(--muted); font-size: 17px; }
+.partners-page-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+.partners-page-grid > a { min-height: 160px; padding: 22px; border: 1px solid #dce5f0; border-radius: 18px; background: #fff; display: grid; grid-template-columns: 105px 1fr; align-items: center; gap: 18px; text-decoration: none; box-shadow: 0 8px 28px rgba(0,43,102,.05); transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease; }
+.partners-page-grid > a:hover { transform: translateY(-4px); border-color: #93bde9; box-shadow: 0 16px 34px rgba(0,43,102,.11); }
+.partners-page-grid img { width: 100%; height: 78px; object-fit: contain; }
+.partners-page-grid span { min-width: 0; display: grid; gap: 12px; }
+.partners-page-grid strong { color: var(--navy); overflow-wrap: anywhere; }
+.partners-page-grid small { display: flex; align-items: center; gap: 6px; color: var(--blue); font-weight: 800; }
+.partners-page-grid small svg { width: 15px; height: 15px; }
+
+/* Editor da página institucional */
+.institutional-editor { display: grid; gap: 18px; }
+.institutional-editor > article { padding: 24px; border: 1px solid #dce5f0; border-radius: 18px; background: #fff; }
+.institutional-editor > article > header { margin-bottom: 22px; display: flex; align-items: center; gap: 12px; }
+.institutional-editor > article > header > svg { width: 42px; height: 42px; padding: 10px; border-radius: 12px; background: #e9f3ff; color: var(--blue); }
+.institutional-editor h3 { margin: 0 0 3px; color: var(--navy); font-size: 20px; }
+.institutional-editor header span { color: var(--muted); font-size: 12px; }
+.institutional-editor-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(240px, .5fr); gap: 24px; align-items: start; }
+.institutional-fields { display: grid; gap: 15px; }
+.institutional-fields label { display: grid; gap: 7px; color: var(--navy); font-size: 12px; font-weight: 800; }
+.institutional-fields input, .institutional-fields textarea { width: 100%; padding: 13px 14px; border: 1px solid #cad8e8; border-radius: 10px; color: var(--navy); font: inherit; line-height: 1.55; resize: vertical; }
+.institutional-fields input:focus, .institutional-fields textarea:focus { outline: 2px solid rgba(0,94,190,.15); border-color: var(--blue); }
+.institutional-image-field { padding: 14px; border: 1px solid #dce5f0; border-radius: 14px; display: grid; gap: 10px; }
+.institutional-image-field > div { height: 180px; overflow: hidden; border-radius: 10px; background: #eef3f8; }
+.institutional-image-field img { width: 100%; height: 100%; object-fit: cover; }
+.institutional-image-field > div > span { height: 100%; display: grid; place-content: center; justify-items: center; gap: 7px; color: var(--muted); }
+.institutional-image-field label { cursor: pointer; justify-content: center; }
+.institutional-image-field label input { display: none; }
+.institutional-image-field > small { color: var(--muted); text-align: center; }
+.institutional-remove-image { border: 0; background: transparent; color: #c62c2c; display: flex; justify-content: center; align-items: center; gap: 7px; font-weight: 800; cursor: pointer; }
+.institutional-remove-image svg { width: 16px; height: 16px; }
+.institutional-editor > footer { position: sticky; bottom: 16px; padding: 14px; border: 1px solid #dce5f0; border-radius: 15px; background: rgba(255,255,255,.96); box-shadow: 0 12px 30px rgba(0,43,102,.12); display: flex; justify-content: flex-end; z-index: 3; }
+
+@media (max-width: 1100px) {
+  .partners-page-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .content-page-nav { overflow-x: auto; }
+  .content-page-nav > a { min-width: max-content; min-height: 50px; padding: 0 14px; }
+  .content-page-nav .nav-support { margin-left: 0; }
+  .about-hero { padding: 42px 0; }
+  .about-hero .container, .about-story { grid-template-columns: 1fr; gap: 30px; }
+  .about-hero img, .about-image-placeholder { height: 250px; }
+  .about-story { padding: 50px 0; }
+  .about-story-image, .about-story-image img { min-height: 260px; height: 260px; }
+  .about-values .container { grid-template-columns: 1fr; }
+  .partners-page-main { padding: 44px 0 65px; }
+  .partners-page-grid { grid-template-columns: 1fr; }
+  .institutional-editor-grid { grid-template-columns: 1fr; }
+}

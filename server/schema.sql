@@ -280,6 +280,22 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS institutional_page (
+  id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  hero_title TEXT NOT NULL,
+  hero_subtitle TEXT NOT NULL,
+  history_title TEXT NOT NULL,
+  history_text TEXT NOT NULL,
+  values_title TEXT NOT NULL,
+  values_text TEXT NOT NULL,
+  hero_image_data BYTEA,
+  hero_image_mime VARCHAR(50),
+  history_image_data BYTEA,
+  history_image_mime VARCHAR(50),
+  updated_by BIGINT REFERENCES staff_users(id) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_products_active_category ON products(active, category);
 CREATE INDEX IF NOT EXISTS idx_sales_product_date ON sales(product_id, sold_at);
 CREATE INDEX IF NOT EXISTS idx_customers_document ON customers(document);
