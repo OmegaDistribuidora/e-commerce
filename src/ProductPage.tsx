@@ -7,6 +7,7 @@ import { authenticatedFetch } from './api'
 import { productPriceForQuantity, unitMoney } from './data'
 import { formatCatalogName } from './catalog'
 import { supabase } from './supabase'
+import { PageSkeleton } from './Skeleton'
 import type { CartItem, CatalogDepartment, Customer, Partner, Product, StaffUser } from './types'
 
 const whatsappUrl = `https://wa.me/558592020207?text=${encodeURIComponent('Olá! Venho do e-Commerce da Ômega Distribuidora e preciso de atendimento!')}`
@@ -122,7 +123,7 @@ export default function ProductPage({ code }: { code: number }) {
     window.location.reload()
   }
 
-  if (loading) return <main className="product-page-state"><LoaderCircle className="spin" /><span>Carregando produto...</span></main>
+  if (loading) return <PageSkeleton />
   if (!product || error) return <main className="product-page-state"><ImageOff /><h1>Produto indisponível</h1><p>{error}</p><a href="/"><ArrowLeft /> Voltar para a loja</a></main>
 
   const cartCount = readCart().length

@@ -1,6 +1,7 @@
 import { Building2, ImagePlus, LoaderCircle, Save, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { authenticatedFetch } from './api'
+import { ContentSkeleton } from './Skeleton'
 import type { InstitutionalContent } from './types'
 
 type Draft = InstitutionalContent & {
@@ -103,7 +104,7 @@ export default function InstitutionalEditor() {
     }
   }
 
-  if (loading) return <div className="content-page-state"><LoaderCircle className="spin" /><span>Carregando conteúdo...</span></div>
+  if (loading) return <ContentSkeleton cards={2} />
   if (!draft) return <div className="staff-alert error">{error || 'Conteúdo indisponível.'}</div>
 
   return <section className="institutional-editor">

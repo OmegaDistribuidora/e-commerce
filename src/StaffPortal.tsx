@@ -8,6 +8,7 @@ import { money } from './data'
 import { formatCatalogName } from './catalog'
 import { orderStatusLabel } from './orderStatus'
 import { supabase } from './supabase'
+import { PageSkeleton } from './Skeleton'
 import type { Banner, CatalogCategory, CatalogDepartment, CatalogSupplier, Customer, DiscountCampaign, Order, StaffCatalogProduct, StaffUser } from './types'
 import { formatDocument, formatPhone, formatPostalCode } from './validation'
 
@@ -420,7 +421,7 @@ export default function StaffPortal() {
     } finally { setLoading(false) }
   }
 
-  if (!ready) return <main className="staff-loading"><LoaderCircle className="spin" /></main>
+  if (!ready) return <PageSkeleton />
   if (!user) return <main className="staff-login"><a href="/" className="account-back"><ArrowLeft size={18} /> Voltar para a loja</a><form onSubmit={login}><img src="/assets/omega-logo.png" alt="Ômega Distribuidora" /><span className="staff-login-icon"><ShieldCheck /></span><h1>Gestão do e-Commerce</h1><p>Acesso exclusivo para Administradores e equipes Comercial e Marketing.</p><label>E-mail<input name="email" type="email" autoComplete="username" required /></label><label>Senha<div className="staff-password-field"><input name="password" type={showLoginPassword ? 'text' : 'password'} autoComplete="current-password" required /><button type="button" className="password-visibility" onClick={() => setShowLoginPassword((value) => !value)} aria-label={showLoginPassword ? 'Ocultar senha' : 'Mostrar senha'}>{showLoginPassword ? <EyeOff /> : <Eye />}</button></div></label>{error && <span className="field-error">{error}</span>}<button className="checkout-button" disabled={loading}>{loading ? <LoaderCircle className="spin" /> : 'Entrar'}</button></form></main>
 
   return <div className="staff-shell">

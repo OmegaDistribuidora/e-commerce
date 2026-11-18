@@ -12,17 +12,13 @@ import ProductPage from './ProductPage'
 import CampaignsPage from './CampaignsPage'
 import AboutPage from './AboutPage'
 import PartnersPage from './PartnersPage'
+import { HeroSkeleton, Skeleton } from './Skeleton'
 import { authenticatedFetch } from './api'
 import { money, productPriceForQuantity, unitMoney } from './data'
 import { formatCatalogName } from './catalog'
 import { supabase } from './supabase'
 import type { Banner, CartItem, CatalogDepartment, CommercialConditions, Customer, OrderQuote, Partner, Product, StaffUser } from './types'
 import { formatDocument } from './validation'
-
-const fallbackSlides: Banner[] = [
-  { id: 1, title: 'Institucional Ômega', imageUrl: '/assets/banner-omega.png', altText: 'Tudo que o seu negócio precisa, em um só lugar', targetUrl: '/#produtos', sectionCode: null, destinationType: 'navigation', destinationValues: [], navigationPath: '/#produtos', position: 1, active: true, placement: 'hero', startsAt: null, endsAt: null },
-  { id: 2, title: 'Linha Bombril', imageUrl: '/assets/banner-bombril.png', altText: 'Linha Bombril: mais limpeza para o seu dia a dia', targetUrl: '/#produtos', sectionCode: null, destinationType: 'navigation', destinationValues: [], navigationPath: '/#produtos', position: 2, active: true, placement: 'hero', startsAt: null, endsAt: null },
-]
 
 const whatsappUrl = `https://wa.me/558592020207?text=${encodeURIComponent('Olá! Venho do e-Commerce da Ômega Distribuidora e preciso de atendimento!')}`
 
@@ -97,7 +93,9 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   const [quoting, setQuoting] = useState(false)
   const [loadingConditions, setLoadingConditions] = useState(false)
   const [orderNumber, setOrderNumber] = useState('')
-  const [slides, setSlides] = useState<Banner[]>(fallbackSlides)
+  const [slides, setSlides] = useState<Banner[]>([])
+  const [loadingBanners, setLoadingBanners] = useState(true)
+  const [loadingNavigation, setLoadingNavigation] = useState(true)
   const [catalogBanners, setCatalogBanners] = useState<Banner[]>([])
   const [bannerPageTitle, setBannerPageTitle] = useState('')
   const [slide, setSlide] = useState(0)
@@ -172,13 +170,14 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
   }, [authReady, customer?.id])
   useEffect(() => {
     if (!authReady) return
+    setLoadingBanners(true)
     authenticatedFetch('/api/banners').then((response) => response.json()).then((data) => {
       if (Array.isArray(data.banners)) {
-        setSlides(data.banners.length ? data.banners : fallbackSlides)
+        setSlides(data.banners)
         const selected = data.banners.find((banner: Banner) => banner.id === initialBannerId)
         if (selected) setBannerPageTitle(selected.altText)
       }
-    }).catch(() => undefined)
+    }).catch(() => setSlides([])).finally(() => setLoadingBanners(false))
     authenticatedFetch('/api/banners?placement=catalog').then((response) => response.json()).then((data) => {
       if (Array.isArray(data.banners)) {
         setCatalogBanners(data.banners)
@@ -186,10 +185,11 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
         if (selected) setBannerPageTitle(selected.altText)
       }
     }).catch(() => undefined)
+    setLoadingNavigation(true)
     authenticatedFetch('/api/catalog/navigation').then((response) => response.json()).then((data) => {
       if (Array.isArray(data.departments)) setDepartments(data.departments)
       if (Array.isArray(data.partners)) setPartnerLogos(data.partners)
-    }).catch(() => undefined)
+    }).catch(() => undefined).finally(() => setLoadingNavigation(false))
   }, [authReady, customer?.id, initialBannerId])
   useEffect(() => {
     if (slides.length <= 1) return
@@ -626,7 +626,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
         <nav className="main-nav" aria-label="Departamentos e seções">
           <div className="container nav-inner department-nav">
             <button className="categories-button" onClick={() => setMenuOpen(true)}><Menu size={19} /> Departamentos <ChevronDown size={17} /></button>
-            {headerDepartments.map((department) => <div className={`department-nav-item${closedDepartmentMenu === department.name ? ' closed' : ''}`} onMouseLeave={() => setClosedDepartmentMenu('')} key={department.code || department.name}>
+            {loadingNavigation ? <div className="nav-skeleton" aria-label="Carregando departamentos" aria-busy="true">{Array.from({ length: 5 }, (_, index) => <Skeleton key={index} />)}</div> : headerDepartments.map((department) => <div className={`department-nav-item${closedDepartmentMenu === department.name ? ' closed' : ''}`} onMouseLeave={() => setClosedDepartmentMenu('')} key={department.code || department.name}>
               <button className={departmentFilter === department.name ? 'active' : ''} onClick={(event) => { selectDepartment(department.name); setClosedDepartmentMenu(department.name); event.currentTarget.blur() }}>{formatCatalogName(department.name)}<ChevronDown size={14} /></button>
               <div className="department-dropdown">
                 <button className="department-all" onClick={(event) => { selectDepartment(department.name); setClosedDepartmentMenu(department.name); event.currentTarget.blur() }}>Ver todos em {formatCatalogName(department.name)}</button>
@@ -643,7 +643,7 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
       {customer && !customer.canOrder && <div className="store-pending-banner"><LoaderCircle /><div><strong>{customer.commercialBlocked ? 'Cadastro bloqueado para compras' : 'Cadastro em análise'}</strong><span>{customer.commercialBlocked ? 'Entre em contato com a equipe Ômega para verificar a situação do seu cadastro.' : 'Você já pode consultar o catálogo e os preços. A compra será liberada após a validação do seu cadastro.'}</span></div><a href="/pedidos">Ver meu cadastro</a></div>}
 
       <main id="top">
-        {!isBannerDestination && <section className="hero" aria-label="Destaques" onTouchStart={startHeroSwipe} onTouchEnd={finishHeroSwipe} onTouchCancel={() => { heroTouchStartRef.current = null }}><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item) => <a key={item.id} className="hero-slide" href={bannerTarget(item)} onClick={(event) => { if (suppressHeroClickRef.current) event.preventDefault() }}><img src={item.imageUrl} alt={item.altText} draggable="false" /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => selectSlideManually(slide - 1)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => selectSlideManually(slide + 1)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => selectSlideManually(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section>}
+        {!isBannerDestination && (loadingBanners ? <HeroSkeleton /> : slides.length > 0 ? <section className="hero" aria-label="Destaques" onTouchStart={startHeroSwipe} onTouchEnd={finishHeroSwipe} onTouchCancel={() => { heroTouchStartRef.current = null }}><div className="hero-track" style={{ transform: `translate3d(-${slide * 100}%, 0, 0)` }}>{slides.map((item) => <a key={item.id} className="hero-slide" href={bannerTarget(item)} onClick={(event) => { if (suppressHeroClickRef.current) event.preventDefault() }}><img src={item.imageUrl} alt={item.altText} draggable="false" /></a>)}</div>{slides.length > 1 && <><button className="slider-arrow prev" aria-label="Banner anterior" onClick={() => selectSlideManually(slide - 1)}><ChevronLeft /></button><button className="slider-arrow next" aria-label="Próximo banner" onClick={() => selectSlideManually(slide + 1)}><ChevronRight /></button><div className="slider-dots">{slides.map((item, index) => <button key={item.id} className={index === slide ? 'active' : ''} onClick={() => selectSlideManually(index)} aria-label={`Ir para banner ${index + 1}`} />)}</div></>}</section> : null)}
 
         <section className={`container products-section ${selectedDepartment || isBannerDestination ? 'has-taxonomy' : 'catalog-home'}`} id="produtos" ref={productsRef}>
           {(selectedDepartment || isBannerDestination) && <aside className="taxonomy-sidebar" aria-label={isBannerDestination ? 'Filtros dos produtos' : 'Departamentos e seções'}>
