@@ -148,7 +148,7 @@ export default function ProductPage({ code }: { code: number }) {
       <a className="product-back-link" href="/#produtos"><ArrowLeft /> Voltar ao catálogo</a>
       <div className="product-detail-layout">
         <section className="product-detail-image">
-          {product.image ? <button onClick={() => setZoomed(true)} aria-label="Ampliar foto do produto"><img src={product.image} alt={product.name} /><span><ZoomIn /> Clique para ampliar</span></button> : <div className="product-detail-no-image"><ImageOff /><span>Produto sem foto</span></div>}
+          {product.image ? <ProductImageMagnifier src={product.image} alt={product.name} onOpen={() => setZoomed(true)} /> : <div className="product-detail-no-image"><ImageOff /><span>Produto sem foto</span></div>}
         </section>
         <section className="product-detail-content">
           <span className="eyebrow">CÓDIGO {product.code}</span>
@@ -175,4 +175,108 @@ export default function ProductPage({ code }: { code: number }) {
     </main>
     {zoomed && product.image && <div className="product-zoom" onMouseDown={() => setZoomed(false)} role="dialog" aria-modal="true"><button onClick={() => setZoomed(false)} aria-label="Fechar"><X /></button><img src={product.image} alt={product.name} onMouseDown={(event) => event.stopPropagation()} /></div>}
   </div>
+}
+
+type MagnifierState = {
+  lensLeft: number
+  lensTop: number
+  lensWidth: number
+  lensHeight: number
+  paneLeft: number
+  paneWidth: number
+  paneHeight: number
+  backgroundWidth: number
+  backgroundHeight: number
+  backgroundX: number
+  backgroundY: number
+}
+
+// Lupa da foto (somente desktop com mouse): um bloco suave acompanha o cursor sobre a
+// foto e a área destacada aparece ampliada sobre a coluna de informações, à direita.
+const magnifierQuery = '(hover: hover) and (pointer: fine) and (min-width: 1024px)'
+
+function ProductImageMagnifier({ src, alt, onOpen }: { src: string; alt: string; onOpen: () => void }) {
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const imageRef = useRef<HTMLImageElement>(null)
+  const [magnifier, setMagnifier] = useState<MagnifierState | null>(null)
+
+  function track(event: React.MouseEvent<HTMLButtonElement>) {
+    const button = buttonRef.current
+    const image = imageRef.current
+    const section = button?.parentElement
+    const content = section?.nextElementSibling
+    if (!button || !image || !section || !content || !image.naturalWidth || !window.matchMedia(magnifierQuery).matches) {
+      setMagnifier(null)
+      return
+    }
+    const sectionBox = section.getBoundingClientRect()
+    const contentBox = content.getBoundingClientRect()
+    const imageBox = image.getBoundingClientRect()
+    // A foto usa object-fit: contain; calcula a área realmente desenhada.
+    const ratio = Math.min(imageBox.width / image.naturalWidth, imageBox.height / image.naturalHeight)
+    const drawnWidth = image.naturalWidth * ratio
+    const drawnHeight = image.naturalHeight * ratio
+    const drawnLeft = imageBox.left + (imageBox.width - drawnWidth) / 2
+    const drawnTop = imageBox.top + (imageBox.height - drawnHeight) / 2
+    const pointerX = event.clientX - drawnLeft
+    const pointerY = event.clientY - drawnTop
+    if (pointerX < 0 || pointerY < 0 || pointerX > drawnWidth || pointerY > drawnHeight) {
+      setMagnifier(null)
+      return
+    }
+    // Amplia até a resolução original da foto (entre 2x e 3x) para não perder nitidez.
+    const scale = Math.min(3, Math.max(2, image.naturalWidth / drawnWidth))
+    const paneWidth = contentBox.width
+    const paneHeight = sectionBox.height
+    const lensWidth = Math.min(drawnWidth, paneWidth / scale)
+    const lensHeight = Math.min(drawnHeight, paneHeight / scale)
+    const lensX = Math.min(Math.max(pointerX - lensWidth / 2, 0), drawnWidth - lensWidth)
+    const lensY = Math.min(Math.max(pointerY - lensHeight / 2, 0), drawnHeight - lensHeight)
+    setMagnifier({
+      lensLeft: drawnLeft - sectionBox.left + lensX,
+      lensTop: drawnTop - sectionBox.top + lensY,
+      lensWidth,
+      lensHeight,
+      paneLeft: contentBox.left - sectionBox.left,
+      paneWidth,
+      paneHeight,
+      backgroundWidth: drawnWidth * scale,
+      backgroundHeight: drawnHeight * scale,
+      backgroundX: -lensX * scale,
+      backgroundY: -lensY * scale,
+    })
+  }
+
+  return <>
+    <button
+      ref={buttonRef}
+      className={magnifier ? 'magnifying' : ''}
+      onClick={onOpen}
+      onMouseMove={track}
+      onMouseLeave={() => setMagnifier(null)}
+      aria-label="Ampliar foto do produto"
+    >
+      <img ref={imageRef} src={src} alt={alt} />
+      <span><ZoomIn /><em className="magnifier-hint">Passe o mouse para ver detalhes ou clique para ampliar</em><em className="magnifier-hint-touch">Clique para ampliar</em></span>
+    </button>
+    {magnifier && <>
+      <span
+        className="product-magnifier-lens"
+        aria-hidden="true"
+        style={{ left: magnifier.lensLeft, top: magnifier.lensTop, width: magnifier.lensWidth, height: magnifier.lensHeight }}
+      />
+      <div
+        className="product-magnifier-pane"
+        aria-hidden="true"
+        style={{
+          left: magnifier.paneLeft,
+          width: magnifier.paneWidth,
+          height: magnifier.paneHeight,
+          backgroundImage: `url("${src}")`,
+          backgroundSize: `${magnifier.backgroundWidth}px ${magnifier.backgroundHeight}px`,
+          backgroundPosition: `${magnifier.backgroundX}px ${magnifier.backgroundY}px`,
+        }}
+      />
+    </>}
+  </>
 }

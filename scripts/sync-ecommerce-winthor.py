@@ -56,6 +56,19 @@ WHERE p.codprod > 0
 ORDER BY p.codprod
 """
 
+# Pedidos distintos por produto nos ultimos 30 dias (todas as filiais), usados para ordenar o
+# catalogo do e-commerce. Ignora pedidos cancelados, bonificacao (5) e transferencia (10).
+ORDERS_LAST_30_DAYS_QUERY = """
+SELECT i.codprod, COUNT(DISTINCT i.numped) AS pedidos
+FROM pcpedi i
+JOIN pcpedc c ON c.numped = i.numped
+WHERE c.data >= TRUNC(SYSDATE) - 30
+  AND c.dtcancel IS NULL
+  AND NVL(c.posicao, ' ') <> 'C'
+  AND NVL(c.condvenda, 1) NOT IN (5, 10)
+GROUP BY i.codprod
+"""
+
 # Cobrancas que nao representam divida do cliente e nao consomem limite.
 NON_DEBT_BILLING_CODES = ("DESD", "ESTR", "CANC", "DEVP", "DEVT", "BNF", "BNFT", "BNFR", "BNTR", "BNRP", "CRED")
 # Pedidos ainda nao faturados: L=liberado, M=montado, B=bloqueado, P=pendente.
@@ -193,6 +206,8 @@ def main() -> None:
         with connection.cursor() as cursor:
             cursor.execute(PRODUCT_QUERY, {"retail_region": 1, "network_region": 12})
             rows = cursor.fetchall()
+            cursor.execute(ORDERS_LAST_30_DAYS_QUERY)
+            orders_last_30_days = {int(code): int(total) for code, total in cursor.fetchall()}
 
     minimum = max(1, int(os.getenv("PRODUCT_SYNC_MIN_COUNT", "100")))
     if len(rows) < minimum:
@@ -229,6 +244,7 @@ def main() -> None:
             "manufacturerCode": text(manufacturer_code),
             "ncm": re.sub(r"\D", "", text(ncm)),
             "priceDate": iso_date(price_date),
+            "ordersLast30Days": orders_last_30_days.get(int(code), 0),
         })
 
     endpoint = f"{required('ECOMMERCE_API_URL').rstrip('/')}/api/integrations/products/sync"

@@ -27,6 +27,7 @@ A DAG `ecommerce_produtos_precos` está configurada para executar a cada 30 minu
 10. sincroniza as restrições de fornecedor da `PCRESTRICAOVENDA` por praça e por cliente. O catálogo, a página do produto, o orçamento e o envio do pedido aplicam a mesma restrição no backend;
 11. sincroniza todas as campanhas da rotina 3306 autorizadas para o RCA 3068, inclusive produtos expandidos por `CODPRODPRINC`; o site publica somente as campanhas vigentes na data de Brasília e aplica o desconto no backend quando a quantidade atende ao mínimo e ao máximo;
 12. trata a carga de campanhas como um snapshot completo: campanhas que deixam de vir do WinThor são desativadas e seus vínculos antigos de produtos são removidos.
+13. conta, por produto, os pedidos distintos dos últimos 30 dias (`PCPEDI` × `PCPEDC`, todas as filiais, sem cancelados, bonificação e transferência). Todas as listagens da loja — catálogo, mais vendidos, departamentos, busca, banners e campanhas — ordenam os produtos por esse número.
 
 O WinThor é a fonte oficial das campanhas. A área do cliente mostra somente campanhas vigentes com pelo menos um produto permitido para seu cadastro. A área de gestão mantém uma consulta somente leitura de campanhas vigentes, futuras, encerradas e removidas. Restrições de fornecedor são reaplicadas no catálogo, na campanha, na cotação e no fechamento do pedido.
 

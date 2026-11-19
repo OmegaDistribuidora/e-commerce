@@ -1393,7 +1393,7 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
         retail_unit_price NUMERIC(14,2), network_unit_price NUMERIC(14,2),
         department_code INTEGER, department TEXT, section_code INTEGER, section TEXT,
         ean TEXT, manufacturer_code TEXT, ncm_code TEXT,
-        active BOOLEAN, price_date DATE
+        active BOOLEAN, price_date DATE, orders_last_30_days INTEGER
       )`,
     )
 
@@ -1403,6 +1403,7 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
       product.retailUnitPrice, product.retailUnitPrice, product.retailUnitPrice,
       product.networkUnitPrice || product.retailUnitPrice, product.departmentCode, product.department,
       product.sectionCode, product.section, product.ean, product.manufacturerCode, product.ncm, true, product.priceDate || null,
+      product.ordersLast30Days,
     ])
     const batchSize = 250
     for (let offset = 0; offset < rows.length; offset += batchSize) {
@@ -1483,6 +1484,14 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
           OR COALESCE(products.manufacturer_code,'')<>COALESCE(EXCLUDED.manufacturer_code,'')
           OR COALESCE(products.ncm_code,'')<>COALESCE(EXCLUDED.ncm_code,'') OR products.active<>EXCLUDED.active
           OR COALESCE(products.price_date,DATE '1900-01-01')<>COALESCE(EXCLUDED.price_date,DATE '1900-01-01')`,
+    )
+    // Pedidos dos últimos 30 dias: ordenação do catálogo. Atualizado à parte para não
+    // contar como alteração cadastral do produto.
+    await client.query(
+      `UPDATE products p SET orders_last_30_days=s.orders_last_30_days
+       FROM ecommerce_product_stage s
+       WHERE p.company=s.company AND p.external_id=s.external_id
+         AND p.orders_last_30_days IS DISTINCT FROM s.orders_last_30_days`,
     )
     await client.query(
       `UPDATE products SET active=FALSE, updated_at=CURRENT_TIMESTAMP
@@ -1933,7 +1942,7 @@ app.get('/api/campaigns', async (request, response, next) => {
        JOIN products p ON p.id=dcp.product_id AND p.active=TRUE
        WHERE dc.active=TRUE AND dc.starts_on<=$1::date AND dc.ends_on>=$1::date
          AND ($2::integer[]='{}'::integer[] OR NOT (p.supplier_id=ANY($2::integer[])))
-       ORDER BY dc.starts_on DESC,dc.external_id,p.name,dcp.discount_percent DESC`,
+       ORDER BY dc.starts_on DESC,dc.external_id,p.orders_last_30_days DESC,p.name,dcp.discount_percent DESC`,
       [currentBrasiliaDate(), postgresIntegerArray(restrictedSupplierIds)],
     )
     const campaigns = new Map()
@@ -1972,10 +1981,7 @@ app.get('/api/products', async (request, response, next) => {
     const campaign = Number(request.query.campaign)
     const sort = request.query.sort === 'bestsellers' ? 'bestsellers' : 'featured'
     const limit = Math.min(Math.max(Number(request.query.limit) || 180, 1), 5000)
-    const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - 6)
-
-    const params = [cutoff.toISOString().slice(0, 10)]
+    const params = []
     const conditions = ['p.active = TRUE']
     if (search) {
       params.push(`%${search}%`)
@@ -2014,26 +2020,18 @@ app.get('/api/products', async (request, response, next) => {
     params.push(limit)
 
     const hasImage = `(p.image_hidden=FALSE AND (p.image_data IS NOT NULL OR p.image_path IS NOT NULL))`
-    const orderBy = sort === 'bestsellers'
-      ? `weekly_sales DESC, ${hasImage} DESC, p.name`
-      : `${hasImage} DESC, weekly_sales DESC, p.name`
+    // Todas as listagens da loja seguem o número de pedidos dos últimos 30 dias no WinThor.
+    const orderBy = `p.orders_last_30_days DESC, ${hasImage} DESC, p.name`
 
     const result = await pool.query(
-      `WITH weekly AS (
-         SELECT product_id, SUM(quantity) AS units
-         FROM sales
-         WHERE sold_at >= $1
-         GROUP BY product_id
-       )
-       SELECT p.id, p.external_id, p.supplier_id, p.brand, p.name, p.package, p.master_package,
+      `SELECT p.id, p.external_id, p.supplier_id, p.brand, p.name, p.package, p.master_package,
               p.units_per_box, p.sales_multiple, p.min_boxes, p.unit_price, p.list_unit_price,
               p.retail_unit_price, p.network_unit_price,
               p.category, p.department_code, p.department, p.section_code, p.section, p.image_path,
               p.image_data IS NOT NULL AS image_uploaded, p.image_hidden, p.image_updated_at, p.ean,
               p.manufacturer_code, p.ncm_code,
-              p.price_date, COALESCE(w.units, 0) AS weekly_sales${priceColumns}
+              p.price_date, p.orders_last_30_days${priceColumns}
        FROM products p
-       LEFT JOIN weekly w ON w.product_id = p.id
        LEFT JOIN region_prices rp ON rp.product_id = p.id AND rp.region = $${regionParam}
        WHERE ${conditions.join(' AND ')}
        ORDER BY ${orderBy}
@@ -2069,7 +2067,7 @@ app.get('/api/products', async (request, response, next) => {
         manufacturerCode: row.manufacturer_code || '',
         ncm: row.ncm_code || '',
         priceDate: row.price_date,
-        weeklySales: Number(row.weekly_sales),
+        ordersLast30Days: Number(row.orders_last_30_days),
         campaignOffers: campaignOffers.get(Number(row.id)) || [],
       }}),
       sort,
@@ -2264,7 +2262,7 @@ app.get('/api/products/:code', async (request, response, next) => {
       category: row.category || 'Sem categoria', categories: [],
       departmentCode: Number(row.department_code || 0), department: row.department || '',
       sectionCode: Number(row.section_code || 0), section: row.section || '',
-      image: productImageUrl(row), priceDate: row.price_date, weeklySales: 0,
+      image: productImageUrl(row), priceDate: row.price_date, ordersLast30Days: Number(row.orders_last_30_days || 0),
       ean: row.ean || '', manufacturerCode: row.manufacturer_code || '', ncm: row.ncm_code || '',
       campaignOffers: campaignOffers.get(Number(row.id)) || [],
       ...(request.staff ? { stocks: staffStocks } : {}),
@@ -2305,7 +2303,7 @@ app.get('/api/customer/favorites', async (request, response, next) => {
         category: row.section || 'Sem seção', categories: row.section ? [row.section] : [],
         departmentCode: Number(row.department_code || 0), department: row.department || '',
         sectionCode: Number(row.section_code || 0), section: row.section || '',
-        image: productImageUrl(row), priceDate: row.price_date, weeklySales: 0,
+        image: productImageUrl(row), priceDate: row.price_date, ordersLast30Days: Number(row.orders_last_30_days || 0),
         ean: row.ean || '', manufacturerCode: row.manufacturer_code || '', ncm: row.ncm_code || '',
         favoritedAt: row.favorited_at,
       }

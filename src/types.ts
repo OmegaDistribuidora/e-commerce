@@ -20,7 +20,7 @@ export type Product = {
   department: string
   sectionCode: number
   section: string
-  weeklySales: number
+  ordersLast30Days: number
   priceDate: string
   manufacturerCode: string
   ncm: string

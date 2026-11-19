@@ -770,10 +770,21 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .product-page-main { width: min(1240px, calc(100% - 48px)); margin: 32px auto 70px; }
 .product-back-link { width: fit-content; margin-bottom: 15px; display: flex; align-items: center; gap: 7px; color: var(--blue); font-size: 12px; font-weight: 800; }
 .product-detail-layout { padding: 38px; border-radius: 18px; background: #fff; display: grid; grid-template-columns: minmax(360px, .9fr) minmax(440px, 1.1fr); gap: 56px; box-shadow: 0 14px 45px rgba(4,39,82,.07); }
-.product-detail-image { min-height: 540px; display: grid; place-items: center; }
+.product-detail-image { min-height: 540px; position: relative; display: grid; place-items: center; }
 .product-detail-image > button { width: 100%; height: 100%; padding: 20px; border: 0; background: #fff; display: grid; place-items: center; align-content: center; gap: 18px; cursor: zoom-in; }
 .product-detail-image img { width: 90%; height: 430px; object-fit: contain; transition: transform .25s ease; }
 .product-detail-image button:hover img { transform: scale(1.04); }
+.product-detail-image button.magnifying { cursor: crosshair; }
+.product-detail-image button.magnifying img { transform: none; }
+.product-magnifier-lens { position: absolute; z-index: 2; border: 1px solid rgba(8,116,231,.45); border-radius: 4px; background-color: rgba(8,116,231,.12); background-image: radial-gradient(rgba(8,116,231,.28) 1px, transparent 1px); background-size: 4px 4px; pointer-events: none; }
+.product-magnifier-pane { position: absolute; top: 0; z-index: 30; border: 1px solid #dfe7f1; border-radius: 14px; background-color: #fff; background-repeat: no-repeat; box-shadow: 0 22px 60px rgba(4,39,82,.18); pointer-events: none; animation: fade-in .12s ease; }
+.product-detail-image button span em { font-style: normal; }
+.magnifier-hint { display: none; }
+@media (hover: hover) and (pointer: fine) and (min-width: 1024px) {
+  .product-detail-image button:hover img { transform: none; }
+  .magnifier-hint { display: inline; }
+  .magnifier-hint-touch { display: none; }
+}
 .product-detail-image button span { display: flex; align-items: center; gap: 7px; color: #62748b; font-size: 11px; font-weight: 700; }
 .product-detail-no-image { width: 100%; min-height: 440px; border-radius: 14px; background: #f4f7fa; display: grid; place-items: center; align-content: center; gap: 12px; color: #8290a3; }
 .product-detail-no-image svg { width: 48px; height: 48px; }

@@ -48,6 +48,7 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_mime VARCHAR(50)')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_hidden BOOLEAN NOT NULL DEFAULT FALSE')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_updated_at TIMESTAMPTZ')
+  await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS orders_last_30_days INTEGER NOT NULL DEFAULT 0')
   await pool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS sales_channel VARCHAR(20) NOT NULL DEFAULT 'Varejo'")
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS password_hash TEXT')
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS supabase_user_id UUID')

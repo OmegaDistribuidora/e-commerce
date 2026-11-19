@@ -242,6 +242,7 @@ const syncProductSchema = z.object({
   manufacturerCode: z.string().trim().max(100).default(''),
   ncm: z.string().trim().max(40).default(''),
   priceDate: z.string().trim().max(30).nullable().optional(),
+  ordersLast30Days: z.coerce.number().int().nonnegative().max(100000000).default(0),
 })
 
 export const productSyncSchema = z.object({
