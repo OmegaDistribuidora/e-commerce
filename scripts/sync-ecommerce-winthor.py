@@ -122,6 +122,19 @@ def required(name: str) -> str:
     return value
 
 
+def digits(value: object, maximum: int = 14) -> str:
+    return re.sub(r"\D", "", str(value or ""))[:maximum]
+
+
+def official_email(*values: object) -> str:
+    for value in values:
+        for candidate in re.split(r"[;,\s]+", str(value or "")):
+            normalized = candidate.strip().lower()
+            if re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", normalized):
+                return normalized[:180]
+    return ""
+
+
 def initialize_oracle_client() -> None:
     candidates = [
         os.getenv("ORACLE_CLIENT_LIB", ""),
@@ -402,7 +415,11 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
                                     FROM pcpedc ped
                                    WHERE ped.codcli=c.codcli AND ped.codfilial IN ('1','3'))
                                ) AS filial_estoque,
-                               CASE WHEN NVL(UPPER(TRIM(c.bloqueio)), 'S') = 'N' THEN 0 ELSE 1 END AS bloqueado
+                               CASE WHEN NVL(UPPER(TRIM(c.bloqueio)), 'S') = 'N' THEN 0 ELSE 1 END AS bloqueado,
+                               c.cgc, c.cliente, c.fantasia, c.email, c.emailnfe,
+                               c.telent, c.telcom, c.telcob, c.cepent, c.enderent,
+                               c.numeroent, c.complementoent, c.bairroent, c.municent,
+                               c.estent, c.codrede
                         FROM pcclient c
                         LEFT JOIN pcpraca pr ON pr.codpraca = c.codpraca
                         LEFT JOIN pcusuari u ON u.codusur = c.codusur1
@@ -475,7 +492,11 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
 
     conditions = []
     regions = set()
-    for code, credit_limit, primary_plan, price_region, plaza_code, stock_branch, is_blocked in customer_rows:
+    for row in customer_rows:
+        (code, credit_limit, primary_plan, price_region, plaza_code, stock_branch, is_blocked,
+         document, legal_name, trade_name, email, email_nfe, phone_delivery, phone_commercial,
+         phone_billing, postal_code, address_line, address_number, address_complement,
+         neighborhood, city, state, network_code) = row
         # PCPLPAGCLI define os planos do cliente; sem linhas nela, vale o plano do PCCLIENT.
         allowed_codes = customer_plans.get(int(code)) or ([int(primary_plan)] if primary_plan is not None else [])
         unique_codes = sorted(
@@ -490,6 +511,20 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
             restricted_suppliers.update(plaza_restricted_suppliers.get(int(plaza_code), set()))
         conditions.append({
             "externalId": int(code),
+            "document": digits(document),
+            "personType": "CPF" if len(digits(document)) == 11 else "CNPJ",
+            "legalName": text(legal_name),
+            "tradeName": text(trade_name),
+            "phone": digits(phone_delivery or phone_commercial or phone_billing, 11),
+            "email": official_email(email, email_nfe),
+            "postalCode": digits(postal_code, 8),
+            "addressLine": text(address_line),
+            "addressNumber": text(address_number),
+            "addressComplement": text(address_complement),
+            "neighborhood": text(neighborhood),
+            "city": text(city),
+            "state": text(state).upper()[:2],
+            "salesChannel": "Varejo" if int(number(network_code)) == 31 else "Redes",
             "creditLimit": round(number(credit_limit), 2),
             "openTitlesAmount": round(max(0.0, open_titles.get(int(code), 0.0)), 2),
             "openOrdersAmount": round(max(0.0, open_orders.get(int(code), 0.0)), 2),

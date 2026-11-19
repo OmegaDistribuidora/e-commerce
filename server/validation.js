@@ -88,6 +88,13 @@ export const emailCheckSchema = z.object({
 
 export const lookupSchema = z.object({
   document: z.string().transform((value) => digits(value)).refine(isValidDocument, 'CPF ou CNPJ inválido'),
+  personType: z.enum(['CPF', 'CNPJ']),
+}).refine((value) => (value.personType === 'CPF' ? value.document.length === 11 : value.document.length === 14), {
+  message: 'O documento não corresponde ao tipo de pessoa selecionado.', path: ['document'],
+})
+
+export const staffCustomerApproveSchema = z.object({
+  externalId: z.coerce.number().int().positive('Informe um código de cliente válido'),
 })
 
 export const orderSchema = z.object({
@@ -251,6 +258,20 @@ const paymentPlanSyncSchema = z.object({
 export const customerConditionsSyncSchema = z.object({
   customers: z.array(z.object({
     externalId: z.coerce.number().int().positive(),
+    document: z.string().transform((value) => digits(value)).refine(isValidDocument, 'CPF ou CNPJ inválido'),
+    personType: z.enum(['CPF', 'CNPJ']),
+    legalName: z.string().trim().min(1).max(160),
+    tradeName: z.string().trim().max(160).default(''),
+    phone: z.string().transform((value) => digits(value, 11)).default(''),
+    email: z.string().trim().email().max(180).or(z.literal('')).transform((value) => value.toLowerCase()),
+    postalCode: z.string().transform((value) => digits(value, 8)).default(''),
+    addressLine: z.string().trim().max(180).default(''),
+    addressNumber: z.string().trim().max(20).default(''),
+    addressComplement: z.string().trim().max(100).default(''),
+    neighborhood: z.string().trim().max(100).default(''),
+    city: z.string().trim().max(100).default(''),
+    state: z.string().trim().toUpperCase().max(2).default(''),
+    salesChannel: z.string().trim().max(80).default('Varejo'),
     creditLimit: z.coerce.number().nonnegative().max(999999999999),
     openTitlesAmount: z.coerce.number().nonnegative().max(999999999999).default(0),
     openOrdersAmount: z.coerce.number().nonnegative().max(999999999999).default(0),

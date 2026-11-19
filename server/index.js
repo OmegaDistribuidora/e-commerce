@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
-import { createConfirmedSupabaseUser, deleteSupabaseUser, findSupabaseUserByEmail, removeSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
-import { bannerSchema, bannersBulkSchema, campaignSyncSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, institutionalPageSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerCreateSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
+import { createConfirmedSupabaseUser, createTemporaryPassword, deleteSupabaseUser, findSupabaseUserByEmail, removeSupabaseUser, sendPasswordSetupEmail, updateSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
+import { bannerSchema, bannersBulkSchema, campaignSyncSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, institutionalPageSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerApproveSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -183,6 +183,14 @@ const publicLookupLimiter = rateLimit({
   message: { message: 'Muitas consultas. Aguarde alguns minutos e tente novamente.' },
 })
 
+const firstAccessLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { message: 'Muitas tentativas de primeiro acesso. Aguarde alguns minutos e tente novamente.' },
+})
+
 function omegaApiConfig() {
   const url = String(process.env.OMEGA_API_URL || '').trim().replace(/\/$/, '')
   const key = String(process.env.OMEGA_API_KEY || '').trim()
@@ -230,19 +238,61 @@ async function fetchWinthorOrderStatuses(orderNumbers) {
   return statuses
 }
 
-async function fetchWinthorCustomerByDocument(document) {
+function firstOfficialEmail(...values) {
+  for (const value of values) {
+    for (const candidate of String(value || '').split(/[;,\s]+/)) {
+      const email = candidate.trim().toLowerCase()
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 180) return email
+    }
+  }
+  return ''
+}
+
+function winthorCustomerPayload(customer, expected = {}) {
+  const code = Number(customer?.codigo)
+  const document = digits(customer?.documento)
+  if (!Number.isSafeInteger(code) || code < 1
+    || (expected.document && document !== digits(expected.document))
+    || (expected.code && code !== Number(expected.code))) {
+    throw new OmegaApiError('A API retornou um cadastro de cliente inválido.', 502)
+  }
+  return {
+    code,
+    document,
+    personType: document.length === 11 ? 'CPF' : 'CNPJ',
+    name: String(customer.nome || '').trim(),
+    tradeName: String(customer.fantasia || '').trim(),
+    email: firstOfficialEmail(customer.email, customer.emailNfe),
+    phone: digits(customer.telefoneEntrega || customer.telefoneComercial || customer.telefoneCobranca, 11),
+    postalCode: digits(customer.cep, 8),
+    addressLine: String(customer.endereco || '').trim(),
+    addressNumber: String(customer.numero || '').trim(),
+    addressComplement: String(customer.complemento || '').trim(),
+    neighborhood: String(customer.bairro || '').trim(),
+    city: String(customer.cidade || '').trim(),
+    state: String(customer.uf || '').trim().toUpperCase().slice(0, 2),
+    salesChannel: Number(customer.codigoRede) === 31 ? 'Varejo' : 'Redes',
+    plazaCode: customer.codigoPraca == null ? null : Number(customer.codigoPraca),
+    creditLimit: Number(customer.limiteCredito || 0),
+    blocked: Boolean(customer.bloqueado),
+  }
+}
+
+async function fetchWinthorCustomer({ document, code }) {
   const config = omegaApiConfig()
   if (!config) throw new OmegaApiError('A consulta do cadastro comercial ainda não está configurada.', 503)
+  const endpoint = code ? 'por-codigo' : 'por-documento'
+  const requestBody = code ? { codigo: Number(code) } : { documento: document }
   let response
   try {
-    response = await fetch(`${config.url}/v1/winthor/clientes/por-documento`, {
+    response = await fetch(`${config.url}/v1/winthor/clientes/${endpoint}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': config.key,
         'X-Client-Name': 'omega-ecommerce',
       },
-      body: JSON.stringify({ documento: document }),
+      body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(12_000),
     })
   } catch {
@@ -251,7 +301,7 @@ async function fetchWinthorCustomerByDocument(document) {
   const text = await response.text()
   let data = {}
   try { data = text ? JSON.parse(text) : {} } catch { data = {} }
-  if (response.status === 404 && data.detail === 'Not Found') {
+  if (!code && response.status === 404 && data.detail === 'Not Found') {
     try {
       response = await fetch(`${config.url}/v1/query`, {
         method: 'POST',
@@ -290,13 +340,11 @@ async function fetchWinthorCustomerByDocument(document) {
     const status = response.status === 401 ? 502 : (response.status >= 500 ? 503 : 502)
     throw new OmegaApiError('Não foi possível consultar o cadastro do cliente.', status)
   }
-  const customer = data.cliente
-  const code = Number(customer?.codigo)
-  if (!Number.isSafeInteger(code) || code < 1 || digits(customer?.documento) !== digits(document)) {
-    throw new OmegaApiError('A API retornou um cadastro de cliente inválido.', 502)
-  }
-  return { code, name: String(customer.nome || ''), tradeName: String(customer.fantasia || '') }
+  return winthorCustomerPayload(data.cliente, { document, code })
 }
+
+const fetchWinthorCustomerByDocument = (document) => fetchWinthorCustomer({ document })
+const fetchWinthorCustomerByCode = (code) => fetchWinthorCustomer({ code })
 
 async function refreshStaleOrderStatuses(orders) {
   if (!omegaApiConfig()) return
@@ -968,6 +1016,9 @@ app.get('/api/auth/me', (request, response) => {
 
 app.patch('/api/customer/profile', async (request, response, next) => {
   if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para alterar seus dados.' })
+  if (request.customer.registration_status === 'approved') {
+    return response.status(403).json({ message: 'Os dados de clientes aprovados são atualizados pelo cadastro oficial. Fale com a equipe Ômega para solicitar uma alteração.' })
+  }
   try {
     const parsed = customerUpdateSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
@@ -1479,10 +1530,49 @@ app.post('/api/integrations/customers/conditions', async (request, response, nex
   const parsed = customerConditionsSyncSchema.safeParse(request.body)
   if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
   const client = await pool.connect()
+  const authEmailChanges = []
   try {
     await client.query('BEGIN')
     let updatedCount = 0
     for (const condition of parsed.data.customers) {
+      const currentCustomer = await client.query(
+        'SELECT id, document, email, supabase_user_id FROM customers WHERE external_id=$1 AND active=TRUE LIMIT 1',
+        [condition.externalId],
+      )
+      if (!currentCustomer.rows.length) continue
+      if (digits(currentCustomer.rows[0].document) !== condition.document) {
+        throw new RequestError(`O CPF/CNPJ do cliente ${condition.externalId} diverge do cadastro vinculado.`, 409)
+      }
+      const currentProfile = currentCustomer.rows[0]
+      if (condition.email && currentProfile.supabase_user_id
+        && currentProfile.email.toLowerCase() !== condition.email) {
+        const [staffOwner, customerOwner, authOwner] = await Promise.all([
+          client.query('SELECT id FROM staff_users WHERE LOWER(email)=LOWER($1) AND active=TRUE LIMIT 1', [condition.email]),
+          client.query('SELECT id FROM customers WHERE LOWER(email)=LOWER($1) AND id<>$2 AND active=TRUE LIMIT 1', [condition.email, currentProfile.id]),
+          findSupabaseUserByEmail(condition.email),
+        ])
+        if (staffOwner.rows.length || customerOwner.rows.length
+          || (authOwner && authOwner.id !== currentProfile.supabase_user_id)) {
+          throw new RequestError(`O e-mail oficial do cliente ${condition.externalId} já está vinculado a outra conta.`, 409)
+        }
+        await updateSupabaseUser(currentProfile.supabase_user_id, {
+          email: condition.email,
+          metadata: { account_type: 'customer', document: condition.document, external_id: condition.externalId },
+        })
+        authEmailChanges.push({ id: currentProfile.supabase_user_id, email: currentProfile.email })
+      }
+      await client.query(
+        `UPDATE customers SET person_type=$2, legal_name=$3, trade_name=$4, phone=$5,
+           email=CASE WHEN $6<>'' THEN $6 ELSE email END,
+           postal_code=$7, address_line=$8, address_number=$9, address_complement=$10,
+           neighborhood=$11, city=$12, state=$13, sales_channel=$14, source='erp',
+           updated_at=CURRENT_TIMESTAMP
+         WHERE id=$1`,
+        [currentCustomer.rows[0].id, condition.personType, condition.legalName, condition.tradeName,
+          condition.phone, condition.email, condition.postalCode, condition.addressLine,
+          condition.addressNumber, condition.addressComplement, condition.neighborhood,
+          condition.city, condition.state, condition.salesChannel],
+      )
       const result = await client.query(
         `INSERT INTO customer_commercial_conditions
           (customer_id, credit_limit, open_titles_amount, open_orders_amount, price_region, stock_branch, is_blocked, restricted_supplier_ids, payment_plans, source_updated_at)
@@ -1506,6 +1596,9 @@ app.post('/api/integrations/customers/conditions', async (request, response, nex
     return response.json({ updatedCount })
   } catch (error) {
     await client.query('ROLLBACK')
+    for (const change of authEmailChanges.reverse()) {
+      await updateSupabaseUser(change.id, { email: change.email }).catch(() => undefined)
+    }
     return next(error)
   } finally {
     client.release()
@@ -2203,67 +2296,94 @@ app.get('/api/customer/commercial-conditions', async (request, response, next) =
   }
 })
 
-app.post('/api/customers/lookup', publicLookupLimiter, async (request, response, next) => {
+app.post('/api/customers/lookup', firstAccessLimiter, async (request, response, next) => {
+  let createdAuthUser = null
+  let authPersisted = false
   try {
     const parsed = lookupSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
-    let result = await pool.query(
-      `SELECT id, external_id, document, person_type, legal_name, trade_name, phone, email,
-              postal_code, address_line, address_number, address_complement, neighborhood, city, state,
-              sales_channel, registration_status, supabase_user_id
-       FROM customers WHERE document = $1 AND active = TRUE LIMIT 1`,
+    const localResult = await pool.query(
+      `SELECT id, external_id, registration_status, supabase_user_id, email
+       FROM customers WHERE document=$1 AND active=TRUE LIMIT 1`,
       [parsed.data.document],
     )
-    if (!result.rows.length && sourcePool) {
-      const sourceSchema = /^[a-z_][a-z0-9_]*$/i.test(process.env.SOURCE_SCHEMA ?? '') ? process.env.SOURCE_SCHEMA : 'filial'
-      const sourceResult = await sourcePool.query(
-        `SELECT codcli, cnpj, cliente, fantasia, cidade, uf, status, canal_venda
-         FROM ${sourceSchema}.dcliente
-         WHERE regexp_replace(cnpj, '[^0-9]', '', 'g') = $1
-         ORDER BY CASE WHEN status = 'Desbloqueado' THEN 0 ELSE 1 END
-         LIMIT 1`,
-        [parsed.data.document],
-      )
-      if (sourceResult.rows.length) {
-        const sourceCustomer = sourceResult.rows[0]
-        if (sourceCustomer.status !== 'Desbloqueado') {
-          return response.status(403).json({ message: 'Cadastro localizado, mas precisa de liberação comercial. Fale com a equipe Ômega.' })
-        }
-        await pool.query(
-          `INSERT INTO customers (
-             external_id, document, person_type, legal_name, trade_name, phone, email,
-             city, state, sales_channel, active, source
-           ) VALUES ($1,$2,$3,$4,$5,'','',$6,$7,$8,TRUE,'erp')
-           ON CONFLICT (document) DO UPDATE SET
-             external_id = EXCLUDED.external_id,
-             legal_name = EXCLUDED.legal_name,
-             trade_name = EXCLUDED.trade_name,
-             city = EXCLUDED.city,
-             state = EXCLUDED.state,
-             sales_channel = EXCLUDED.sales_channel,
-             active = TRUE,
-             updated_at = CURRENT_TIMESTAMP`,
-          [
-            sourceCustomer.codcli, parsed.data.document,
-            parsed.data.document.length === 11 ? 'CPF' : 'CNPJ',
-            sourceCustomer.cliente, sourceCustomer.fantasia,
-            sourceCustomer.cidade, sourceCustomer.uf,
-            sourceCustomer.canal_venda === 'Redes' ? 'Redes' : 'Varejo',
-          ],
-        )
-        result = await pool.query(
-          `SELECT id, external_id, document, person_type, legal_name, trade_name, phone, email,
-                  postal_code, address_line, address_number, address_complement, neighborhood, city, state,
-                  sales_channel, registration_status, supabase_user_id
-           FROM customers WHERE document = $1 AND active = TRUE LIMIT 1`,
-          [parsed.data.document],
-        )
-      }
+    const localCustomer = localResult.rows[0]
+    // Um cadastro iniciado pelo site continua sob análise até que a equipe informe o CODCLI.
+    if (localCustomer?.registration_status === 'pending' && localCustomer.supabase_user_id) {
+      return response.json({ found: true, pending: true })
     }
-    if (!result.rows.length) return response.json({ found: false, document: parsed.data.document })
-    const customer = result.rows[0]
-    return response.json({ found: true, hasAccess: Boolean(customer.supabase_user_id), customer: customerJson(customer) })
+
+    const official = await fetchWinthorCustomerByDocument(parsed.data.document)
+    if (!official) return response.json({ found: false, document: parsed.data.document, personType: parsed.data.personType })
+    if (!official.email) {
+      return response.json({ found: true, contactRequired: true })
+    }
+    const staffConflict = await pool.query(
+      'SELECT id FROM staff_users WHERE LOWER(email)=LOWER($1) AND active=TRUE LIMIT 1',
+      [official.email],
+    )
+    if (staffConflict.rows.length) {
+      return response.status(409).json({ message: 'Este e-mail pertence a uma conta interna. Fale com a equipe Ômega para regularizar o acesso.' })
+    }
+
+    let authUser = await findSupabaseUserByEmail(official.email)
+    const existingAccess = Boolean(localCustomer?.supabase_user_id && authUser?.id === localCustomer.supabase_user_id)
+    if (existingAccess && authUser.last_sign_in_at) {
+      return response.json({ found: true, hasAccess: true })
+    }
+    if (!authUser) {
+      authUser = await createConfirmedSupabaseUser({
+        email: official.email,
+        password: createTemporaryPassword(),
+        metadata: { account_type: 'customer', document: official.document, external_id: official.code },
+      })
+      createdAuthUser = authUser
+    }
+
+    const conflictingCustomer = await pool.query(
+      `SELECT id FROM customers
+       WHERE active=TRUE AND (external_id=$1 OR LOWER(email)=LOWER($2)) AND document<>$3
+       LIMIT 1`,
+      [official.code, official.email, official.document],
+    )
+    if (conflictingCustomer.rows.length) {
+      if (createdAuthUser) await deleteSupabaseUser(createdAuthUser.id)
+      return response.status(409).json({ message: 'O cadastro oficial já está vinculado a outra conta. Fale com a equipe Ômega.' })
+    }
+
+    await pool.query(
+      `INSERT INTO customers (
+         external_id, document, person_type, legal_name, trade_name, phone, email, supabase_user_id,
+         postal_code, address_line, address_number, address_complement, neighborhood, city, state,
+         sales_channel, registration_status, approved_at, active, source
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'approved',CURRENT_TIMESTAMP,TRUE,'erp')
+       ON CONFLICT (document) DO UPDATE SET
+         external_id=EXCLUDED.external_id, person_type=EXCLUDED.person_type,
+         legal_name=EXCLUDED.legal_name, trade_name=EXCLUDED.trade_name, phone=EXCLUDED.phone,
+         email=EXCLUDED.email, supabase_user_id=EXCLUDED.supabase_user_id,
+         postal_code=EXCLUDED.postal_code, address_line=EXCLUDED.address_line,
+         address_number=EXCLUDED.address_number, address_complement=EXCLUDED.address_complement,
+         neighborhood=EXCLUDED.neighborhood, city=EXCLUDED.city, state=EXCLUDED.state,
+         sales_channel=EXCLUDED.sales_channel, registration_status='approved',
+         approved_at=COALESCE(customers.approved_at,CURRENT_TIMESTAMP), active=TRUE, source='erp',
+         updated_at=CURRENT_TIMESTAMP`,
+      [
+        official.code, official.document, official.personType, official.name, official.tradeName,
+        official.phone, official.email, authUser.id, official.postalCode, official.addressLine,
+        official.addressNumber, official.addressComplement, official.neighborhood, official.city,
+        official.state, official.salesChannel,
+      ],
+    )
+    authPersisted = true
+
+    const publicOrigin = String(process.env.PUBLIC_URL || `${request.protocol}://${request.get('host')}`).replace(/\/$/, '')
+    await sendPasswordSetupEmail(official.email, `${publicOrigin}/conta?mode=reset`)
+    return response.json({ found: true, accessEmailSent: true })
   } catch (error) {
+    if (createdAuthUser?.id && !authPersisted) await deleteSupabaseUser(createdAuthUser.id)
+    if (error instanceof OmegaApiError) return response.status(error.status).json({ message: error.message })
+    if (error?.status) return response.status(error.status).json({ message: error.message })
+    if (error?.code === '23505') return response.status(409).json({ message: 'Este cadastro já está vinculado a outra conta.' })
     next(error)
   }
 })
@@ -2332,65 +2452,9 @@ app.get('/api/staff/customers', requireCommercialAccess, async (request, respons
   }
 })
 
-// Cadastra cliente já aprovado e vinculado ao CODCLI do WinThor, com acesso confirmado.
-app.post('/api/staff/customers', requireCommercialAccess, async (request, response, next) => {
-  const parsed = staffCustomerCreateSchema.safeParse(request.body)
-  if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
-  const data = parsed.data
-  let authUser = null
-  try {
-    const conflicts = await pool.query(
-      `SELECT 'customer' AS kind FROM customers WHERE active=TRUE AND (document=$1 OR LOWER(email)=LOWER($2))
-       UNION ALL
-       SELECT 'staff' AS kind FROM staff_users WHERE LOWER(email)=LOWER($2)
-       LIMIT 1`,
-      [data.document, data.email],
-    )
-    if (conflicts.rows.length) {
-      return response.status(409).json({
-        message: conflicts.rows[0].kind === 'staff'
-          ? 'Este e-mail pertence a um usuário da gestão.'
-          : 'Já existe um cliente com este CPF/CNPJ ou e-mail.',
-      })
-    }
-    const winthorCustomer = await fetchWinthorCustomerByDocument(data.document)
-    if (!winthorCustomer) return response.status(422).json({ message: 'CPF ou CNPJ não encontrado no cadastro comercial.' })
-    const linked = await pool.query('SELECT id FROM customers WHERE external_id=$1 AND active=TRUE LIMIT 1', [winthorCustomer.code])
-    if (linked.rows.length) {
-      return response.status(409).json({ message: `O código de cliente ${winthorCustomer.code} já está vinculado a outro cliente do e-commerce.` })
-    }
-    authUser = await createConfirmedSupabaseUser({
-      email: data.email,
-      password: data.password,
-      metadata: { document: data.document, legal_name: data.legalName },
-    })
-    const result = await pool.query(
-      `INSERT INTO customers (
-         external_id, document, person_type, legal_name, trade_name, phone, email, supabase_user_id,
-         postal_code, address_line, address_number, address_complement, neighborhood, city, state,
-         registration_status, approved_at, approved_by_staff_user_id
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'approved',CURRENT_TIMESTAMP,$16)
-       RETURNING id, external_id, document, person_type, legal_name, trade_name, phone, email,
-                 postal_code, address_line, address_number, address_complement, neighborhood,
-                 city, state, sales_channel, registration_status, approved_at`,
-      [
-        winthorCustomer.code, data.document, data.document.length === 11 ? 'CPF' : 'CNPJ', data.legalName,
-        data.tradeName, data.phone, data.email, authUser.id, data.postalCode, data.addressLine,
-        data.addressNumber, data.addressComplement, data.neighborhood, data.city, data.state, request.staff.id,
-      ],
-    )
-    return response.status(201).json({
-      customer: { ...customerJson(result.rows[0]), approvedAt: result.rows[0].approved_at },
-      winthorCustomer,
-    })
-  } catch (error) {
-    if (authUser?.id) await deleteSupabaseUser(authUser.id)
-    if (error instanceof OmegaApiError) return response.status(error.status).json({ message: error.message })
-    if (error?.status === 409 || error?.status === 502) return response.status(error.status).json({ message: error.message })
-    if (error?.code === '23505') return response.status(409).json({ message: 'Já existe um cliente com estes dados.' })
-    return next(error)
-  }
-})
+app.post('/api/staff/customers', requireCommercialAccess, (_request, response) => response.status(410).json({
+  message: 'Novos acessos devem ser iniciados pelo CPF/CNPJ na área do cliente e vinculados pela equipe após o cadastro comercial.',
+}))
 
 // Exclui cliente. Sem pedidos: remove o registro. Com pedidos: desativa e libera e-mail e CPF/CNPJ,
 // preservando o histórico. Em ambos os casos o acesso no Supabase é removido.
@@ -2443,8 +2507,10 @@ app.post('/api/staff/customers/:id/approve', requireCommercialAccess, async (req
     if (!Number.isSafeInteger(customerId) || customerId < 1) {
       return response.status(400).json({ message: 'Cliente inválido.' })
     }
+    const parsed = staffCustomerApproveSchema.safeParse(request.body)
+    if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
     const current = await pool.query(
-      `SELECT id, document, registration_status
+      `SELECT id, document, email, supabase_user_id, registration_status
        FROM customers WHERE id=$1 AND active=TRUE LIMIT 1`,
       [customerId],
     )
@@ -2452,21 +2518,55 @@ app.post('/api/staff/customers/:id/approve', requireCommercialAccess, async (req
     if (current.rows[0].registration_status === 'approved') {
       return response.status(409).json({ message: 'Este cadastro já foi aprovado.' })
     }
-    const winthorCustomer = await fetchWinthorCustomerByDocument(current.rows[0].document)
+    const winthorCustomer = await fetchWinthorCustomerByCode(parsed.data.externalId)
     if (!winthorCustomer) {
       return response.status(422).json({
-        message: 'CPF ou CNPJ não encontrado no cadastro comercial. O cadastro continua em análise.',
+        message: 'Código de cliente não encontrado no cadastro comercial. O cadastro continua em análise.',
+      })
+    }
+    if (winthorCustomer.document !== digits(current.rows[0].document)) {
+      return response.status(422).json({ message: 'O CPF/CNPJ do código informado não corresponde ao cadastro pendente.' })
+    }
+    if (!winthorCustomer.email) {
+      return response.status(422).json({ message: 'O cliente ainda não possui um e-mail válido no cadastro comercial. Cadastre o e-mail antes de aprovar.' })
+    }
+    const conflicts = await pool.query(
+      `SELECT id FROM customers
+       WHERE active=TRUE AND id<>$1 AND (external_id=$2 OR LOWER(email)=LOWER($3)) LIMIT 1`,
+      [customerId, winthorCustomer.code, winthorCustomer.email],
+    )
+    if (conflicts.rows.length) {
+      return response.status(409).json({ message: 'Este código de cliente ou e-mail oficial já está vinculado a outra conta.' })
+    }
+    const pendingCustomer = current.rows[0]
+    if (pendingCustomer.supabase_user_id && pendingCustomer.email.toLowerCase() !== winthorCustomer.email) {
+      const emailOwner = await findSupabaseUserByEmail(winthorCustomer.email)
+      if (emailOwner && emailOwner.id !== pendingCustomer.supabase_user_id) {
+        return response.status(409).json({ message: 'O e-mail oficial já pertence a outra conta de acesso.' })
+      }
+      await updateSupabaseUser(pendingCustomer.supabase_user_id, {
+        email: winthorCustomer.email,
+        metadata: { account_type: 'customer', document: winthorCustomer.document, external_id: winthorCustomer.code },
       })
     }
     const result = await pool.query(
-      `UPDATE customers SET external_id=$2, registration_status='approved',
-         approved_at=CURRENT_TIMESTAMP, approved_by_staff_user_id=$3,
+      `UPDATE customers SET external_id=$2, person_type=$3, legal_name=$4, trade_name=$5,
+         phone=$6, email=$7, postal_code=$8, address_line=$9, address_number=$10,
+         address_complement=$11, neighborhood=$12, city=$13, state=$14, sales_channel=$15,
+         registration_status='approved', approved_at=CURRENT_TIMESTAMP, approved_by_staff_user_id=$16,
+         source='erp',
          updated_at=CURRENT_TIMESTAMP
        WHERE id=$1 AND registration_status='pending'
        RETURNING id, external_id, document, person_type, legal_name, trade_name, phone, email,
                  postal_code, address_line, address_number, address_complement, neighborhood,
                  city, state, sales_channel, registration_status, approved_at`,
-      [customerId, winthorCustomer.code, request.staff.id],
+      [
+        customerId, winthorCustomer.code, winthorCustomer.personType, winthorCustomer.name,
+        winthorCustomer.tradeName, winthorCustomer.phone, winthorCustomer.email,
+        winthorCustomer.postalCode, winthorCustomer.addressLine, winthorCustomer.addressNumber,
+        winthorCustomer.addressComplement, winthorCustomer.neighborhood, winthorCustomer.city,
+        winthorCustomer.state, winthorCustomer.salesChannel, request.staff.id,
+      ],
     )
     if (!result.rows.length) return response.status(409).json({ message: 'O cadastro já foi analisado por outro usuário.' })
     return response.json({

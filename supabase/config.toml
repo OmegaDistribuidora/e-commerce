@@ -240,7 +240,7 @@ host = "smtp.resend.com"
 port = 465
 user = "resend"
 pass = "env(RESEND_API_KEY)"
-admin_email = "onboarding@resend.dev"
+admin_email = "contato@omegadistribuidora.com.br"
 sender_name = "Ômega Distribuidora"
 
 # Uncomment to customize email template

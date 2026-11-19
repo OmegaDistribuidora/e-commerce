@@ -377,6 +377,13 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .account-link-button:disabled { opacity: .55; cursor: not-allowed; }
 .account-forgot { justify-self: end; margin-top: -5px; }
 .otp-resend { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.person-type-selector { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+.person-type-selector label { min-height: 48px; border: 1px solid #cbd9ea; border-radius: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; color: #53677e; cursor: pointer; transition: .2s ease; }
+.person-type-selector label.active { border-color: var(--blue); background: #edf5ff; color: var(--navy); box-shadow: inset 0 0 0 1px var(--blue); }
+.person-type-selector input { accent-color: var(--blue); }
+.account-card a.checkout-button { display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; }
+.official-customer-data { min-width: 0; margin: 0; padding: 0; border: 0; }
+.official-customer-data:disabled input { color: #526579; background: #f4f7fb; opacity: 1; }
 .account-card .otp-input { height: 58px; text-align: center; letter-spacing: .45em; padding-left: .45em; font-size: 25px; font-weight: 800; color: var(--navy); font-variant-numeric: tabular-nums; }
 .password-help { margin-top: -7px; color: #738397; font-size: 10px; }
 .field-error { display: block; color: #c73939; font-size: 10px; font-weight: 700; }
@@ -674,6 +681,8 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .pending-customer-card > footer { padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .pending-customer-card > footer span { color: var(--muted); font-size: 11px; }
 .pending-customer-card > footer button { min-width: 170px; display: flex; align-items: center; justify-content: center; gap: 7px; }
+.customer-approval-form { display: flex; align-items: center; gap: 10px; }
+.customer-approval-form input { width: 170px; min-height: 44px; border: 1px solid #cbd9ea; border-radius: 9px; padding: 0 12px; color: var(--navy); font-weight: 700; }
 .staff-settings { max-width: 560px; }
 .staff-settings .staff-form { padding: 26px; }
 .staff-settings .staff-form > p, .staff-settings .staff-form > small { margin: 0; color: var(--muted); font-size: 12px; }
@@ -1026,6 +1035,8 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
   .pending-date { display: none; }
   .pending-customer-data { grid-template-columns: 1fr; gap: 12px; }
   .pending-customer-card > footer { align-items: stretch; flex-direction: column; }
+  .customer-approval-form { align-items: stretch; flex-direction: column; }
+  .customer-approval-form input { width: 100%; }
   .customer-area-heading { align-items: flex-start; }
   .registration-chip { min-width: 0; }
   .customer-account-tabs { overflow-x: auto; }

@@ -65,6 +65,10 @@ O Supabase é usado exclusivamente para autenticação; catálogo, clientes, ped
 
 Cadastro, confirmação por OTP e recuperação de senha usam o SMTP configurado no Supabase. A credencial SMTP/Resend e a `SUPABASE_SERVICE_ROLE_KEY` nunca devem usar o prefixo `VITE_` nem ser enviadas ao navegador.
 
+O primeiro acesso começa pela escolha entre Pessoa Física e Pessoa Jurídica e pela consulta do CPF/CNPJ na API protegida. Quando o documento já existe no cadastro comercial, o sistema usa exclusivamente o e-mail oficial para enviar o link de criação da senha. Quando não existe, o cliente preenche uma proposta cadastral, confirma o e-mail por OTP e fica em análise. A equipe informa o CODCLI na aprovação; o backend confere se o código e o documento correspondem e então substitui os dados provisórios pelos dados oficiais. Cadastros aprovados têm seus dados e condições comerciais atualizados pela sincronização periódica.
+
+O remetente de produção é `Ômega Distribuidora <contato@omegadistribuidora.com.br>`. Ele é configurado no SMTP do Supabase, usando o Resend apenas no backend; nenhuma credencial SMTP é exposta ao navegador.
+
 ### Conta administrativa
 
 Defina no serviço do e-commerce:

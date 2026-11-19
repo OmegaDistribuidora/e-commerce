@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose'
+import { randomBytes } from 'node:crypto'
 
 let cachedConfig
 let cachedJwks
@@ -70,7 +71,8 @@ function adminHeaders() {
   return { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}`, 'Content-Type': 'application/json' }
 }
 
-// Cria um acesso já confirmado (usado pela gestão enquanto o envio de e-mails não está ativo).
+// Cria uma identidade confirmada com senha temporária aleatória. O cliente define
+// a própria senha exclusivamente pelo link enviado ao e-mail oficial.
 export async function createConfirmedSupabaseUser({ email, password, metadata = {} }) {
   const headers = adminHeaders()
   if (!headers) throw new Error('A autenticação de clientes não está configurada no servidor.')
@@ -90,6 +92,57 @@ export async function createConfirmedSupabaseUser({ email, password, metadata = 
     throw error
   }
   return payload
+}
+
+export function createTemporaryPassword() {
+  return `Omega-${randomBytes(24).toString('base64url')}1aA`
+}
+
+export async function updateSupabaseUser(id, { email, metadata } = {}) {
+  const headers = adminHeaders()
+  if (!headers) throw new Error('A autenticação de clientes não está configurada no servidor.')
+  const body = {}
+  if (email) {
+    body.email = email
+    body.email_confirm = true
+  }
+  if (metadata) body.user_metadata = metadata
+  const response = await fetch(`${authConfig().url}/auth/v1/admin/users/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const message = String(payload.msg || payload.message || payload.error_description || '')
+    const error = new Error(/already|registered|exists/i.test(message)
+      ? 'O e-mail oficial já está vinculado a outra conta de acesso.'
+      : 'Não foi possível atualizar o acesso do cliente.')
+    error.status = /already|registered|exists/i.test(message) ? 409 : 502
+    throw error
+  }
+  return payload
+}
+
+export async function sendPasswordSetupEmail(email, redirectTo) {
+  const config = authConfig()
+  const publishableKey = String(process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY || '').trim()
+  if (!config || !publishableKey) throw new Error('O envio de e-mails de acesso não está configurado no servidor.')
+  const url = new URL(`${config.url}/auth/v1/recover`)
+  url.searchParams.set('redirect_to', redirectTo)
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { apikey: publishableKey, Authorization: `Bearer ${publishableKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const message = String(payload.msg || payload.message || payload.error_description || '')
+    const error = new Error(/rate|security purposes/i.test(message)
+      ? 'Muitas solicitações de acesso. Aguarde alguns minutos e tente novamente.'
+      : 'Não foi possível enviar as instruções de acesso agora.')
+    error.status = /rate|security purposes/i.test(message) ? 429 : 502
+    throw error
+  }
 }
 
 // Remove o acesso e informa se deu certo (404 = acesso já não existia).
