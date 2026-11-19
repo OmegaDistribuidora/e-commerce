@@ -10,8 +10,8 @@
             <p style="margin:0 0 8px;color:#FC6800;font-size:12px;font-weight:700;letter-spacing:1.7px">SEGURANÇA DA CONTA</p>
             <h1 style="margin:0 0 14px;color:#010066;font-size:27px;line-height:1.2">Redefina sua senha</h1>
             <p style="margin:0 auto 26px;max-width:460px;color:#64748b;font-size:15px;line-height:1.65">Recebemos uma solicitação para criar uma nova senha para sua conta.</p>
-            <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:15px 28px;border-radius:9px;background:#FC6800;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700">Criar nova senha</a>
-            <p style="margin:26px 0 0;color:#64748b;font-size:13px;line-height:1.55">Se você não solicitou a alteração, ignore este e-mail. Sua senha continuará a mesma.</p>
+            <a href="{{ .SiteURL }}/conta?mode=reset&amp;token_hash={{ .TokenHash }}&amp;type=recovery" style="display:inline-block;padding:15px 28px;border-radius:9px;background:#FC6800;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700">Criar nova senha</a>
+            <p style="margin:26px 0 0;color:#64748b;font-size:13px;line-height:1.55">O link é válido por 10 minutos. Se você não solicitou a alteração, ignore este e-mail. Sua senha continuará a mesma.</p>
           </td></tr>
           <tr><td style="padding:20px 30px;background:#010066;color:#ffffff;text-align:center;font-size:12px;line-height:1.6">Ômega Distribuidora · Atendimento de segunda a sexta, das 8h às 17h.</td></tr>
         </table>

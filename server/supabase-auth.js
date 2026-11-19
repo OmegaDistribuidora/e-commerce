@@ -1,5 +1,4 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose'
-import { randomBytes } from 'node:crypto'
 
 let cachedConfig
 let cachedJwks
@@ -71,33 +70,6 @@ function adminHeaders() {
   return { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}`, 'Content-Type': 'application/json' }
 }
 
-// Cria uma identidade confirmada com senha temporária aleatória. O cliente define
-// a própria senha exclusivamente pelo link enviado ao e-mail oficial.
-export async function createConfirmedSupabaseUser({ email, password, metadata = {} }) {
-  const headers = adminHeaders()
-  if (!headers) throw new Error('A autenticação de clientes não está configurada no servidor.')
-  const response = await fetch(`${authConfig().url}/auth/v1/admin/users`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: metadata }),
-    signal: AbortSignal.timeout(10_000),
-  })
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    const message = String(payload.msg || payload.message || payload.error_description || '')
-    const error = new Error(/already|registered|exists/i.test(message)
-      ? 'Este e-mail já possui uma conta de acesso.'
-      : 'Não foi possível criar o acesso do cliente.')
-    error.status = /already|registered|exists/i.test(message) ? 409 : 502
-    throw error
-  }
-  return payload
-}
-
-export function createTemporaryPassword() {
-  return `Omega-${randomBytes(24).toString('base64url')}1aA`
-}
-
 export async function updateSupabaseUser(id, { email, metadata } = {}) {
   const headers = adminHeaders()
   if (!headers) throw new Error('A autenticação de clientes não está configurada no servidor.')
@@ -122,29 +94,30 @@ export async function updateSupabaseUser(id, { email, metadata } = {}) {
   return payload
 }
 
-export async function sendPasswordSetupEmail(email, redirectTo) {
-  const config = authConfig()
-  const publishableKey = String(process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY || '').trim()
-  if (!config || !publishableKey) throw new Error('O envio de e-mails de acesso não está configurado no servidor.')
-  const url = new URL(`${config.url}/auth/v1/recover`)
-  url.searchParams.set('redirect_to', redirectTo)
-  const response = await fetch(url, {
+// Envia o convite de primeiro acesso (modelo "Invite user" do Supabase). A conta só é
+// confirmada quando o cliente abre o link e cria a própria senha.
+export async function inviteSupabaseUser(email, metadata = {}) {
+  const headers = adminHeaders()
+  if (!headers) throw new Error('O envio de e-mails de acesso não está configurado no servidor.')
+  const response = await fetch(`${authConfig().url}/auth/v1/invite`, {
     method: 'POST',
-    headers: { apikey: publishableKey, Authorization: `Bearer ${publishableKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
+    headers,
+    body: JSON.stringify({ email, data: metadata }),
     signal: AbortSignal.timeout(15_000),
   })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
     const message = String(payload.msg || payload.message || payload.error_description || '')
     // Registra a causa real (SMTP, remetente, limite) sem expor detalhes ao cliente.
-    console.error(`Supabase /recover falhou: HTTP ${response.status} ${payload.error_code || payload.code || ''} ${message}`.trim())
-    const error = new Error(/rate|security purposes/i.test(message)
+    console.error(`Supabase /invite falhou: HTTP ${response.status} ${payload.error_code || payload.code || ''} ${message}`.trim())
+    const rateLimited = response.status === 429 || /rate|security purposes/i.test(message)
+    const error = new Error(rateLimited
       ? 'Muitas solicitações de acesso. Aguarde alguns minutos e tente novamente.'
-      : 'Não foi possível enviar as instruções de acesso agora.')
-    error.status = /rate|security purposes/i.test(message) ? 429 : 502
+      : 'Não foi possível enviar o e-mail de primeiro acesso agora.')
+    error.status = rateLimited ? 429 : 502
     throw error
   }
+  return payload
 }
 
 // Remove o acesso e informa se deu certo (404 = acesso já não existia).

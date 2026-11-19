@@ -10,9 +10,11 @@ import {
   LoaderCircle,
   LockKeyhole,
   Mail,
+  MailCheck,
   RefreshCw,
   Search,
   ShieldCheck,
+  UserPlus,
 } from "lucide-react";
 import { authenticatedFetch, responseJson } from "./api";
 import {
@@ -37,7 +39,6 @@ type Step =
   | "confirm"
   | "forgot"
   | "reset"
-  | "access-sent"
   | "contact"
   | "pending";
 type Profile = Record<string, string>;
@@ -74,6 +75,45 @@ function authMessage(message: string) {
   return message || "Não foi possível concluir a autenticação.";
 }
 
+// Exibe só parte do e-mail (ex.: jo****ste@g**.com) no aviso de envio.
+function maskEmail(email: string) {
+  const [local = "", domain = ""] = email.trim().toLowerCase().split("@");
+  const keep = Math.max(1, Math.floor(local.length / 4));
+  const maskedLocal =
+    local.length <= 2
+      ? `${local[0] || ""}*`
+      : `${local.slice(0, keep)}${"*".repeat(Math.max(3, local.length - keep * 2))}${local.slice(-keep)}`;
+  const dot = domain.indexOf(".");
+  const domainName = dot > 0 ? domain.slice(0, dot) : domain;
+  const suffix = dot > 0 ? domain.slice(dot) : "";
+  return `${maskedLocal}@${domainName[0] || ""}**${suffix}`;
+}
+
+type EmailLink = {
+  mode: "create" | "reset";
+  tokenHash: string;
+  type: "invite" | "recovery";
+};
+
+// Links dos e-mails de primeiro acesso (mode=create) e recuperação (mode=reset).
+// O token só é validado quando o cliente salva a senha, para que pré-visualizações
+// de e-mail e antivírus não consumam o link antes do clique.
+function readEmailLink(): EmailLink | null {
+  const params = new URLSearchParams(window.location.search);
+  const mode = params.get("mode");
+  if (mode !== "create" && mode !== "reset") return null;
+  const tokenHash = params.get("token_hash") || "";
+  const type = params.get("type") === "invite" ? "invite" : "recovery";
+  if (tokenHash) {
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}?mode=${mode}`,
+    );
+  }
+  return { mode, tokenHash, type };
+}
+
 function readPendingProfile(): Profile | null {
   try {
     const value = JSON.parse(sessionStorage.getItem(pendingKey) || "null");
@@ -84,11 +124,9 @@ function readPendingProfile(): Profile | null {
 }
 
 export default function AccountPage() {
-  const [step, setStep] = useState<Step>(
-    new URLSearchParams(window.location.search).get("mode") === "reset"
-      ? "reset"
-      : "login",
-  );
+  const [emailLink, setEmailLink] = useState<EmailLink | null>(readEmailLink);
+  const [step, setStep] = useState<Step>(emailLink ? "reset" : "login");
+  const [sentTo, setSentTo] = useState("");
   const [personType, setPersonType] = useState<"CPF" | "CNPJ">("CPF");
   const [document, setDocument] = useState("");
   const [registrationEmail, setRegistrationEmail] = useState("");
@@ -254,6 +292,7 @@ export default function AccountPage() {
         found: boolean;
         hasAccess?: boolean;
         accessEmailSent?: boolean;
+        maskedEmail?: string;
         contactRequired?: boolean;
         pending?: boolean;
         message?: string;
@@ -268,7 +307,7 @@ export default function AccountPage() {
         return;
       }
       if (data.accessEmailSent) {
-        setStep("access-sent");
+        setSentTo(data.maskedEmail || "seu e-mail cadastrado");
         return;
       }
       if (data.found && data.hasAccess) {
@@ -426,9 +465,7 @@ export default function AccountPage() {
           redirectTo: `${window.location.origin}/conta?mode=reset`,
         });
       if (recoveryError) throw recoveryError;
-      setNotice(
-        "Se o e-mail estiver cadastrado, você receberá as instruções para redefinir a senha.",
-      );
+      setSentTo(maskEmail(email));
     } catch (requestError) {
       setError(
         authMessage(
@@ -454,13 +491,29 @@ export default function AccountPage() {
       return;
     }
     try {
+      if (emailLink?.tokenHash) {
+        const { error: verifyError } = await supabase.auth.verifyOtp({
+          token_hash: emailLink.tokenHash,
+          type: emailLink.type,
+        });
+        if (verifyError)
+          throw new Error(
+            "O link de acesso expirou ou já foi usado. Solicite um novo link.",
+          );
+        // O token é de uso único: novas tentativas usam a sessão já criada.
+        setEmailLink({ ...emailLink, tokenHash: "" });
+      }
       const linkSessionError = await recoverySessionReady;
       if (linkSessionError) throw new Error(linkSessionError);
       const { error: updateError } = await supabase.auth.updateUser({
         password,
       });
       if (updateError) throw updateError;
-      setNotice("Senha redefinida com sucesso.");
+      setNotice(
+        emailLink?.mode === "create"
+          ? "Senha criada com sucesso."
+          : "Senha redefinida com sucesso.",
+      );
       await finishLink();
     } catch (requestError) {
       setError(
@@ -575,16 +628,19 @@ export default function AccountPage() {
                     </>
                   )}
                 </button>
+                <div className="account-divider">
+                  <span>Ainda não tem senha?</span>
+                </div>
                 <button
                   type="button"
-                  className="account-link-button"
+                  className="secondary-button first-access-button"
                   onClick={() => {
                     setStep("lookup");
                     setError("");
                     setNotice("");
                   }}
                 >
-                  Primeiro acesso ou novo cadastro
+                  <UserPlus size={19} /> Primeiro acesso ou novo cadastro
                 </button>
               </form>
             </>
@@ -675,28 +731,6 @@ export default function AccountPage() {
                   Já tenho acesso
                 </button>
               </form>
-            </>
-          )}
-          {step === "access-sent" && (
-            <>
-              <span className="account-card-icon">
-                <Mail />
-              </span>
-              <h2>Confira seu e-mail</h2>
-              <p>
-                Localizamos seu cadastro e enviamos as instruções para o e-mail
-                registrado. Abra a mensagem para criar sua senha de acesso ao
-                e-commerce.
-              </p>
-              <div className="form-notice">
-                Por segurança, usamos somente o e-mail oficial do seu cadastro.
-              </div>
-              <button
-                className="checkout-button"
-                onClick={() => setStep("login")}
-              >
-                Ir para o login <ArrowRight size={19} />
-              </button>
             </>
           )}
           {step === "contact" && (
@@ -1011,7 +1045,7 @@ export default function AccountPage() {
                   {loading ? (
                     <LoaderCircle className="spin" />
                   ) : (
-                    "Enviar instruções"
+                    "Enviar"
                   )}
                 </button>
                 <button
@@ -1033,8 +1067,15 @@ export default function AccountPage() {
               <span className="account-card-icon">
                 <KeyRound />
               </span>
-              <h2>Crie uma nova senha</h2>
+              <h2>
+                {emailLink?.mode === "create"
+                  ? "Crie sua senha"
+                  : "Crie uma nova senha"}
+              </h2>
               <p>
+                {emailLink?.mode === "create"
+                  ? "Defina a senha do seu primeiro acesso. "
+                  : ""}
                 Use ao menos 8 caracteres, com maiúscula, minúscula e número.
               </p>
               {notice && <div className="form-notice">{notice}</div>}
@@ -1064,7 +1105,7 @@ export default function AccountPage() {
                   {loading ? (
                     <LoaderCircle className="spin" />
                   ) : (
-                    "Salvar nova senha"
+                    emailLink?.mode === "create" ? "Criar senha" : "Salvar nova senha"
                   )}
                 </button>
               </form>
@@ -1072,6 +1113,38 @@ export default function AccountPage() {
           )}
         </div>
       </section>
+      {sentTo && (
+        <div
+          className="overlay modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="email-sent-title"
+        >
+          <div className="success-modal email-sent-modal">
+            <span>
+              <MailCheck />
+            </span>
+            <h2 id="email-sent-title">Verifique seu e-mail</h2>
+            <p>
+              Enviamos um e-mail para <strong>{sentTo}</strong>
+            </p>
+            <small>O link é válido por 10 minutos.</small>
+            <button
+              type="button"
+              className="checkout-button"
+              autoFocus
+              onClick={() => {
+                setSentTo("");
+                setError("");
+                setNotice("");
+                setStep("login");
+              }}
+            >
+              Entendi
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

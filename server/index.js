@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
-import { createConfirmedSupabaseUser, createTemporaryPassword, deleteSupabaseUser, findSupabaseUserByEmail, removeSupabaseUser, sendPasswordSetupEmail, updateSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
+import { findSupabaseUserByEmail, inviteSupabaseUser, removeSupabaseUser, updateSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
 import { bannerSchema, bannersBulkSchema, campaignSyncSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, institutionalPageSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerApproveSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
 
 const app = express()
@@ -107,6 +107,19 @@ app.use(async (request, _response, next) => {
     return next(error)
   }
 })
+
+// Exibe só parte do e-mail oficial (ex.: jo****ste@g**.com) para quem pediu o acesso.
+function maskEmail(email) {
+  const [local = '', domain = ''] = String(email || '').split('@')
+  const keep = Math.max(1, Math.floor(local.length / 4))
+  const maskedLocal = local.length <= 2
+    ? `${local[0] || ''}*`
+    : `${local.slice(0, keep)}${'*'.repeat(Math.max(3, local.length - keep * 2))}${local.slice(-keep)}`
+  const dot = domain.indexOf('.')
+  const domainName = dot > 0 ? domain.slice(0, dot) : domain
+  const suffix = dot > 0 ? domain.slice(dot) : ''
+  return `${maskedLocal}@${domainName[0] || ''}**${suffix}`
+}
 
 function customerJson(customer) {
   return {
@@ -876,6 +889,59 @@ app.post('/api/auth/link', authLinkLimiter, async (request, response, next) => {
       [request.authUser.id, request.authUser.email, document],
     )
 
+    // Primeiro acesso de cliente do WinThor: o cadastro é criado agora, depois que a senha
+    // foi definida pelo link enviado ao e-mail oficial. Só vale se o e-mail autenticado for
+    // exatamente o e-mail oficial do documento no WinThor.
+    if ((!customerResult.rows.length || !customerResult.rows[0].supabase_user_id) && !profile && metadataDocument) {
+      const official = await fetchWinthorCustomerByDocument(metadataDocument)
+      if (official?.email && official.email.toLowerCase() === request.authUser.email) {
+        const conflicting = await client.query(
+          `SELECT id FROM customers
+           WHERE active=TRUE AND document<>$3
+             AND (external_id=$1 OR LOWER(email)=LOWER($2) OR supabase_user_id=$4)
+           LIMIT 1`,
+          [official.code, official.email, official.document, request.authUser.id],
+        )
+        if (conflicting.rows.length) {
+          await client.query('ROLLBACK')
+          return response.status(409).json({ message: 'O cadastro oficial já está vinculado a outra conta. Fale com a equipe Ômega.' })
+        }
+        const created = await client.query(
+          `INSERT INTO customers (
+             external_id, document, person_type, legal_name, trade_name, phone, email, supabase_user_id,
+             postal_code, address_line, address_number, address_complement, neighborhood, city, state,
+             sales_channel, registration_status, approved_at, active, source
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'approved',CURRENT_TIMESTAMP,TRUE,'erp')
+           ON CONFLICT (document) DO UPDATE SET
+             external_id=EXCLUDED.external_id, person_type=EXCLUDED.person_type,
+             legal_name=EXCLUDED.legal_name, trade_name=EXCLUDED.trade_name, phone=EXCLUDED.phone,
+             email=EXCLUDED.email, supabase_user_id=EXCLUDED.supabase_user_id, password_hash=NULL,
+             postal_code=EXCLUDED.postal_code, address_line=EXCLUDED.address_line,
+             address_number=EXCLUDED.address_number, address_complement=EXCLUDED.address_complement,
+             neighborhood=EXCLUDED.neighborhood, city=EXCLUDED.city, state=EXCLUDED.state,
+             sales_channel=EXCLUDED.sales_channel, registration_status='approved',
+             approved_at=COALESCE(customers.approved_at,CURRENT_TIMESTAMP), active=TRUE, source='erp',
+             updated_at=CURRENT_TIMESTAMP
+           WHERE customers.supabase_user_id IS NULL OR customers.supabase_user_id=EXCLUDED.supabase_user_id
+           RETURNING id, external_id, document, person_type, legal_name, trade_name, phone, email,
+                     postal_code, address_line, address_number, address_complement, neighborhood,
+                     city, state, sales_channel, registration_status`,
+          [
+            official.code, official.document, official.personType, official.name, official.tradeName,
+            official.phone, official.email, request.authUser.id, official.postalCode, official.addressLine,
+            official.addressNumber, official.addressComplement, official.neighborhood, official.city,
+            official.state, official.salesChannel,
+          ],
+        )
+        if (!created.rows.length) {
+          await client.query('ROLLBACK')
+          return response.status(409).json({ message: 'Este cliente já está vinculado a outra conta.' })
+        }
+        await client.query('COMMIT')
+        return response.json({ accountType: 'customer', customer: customerJson(created.rows[0]) })
+      }
+    }
+
     if ((!customerResult.rows.length || !customerResult.rows[0].supabase_user_id) && !profile) {
       await client.query('ROLLBACK')
       return response.status(409).json({
@@ -958,6 +1024,7 @@ app.post('/api/auth/link', authLinkLimiter, async (request, response, next) => {
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined)
     if (error?.code === '23505') return response.status(409).json({ message: 'Este acesso já está vinculado a outro cadastro.' })
+    if (error instanceof OmegaApiError) return response.status(error.status).json({ message: error.message })
     return next(error)
   } finally {
     client.release()
@@ -2297,8 +2364,6 @@ app.get('/api/customer/commercial-conditions', async (request, response, next) =
 })
 
 app.post('/api/customers/lookup', firstAccessLimiter, async (request, response, next) => {
-  let createdAuthUser = null
-  let authPersisted = false
   try {
     const parsed = lookupSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
@@ -2318,6 +2383,10 @@ app.post('/api/customers/lookup', firstAccessLimiter, async (request, response, 
     if (!official.email) {
       return response.json({ found: true, contactRequired: true })
     }
+    // O cadastro no e-commerce só é criado quando o cliente define a senha do primeiro acesso.
+    if (localCustomer?.supabase_user_id) {
+      return response.json({ found: true, hasAccess: true })
+    }
     const staffConflict = await pool.query(
       'SELECT id FROM staff_users WHERE LOWER(email)=LOWER($1) AND active=TRUE LIMIT 1',
       [official.email],
@@ -2325,21 +2394,6 @@ app.post('/api/customers/lookup', firstAccessLimiter, async (request, response, 
     if (staffConflict.rows.length) {
       return response.status(409).json({ message: 'Este e-mail pertence a uma conta interna. Fale com a equipe Ômega para regularizar o acesso.' })
     }
-
-    let authUser = await findSupabaseUserByEmail(official.email)
-    const existingAccess = Boolean(localCustomer?.supabase_user_id && authUser?.id === localCustomer.supabase_user_id)
-    if (existingAccess && authUser.last_sign_in_at) {
-      return response.json({ found: true, hasAccess: true })
-    }
-    if (!authUser) {
-      authUser = await createConfirmedSupabaseUser({
-        email: official.email,
-        password: createTemporaryPassword(),
-        metadata: { account_type: 'customer', document: official.document, external_id: official.code },
-      })
-      createdAuthUser = authUser
-    }
-
     const conflictingCustomer = await pool.query(
       `SELECT id FROM customers
        WHERE active=TRUE AND (external_id=$1 OR LOWER(email)=LOWER($2)) AND document<>$3
@@ -2347,43 +2401,29 @@ app.post('/api/customers/lookup', firstAccessLimiter, async (request, response, 
       [official.code, official.email, official.document],
     )
     if (conflictingCustomer.rows.length) {
-      if (createdAuthUser) await deleteSupabaseUser(createdAuthUser.id)
       return response.status(409).json({ message: 'O cadastro oficial já está vinculado a outra conta. Fale com a equipe Ômega.' })
     }
 
-    await pool.query(
-      `INSERT INTO customers (
-         external_id, document, person_type, legal_name, trade_name, phone, email, supabase_user_id,
-         postal_code, address_line, address_number, address_complement, neighborhood, city, state,
-         sales_channel, registration_status, approved_at, active, source
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'approved',CURRENT_TIMESTAMP,TRUE,'erp')
-       ON CONFLICT (document) DO UPDATE SET
-         external_id=EXCLUDED.external_id, person_type=EXCLUDED.person_type,
-         legal_name=EXCLUDED.legal_name, trade_name=EXCLUDED.trade_name, phone=EXCLUDED.phone,
-         email=EXCLUDED.email, supabase_user_id=EXCLUDED.supabase_user_id,
-         postal_code=EXCLUDED.postal_code, address_line=EXCLUDED.address_line,
-         address_number=EXCLUDED.address_number, address_complement=EXCLUDED.address_complement,
-         neighborhood=EXCLUDED.neighborhood, city=EXCLUDED.city, state=EXCLUDED.state,
-         sales_channel=EXCLUDED.sales_channel, registration_status='approved',
-         approved_at=COALESCE(customers.approved_at,CURRENT_TIMESTAMP), active=TRUE, source='erp',
-         updated_at=CURRENT_TIMESTAMP`,
-      [
-        official.code, official.document, official.personType, official.name, official.tradeName,
-        official.phone, official.email, authUser.id, official.postalCode, official.addressLine,
-        official.addressNumber, official.addressComplement, official.neighborhood, official.city,
-        official.state, official.salesChannel,
-      ],
-    )
-    authPersisted = true
-
-    const publicOrigin = String(process.env.PUBLIC_URL || `${request.protocol}://${request.get('host')}`).replace(/\/$/, '')
-    await sendPasswordSetupEmail(official.email, `${publicOrigin}/conta?mode=reset`)
-    return response.json({ found: true, accessEmailSent: true })
+    const authUser = await findSupabaseUserByEmail(official.email)
+    if (authUser) {
+      if (authUser.user_metadata?.account_type === 'staff') {
+        return response.status(409).json({ message: 'Este e-mail pertence a uma conta interna. Fale com a equipe Ômega para regularizar o acesso.' })
+      }
+      const linkedCustomer = await pool.query('SELECT id FROM customers WHERE supabase_user_id=$1 LIMIT 1', [authUser.id])
+      if (linkedCustomer.rows.length) {
+        return response.status(409).json({ message: 'O cadastro oficial já está vinculado a outra conta. Fale com a equipe Ômega.' })
+      }
+      // Conta de autenticação sem cadastro vinculado: um primeiro acesso anterior não foi
+      // concluído. O convite só pode ser reenviado para contas ainda não confirmadas.
+      if (authUser.email_confirmed_at) await removeSupabaseUser(authUser.id)
+    }
+    await inviteSupabaseUser(official.email, {
+      account_type: 'customer', document: official.document, external_id: official.code,
+    })
+    return response.json({ found: true, accessEmailSent: true, maskedEmail: maskEmail(official.email) })
   } catch (error) {
-    if (createdAuthUser?.id && !authPersisted) await deleteSupabaseUser(createdAuthUser.id)
     if (error instanceof OmegaApiError) return response.status(error.status).json({ message: error.message })
     if (error?.status) return response.status(error.status).json({ message: error.message })
-    if (error?.code === '23505') return response.status(409).json({ message: 'Este cadastro já está vinculado a outra conta.' })
     next(error)
   }
 })

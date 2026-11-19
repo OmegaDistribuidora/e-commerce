@@ -243,10 +243,9 @@ pass = "env(RESEND_API_KEY)"
 admin_email = "contato@omegadistribuidora.com.br"
 sender_name = "Ômega Distribuidora"
 
-# Uncomment to customize email template
-# [auth.email.template.invite]
-# subject = "You have been invited"
-# content_path = "./supabase/templates/invite.html"
+[auth.email.template.invite]
+subject = "Crie sua senha de acesso — Ômega Distribuidora"
+content_path = "./supabase/templates/invite.html"
 
 [auth.email.template.confirmation]
 subject = "Seu código de confirmação — Ômega Distribuidora"
