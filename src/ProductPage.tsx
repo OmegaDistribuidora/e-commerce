@@ -4,6 +4,7 @@ import {
   MapPin, Menu, Minus, Plus, Search, ShoppingCart, Warehouse, X, ZoomIn,
 } from 'lucide-react'
 import { authenticatedFetch } from './api'
+import DepartmentDrawer from './DepartmentDrawer'
 import { productPriceForQuantity, unitMoney } from './data'
 import { formatCatalogName } from './catalog'
 import { supabase } from './supabase'
@@ -20,6 +21,7 @@ function readCart(): CartItem[] {
 }
 
 export default function ProductPage({ code }: { code: number }) {
+  const [departmentsOpen, setDepartmentsOpen] = useState(false)
   const [product, setProduct] = useState<Product | null>(null)
   const [customer, setCustomer] = useState<Customer | null>(null)
   const [staffUser, setStaffUser] = useState<StaffUser | null>(null)
@@ -141,7 +143,8 @@ export default function ProductPage({ code }: { code: number }) {
         {(customer || staffUser) && <button className="logout-button" onClick={logout} aria-label="Sair da conta"><LogOut size={19} /><span>Sair</span></button>}
         <a className="cart-button" href="/?carrinho=1" aria-label={`Abrir carrinho com ${cartCount} ${cartCount === 1 ? 'item' : 'itens'}`}><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{cartCount ? `${cartCount} ${cartCount === 1 ? 'item' : 'itens'}` : 'Está vazio'}</strong></span></a>
       </div>
-      <nav className="main-nav" aria-label="Departamentos e seções"><div className="container nav-inner department-nav"><a className="categories-button" href="/#produtos"><Menu size={19} /> Departamentos</a>{[...departments].sort((a, b) => b.productCount - a.productCount).slice(0, 6).map((department) => <div className="department-nav-item" key={department.code || department.name}><a className="product-department-link" href={`/?departamento=${encodeURIComponent(department.name)}#produtos`}>{formatCatalogName(department.name)}</a><div className="department-dropdown"><a className="department-all" href={`/?departamento=${encodeURIComponent(department.name)}#produtos`}>Ver todos em {formatCatalogName(department.name)}</a><div>{department.sections.map((section) => <a key={`${department.name}-${section.code || section.name}`} href={`/?departamento=${encodeURIComponent(department.name)}&secao=${encodeURIComponent(section.name)}#produtos`}>{formatCatalogName(section.name)}<small>{section.productCount}</small></a>)}</div></div></div>)}<a className="nav-campaigns" href="/campanhas">Campanhas</a><div className="partners-nav-item"><a href="/#parceiros">Parceiros</a>{partners.length > 0 && <div className="partners-dropdown">{partners.map((partner) => <a key={partner.supplierId} href={`/?fornecedor=${partner.supplierId}#produtos`}><img src={partner.logo} alt="" /><span>{partner.name}</span></a>)}</div>}</div><a className="nav-support" href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a></div></nav>
+      <nav className="main-nav" aria-label="Departamentos e seções"><div className="container nav-inner department-nav"><button className="categories-button" onClick={() => setDepartmentsOpen(true)}><Menu size={19} /> Departamentos</button>{[...departments].sort((a, b) => b.productCount - a.productCount).slice(0, 6).map((department) => <div className="department-nav-item" key={department.code || department.name}><a className="product-department-link" href={`/?departamento=${encodeURIComponent(department.name)}#produtos`}>{formatCatalogName(department.name)}</a><div className="department-dropdown"><a className="department-all" href={`/?departamento=${encodeURIComponent(department.name)}#produtos`}>Ver todos em {formatCatalogName(department.name)}</a><div>{department.sections.map((section) => <a key={`${department.name}-${section.code || section.name}`} href={`/?departamento=${encodeURIComponent(department.name)}&secao=${encodeURIComponent(section.name)}#produtos`}>{formatCatalogName(section.name)}<small>{section.productCount}</small></a>)}</div></div></div>)}<a className="nav-campaigns" href="/campanhas">Campanhas</a><div className="partners-nav-item"><a href="/#parceiros">Parceiros</a>{partners.length > 0 && <div className="partners-dropdown">{partners.map((partner) => <a key={partner.supplierId} href={`/?fornecedor=${partner.supplierId}#produtos`}><img src={partner.logo} alt="" /><span>{partner.name}</span></a>)}</div>}</div><a className="nav-support" href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a></div></nav>
+      {departmentsOpen && <DepartmentDrawer departments={departments} onClose={() => setDepartmentsOpen(false)} />}
     </header>
 
     <main className="product-page-main">

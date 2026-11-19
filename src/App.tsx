@@ -495,9 +495,9 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
     window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
   }
 
+  // Parceiros sempre abrem a página exclusiva do fornecedor (mesmo destino de /parceiros).
   function selectPartner(partner: Partner) {
-    selectSupplier(String(partner.supplierId))
-    window.setTimeout(() => productsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+    window.location.href = `/?fornecedor=${partner.supplierId}#produtos`
   }
 
   function bannerTarget(banner: Banner) {
@@ -650,10 +650,11 @@ function StorePage({ initialSupplierIds, initialSectionCodes, initialProductCode
             <div className="taxonomy-sidebar-title"><SlidersHorizontal size={18} /><div><strong>{isBannerDestination ? 'Filtros' : 'Departamentos'}</strong><span>{isBannerDestination ? 'Refine os produtos' : initialSupplierIds.length > 1 ? 'Escolha um fornecedor' : 'Escolha uma seção'}</span></div></div>
             <button className={!departmentFilter && (!initialSupplierIds.length || !supplierFilter || initialSupplierIds.length === 1) ? 'active taxonomy-all' : 'taxonomy-all'} onClick={isBannerDestination ? resetBannerRefinements : clearFilters}>{isBannerDestination ? 'Todos os resultados' : 'Todos os produtos'}</button>
             {isBannerDestination && initialSupplierIds.length > 1 && <div className="taxonomy-suppliers">{contextualSuppliers.map(([id, name]) => <button className={supplierFilter === String(id) ? 'active' : ''} key={id} onClick={() => { setSupplierFilter(String(id)); setDepartmentFilter(''); setSectionFilter(''); setExpandedDepartment('') }}>{formatCatalogName(name)}</button>)}</div>}
-            <div className="taxonomy-list">{(isBannerDestination ? contextualDepartments : departments).map((department) => {
-              const open = expandedDepartment === department.name
+            <div className="taxonomy-list">{(isBannerDestination ? contextualDepartments : departments.filter((department) => department.name === departmentFilter)).map((department) => {
+              // Fora dos destinos de banner, a lateral mostra só o departamento escolhido, já aberto.
+              const open = expandedDepartment === department.name || !isBannerDestination
               return <div className={`taxonomy-department ${open ? 'open' : ''}`} key={department.code || department.name}>
-                <button className={departmentFilter === department.name && !sectionFilter ? 'active' : ''} onClick={() => { if (departmentFilter === department.name) setExpandedDepartment(open ? '' : department.name); else if (isBannerDestination) refineBannerDepartment(department.name); else selectDepartment(department.name) }}><span>{formatCatalogName(department.name)}<small>{department.productCount} produtos</small></span><ChevronDown size={17} /></button>
+                <button className={departmentFilter === department.name && !sectionFilter ? 'active' : ''} onClick={() => { if (!isBannerDestination) selectDepartment(department.name); else if (departmentFilter === department.name) setExpandedDepartment(open ? '' : department.name); else refineBannerDepartment(department.name) }}><span>{formatCatalogName(department.name)}<small>{department.productCount} produtos</small></span><ChevronDown size={17} /></button>
                 {open && <div className="taxonomy-sections">{department.sections.map((section) => <button className={sectionFilter === section.name ? 'active' : ''} key={`${department.name}-${section.code || section.name}`} onClick={() => isBannerDestination ? refineBannerSection(department.name, section.name) : selectSection(department.name, section.name)}><span>{formatCatalogName(section.name)}</span><small>{section.productCount}</small></button>)}</div>}
               </div>
             })}</div>
