@@ -416,7 +416,7 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
                                    WHERE ped.codcli=c.codcli AND ped.codfilial IN ('1','3'))
                                ) AS filial_estoque,
                                CASE WHEN NVL(UPPER(TRIM(c.bloqueio)), 'S') = 'N' THEN 0 ELSE 1 END AS bloqueado,
-                               c.cgc, c.cliente, c.fantasia, c.email, c.emailnfe,
+                               c.cgcent, c.cliente, c.fantasia, c.email, c.emailnfe,
                                c.telent, c.telcom, c.telcob, c.cepent, c.enderent,
                                c.numeroent, c.complementoent, c.bairroent, c.municent,
                                c.estent, c.codrede
