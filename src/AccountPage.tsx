@@ -15,7 +15,12 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { authenticatedFetch, responseJson } from "./api";
-import { supabase, supabaseConfigured } from "./supabase";
+import {
+  recoveryLinkError,
+  recoverySessionReady,
+  supabase,
+  supabaseConfigured,
+} from "./supabase";
 import type { Customer } from "./types";
 import {
   formatDocument,
@@ -54,6 +59,8 @@ function authMessage(message: string) {
     return "Código inválido. Confira os 6 dígitos e tente novamente.";
   if (normalized.includes("expired"))
     return "O código expirou. Solicite um novo código.";
+  if (normalized.includes("auth session missing"))
+    return "O link de acesso expirou ou já foi usado. Solicite um novo link.";
   if (
     normalized.includes("rate limit") ||
     normalized.includes("security purposes")
@@ -89,7 +96,11 @@ export default function AccountPage() {
   const [locatedCustomer, setLocatedCustomer] = useState<Customer | null>(null);
   const [confirmationEmail, setConfirmationEmail] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(() =>
+    recoveryLinkError
+      ? "O link de acesso expirou ou já foi usado. Solicite um novo link."
+      : "",
+  );
   const [notice, setNotice] = useState("");
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(0);
@@ -443,6 +454,8 @@ export default function AccountPage() {
       return;
     }
     try {
+      const linkSessionError = await recoverySessionReady;
+      if (linkSessionError) throw new Error(linkSessionError);
       const { error: updateError } = await supabase.auth.updateUser({
         password,
       });

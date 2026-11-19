@@ -137,6 +137,8 @@ export async function sendPasswordSetupEmail(email, redirectTo) {
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
     const message = String(payload.msg || payload.message || payload.error_description || '')
+    // Registra a causa real (SMTP, remetente, limite) sem expor detalhes ao cliente.
+    console.error(`Supabase /recover falhou: HTTP ${response.status} ${payload.error_code || payload.code || ''} ${message}`.trim())
     const error = new Error(/rate|security purposes/i.test(message)
       ? 'Muitas solicitações de acesso. Aguarde alguns minutos e tente novamente.'
       : 'Não foi possível enviar as instruções de acesso agora.')
