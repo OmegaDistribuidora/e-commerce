@@ -17,7 +17,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { authenticatedFetch } from "./api";
-import { money, unitMoney } from "./data";
+import { formatBrasiliaDateTime, money, unitMoney } from "./data";
 import { orderStatusLabel } from "./orderStatus";
 import { supabase } from "./supabase";
 import { ContentSkeleton } from "./Skeleton";
@@ -363,13 +363,9 @@ export default function OrdersPage() {
                           )}
                           {order.status === "cancelled" && (
                             <p className="order-cancelled-note">
-                              Cancelado
-                              {order.cancelledBy
-                                ? ` por ${order.cancelledBy}`
-                                : ""}
                               {order.cancelledAt
-                                ? ` em ${new Date(order.cancelledAt).toLocaleString("pt-BR")}`
-                                : ""}
+                                ? `Cancelado em ${formatBrasiliaDateTime(order.cancelledAt)}`
+                                : "Cancelado"}
                               .
                             </p>
                           )}

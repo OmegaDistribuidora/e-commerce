@@ -230,7 +230,7 @@ img { display: block; max-width: 100%; }
 .brands-section .section-heading { margin-bottom: 26px; }
 .brands-section .section-heading p { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
 .brands-carousel { width: 100%; overflow: hidden; mask-image: linear-gradient(to right,transparent,#000 5%,#000 95%,transparent); }
-.brands-track { width: max-content; display: flex; animation: partner-marquee 55s linear infinite; will-change: transform; }
+.brands-track { width: max-content; display: flex; animation: partner-marquee 46s linear infinite; will-change: transform; }
 .brands-carousel:hover .brands-track, .brands-carousel:focus-within .brands-track { animation-play-state: paused; }
 .brands-loop { display: flex; gap: 14px; padding-right: 14px; }
 .brand-card { width: clamp(170px, 14vw, 235px); min-height: 105px; padding: 16px 22px; display: grid; place-items: center; background: #fff; border: 1px solid #dfe7f1; border-radius: 10px; transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }

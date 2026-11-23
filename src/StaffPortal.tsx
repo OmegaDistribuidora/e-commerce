@@ -31,7 +31,7 @@ import {
   X,
 } from "lucide-react";
 import { authenticatedFetch } from "./api";
-import { money } from "./data";
+import { formatBrasiliaDateTime, money } from "./data";
 import { formatCatalogName } from "./catalog";
 import { orderStatusLabel } from "./orderStatus";
 import { supabase } from "./supabase";
@@ -1607,10 +1607,9 @@ function StaffOrderCard({
           <div className="winthor-order-box">
             <b>Pedido cancelado</b>
             <small>
-              {order.cancelledBy ? `Por ${order.cancelledBy}` : "Cancelado"}
               {order.cancelledAt
-                ? ` em ${new Date(order.cancelledAt).toLocaleString("pt-BR")}`
-                : ""}
+                ? `Cancelado em ${formatBrasiliaDateTime(order.cancelledAt)}`
+                : "Cancelado"}
             </small>
           </div>
         ) : (

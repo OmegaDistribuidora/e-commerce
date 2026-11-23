@@ -12,6 +12,19 @@ export const unitMoney = new Intl.NumberFormat('pt-BR', {
 })
 import type { Product } from './types'
 
+export function formatBrasiliaDateTime(value: string) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date(value)).replace(', ', ' às ')
+}
+
 export function campaignQuantitiesForCart(items: Array<Product & { quantity: number }>) {
   const totals = new Map<number, number>()
   for (const item of items) {
