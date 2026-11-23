@@ -1224,9 +1224,6 @@ function StorePage({
                 </div>
               )}
             </div>
-            <a className="drawer-partners drawer-campaigns" href="/campanhas" onClick={() => setMenuOpen(false)}>
-              Campanhas<ChevronRight size={18} />
-            </a>
             <a
               className="nav-support"
               href={whatsappUrl}
@@ -1235,9 +1232,6 @@ function StorePage({
             >
               Atendimento
             </a>
-            {!customer && !staffUser && <a className="drawer-partners drawer-login" href="/conta"><CircleUserRound size={20} />Entrar ou cadastrar<ChevronRight size={18} /></a>}
-            {customer && <a className="drawer-partners drawer-login" href="/conta"><CircleUserRound size={20} />Minha conta<ChevronRight size={18} /></a>}
-            {staffUser && <a className="drawer-partners drawer-login" href="/gestao"><CircleUserRound size={20} />Painel interno<ChevronRight size={18} /></a>}
           </div>
         </nav>
       </header>
@@ -1854,11 +1848,34 @@ function StorePage({
               })}
             </div>
             <a
+              className="drawer-partners drawer-campaigns"
+              href="/campanhas"
+              onClick={() => setMenuOpen(false)}
+            >
+              Campanhas
+              <ChevronRight size={18} />
+            </a>
+            <a
               className="drawer-partners"
-              href="#parceiros"
+              href="/parceiros"
               onClick={() => setMenuOpen(false)}
             >
               Parceiros
+              <ChevronRight size={18} />
+            </a>
+            <a
+              className="drawer-partners drawer-login"
+              href={staffUser ? "/gestao" : customer ? "/pedidos" : "/conta"}
+              onClick={() => setMenuOpen(false)}
+            >
+              <CircleUserRound size={20} />
+              <span>
+                {staffUser
+                  ? "Painel interno"
+                  : customer
+                    ? "Minha conta"
+                    : "Entrar ou cadastrar"}
+              </span>
               <ChevronRight size={18} />
             </a>
             {(customer || staffUser) && (
