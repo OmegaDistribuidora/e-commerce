@@ -32,7 +32,12 @@ import AboutPage from "./AboutPage";
 import PartnersPage from "./PartnersPage";
 import { HeroSkeleton, Skeleton } from "./Skeleton";
 import { authenticatedFetch } from "./api";
-import { money, productPriceForQuantity, unitMoney } from "./data";
+import {
+  campaignQuantitiesForCart,
+  money,
+  productPriceForQuantity,
+  unitMoney,
+} from "./data";
 import { formatCatalogName } from "./catalog";
 import { supabase } from "./supabase";
 import type {
@@ -537,10 +542,15 @@ function StorePage({
     0,
   );
   const cartCount = cart.length;
+  const campaignQuantities = useMemo(
+    () => campaignQuantitiesForCart(cart),
+    [cart],
+  );
   const cartTotal = cart.reduce(
     (sum, item) =>
       sum +
-      (productPriceForQuantity(item, item.quantity).unitPrice ?? 0) *
+      (productPriceForQuantity(item, item.quantity, campaignQuantities)
+        .unitPrice ?? 0) *
         item.quantity,
     0,
   );
@@ -1615,6 +1625,7 @@ function StorePage({
                             customer?.commercialBlocked,
                           )}
                           checkingStock={stockCheckingIds.has(product.id)}
+                          campaignQuantities={campaignQuantities}
                           onInvalid={setToast}
                         />
                       ))}
@@ -1896,7 +1907,11 @@ function StorePage({
               <>
                 <div className="cart-items">
                   {cart.map((item) => {
-                    const price = productPriceForQuantity(item, item.quantity);
+                    const price = productPriceForQuantity(
+                      item,
+                      item.quantity,
+                      campaignQuantities,
+                    );
                     return (
                       <div className="cart-item" key={item.id}>
                         <div className="cart-product-image">
@@ -2269,6 +2284,7 @@ function ProductCard({
   canOrder,
   commercialBlocked,
   checkingStock,
+  campaignQuantities,
   onInvalid,
 }: {
   product: Product;
@@ -2283,11 +2299,13 @@ function ProductCard({
   canOrder: boolean;
   commercialBlocked: boolean;
   checkingStock: boolean;
+  campaignQuantities: ReadonlyMap<number, number>;
   onInvalid: (message: string) => void;
 }) {
   const campaignPrice = productPriceForQuantity(
     product,
-    quantity || product.salesMultiple,
+    quantity,
+    campaignQuantities,
   );
   const nextOffer = [...(product.campaignOffers || [])].sort(
     (a, b) => b.discountPercent - a.discountPercent,

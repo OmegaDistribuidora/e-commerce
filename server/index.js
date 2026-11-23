@@ -621,9 +621,27 @@ async function priceCartItems(database, pricing, plan, items) {
     [currentBrasiliaDate(), ...productIds],
   )
   const campaignRules = new Map()
+  const campaignProducts = new Map()
   for (const rule of campaignResult.rows) {
     const productId = Number(rule.product_id)
+    const campaignCode = Number(rule.external_id)
     campaignRules.set(productId, [...(campaignRules.get(productId) || []), rule])
+    if (!campaignProducts.has(campaignCode)) campaignProducts.set(campaignCode, new Set())
+    campaignProducts.get(campaignCode).add(productId)
+  }
+  // A quantidade mínima/máxima da campanha considera a soma de todos os
+  // produtos participantes presentes no carrinho. O Set acima impede que um
+  // produto seja contado novamente quando a campanha possui mais de uma faixa.
+  const quantityByProduct = new Map()
+  for (const item of items) {
+    quantityByProduct.set(item.productId, (quantityByProduct.get(item.productId) || 0) + item.quantity)
+  }
+  const campaignQuantities = new Map()
+  for (const [campaignCode, participatingProducts] of campaignProducts) {
+    campaignQuantities.set(campaignCode, [...participatingProducts].reduce(
+      (total, productId) => total + (quantityByProduct.get(productId) || 0),
+      0,
+    ))
   }
   const restrictedSuppliers = new Set(pricing.restrictedSupplierIds || [])
   const restrictedProduct = result.rows.find((product) => restrictedSuppliers.has(Number(product.supplier_id)))
@@ -642,7 +660,8 @@ async function priceCartItems(database, pricing, plan, items) {
       throw new RequestError(`A quantidade do produto ${product.external_id} deve ser um múltiplo de ${salesMultiple} unidades.`)
     }
     const eligibleCampaign = (campaignRules.get(Number(product.id)) || []).find((rule) => (
-      units >= Number(rule.min_quantity) && (rule.max_quantity == null || units <= Number(rule.max_quantity))
+      (campaignQuantities.get(Number(rule.external_id)) || 0) >= Number(rule.min_quantity)
+      && (rule.max_quantity == null || (campaignQuantities.get(Number(rule.external_id)) || 0) <= Number(rule.max_quantity))
     ))
     const discountPercent = eligibleCampaign ? Number(eligibleCampaign.discount_percent) : 0
     const baseUnitPrice = Number(product.price)

@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { authenticatedFetch } from './api'
 import DepartmentDrawer from './DepartmentDrawer'
-import { productPriceForQuantity, unitMoney } from './data'
+import { campaignQuantitiesForCart, productPriceForQuantity, unitMoney } from './data'
 import { formatCatalogName } from './catalog'
 import { supabase } from './supabase'
 import { PageSkeleton } from './Skeleton'
@@ -128,8 +128,10 @@ export default function ProductPage({ code }: { code: number }) {
   if (loading) return <PageSkeleton />
   if (!product || error) return <main className="product-page-state"><ImageOff /><h1>Produto indisponível</h1><p>{error}</p><a href="/"><ArrowLeft /> Voltar para a loja</a></main>
 
-  const cartCount = readCart().length
-  const campaignPrice = productPriceForQuantity(product, quantity || product.salesMultiple)
+  const storedCart = readCart()
+  const cartCount = storedCart.length
+  const campaignQuantities = campaignQuantitiesForCart(storedCart)
+  const campaignPrice = productPriceForQuantity(product, quantity, campaignQuantities)
   const nextOffer = [...(product.campaignOffers || [])].sort((a, b) => b.discountPercent - a.discountPercent)[0]
 
   return <div className="app-shell product-page">
