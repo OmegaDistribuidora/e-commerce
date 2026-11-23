@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
 import { findSupabaseUserByEmail, inviteSupabaseUser, removeSupabaseUser, updateSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
-import { bannerSchema, bannersBulkSchema, campaignSyncSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, institutionalPageSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerApproveSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
+import { bannerSchema, bannersBulkSchema, campaignSyncSchema, couponSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, institutionalPageSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerApproveSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -408,10 +408,12 @@ async function listOrders(whereClause = '', params = []) {
             o.winthor_entered_at, o.payment_plan, o.payment_plan_label, o.total, o.notes, o.created_at, o.updated_at,
             o.cancelled_at, o.cancelled_by,
             c.id AS customer_id, c.legal_name, c.trade_name, c.document, c.email, c.phone,
-            su.name AS winthor_entered_by_name
+            su.name AS winthor_entered_by_name,
+            oc.code AS coupon_code,oc.description AS coupon_description,oc.discount_amount AS coupon_discount_amount
      FROM orders o
      JOIN customers c ON c.id = o.customer_id
      LEFT JOIN staff_users su ON su.id = o.winthor_entered_by_staff_user_id
+     LEFT JOIN order_coupons oc ON oc.order_id=o.id
      ${whereClause}
      ORDER BY o.created_at DESC`,
     params,
@@ -445,6 +447,7 @@ async function listOrders(whereClause = '', params = []) {
     paymentPlan: order.payment_plan_label || order.payment_plan,
     paymentPlanLabel: order.payment_plan_label || '',
     total: Number(order.total),
+    coupon: order.coupon_code ? { code: order.coupon_code, description: order.coupon_description, discountAmount: Number(order.coupon_discount_amount) } : null,
     notes: order.notes || '',
     createdAt: order.created_at,
     updatedAt: order.updated_at,
@@ -570,7 +573,7 @@ const priceColumn = (table) => `price_${priceTableOf(table)}`
 async function customerPricing(database, customer) {
   if (!customer) return null
   const result = await database.query(
-    'SELECT price_region, stock_branch, is_blocked, payment_plans, restricted_supplier_ids FROM customer_commercial_conditions WHERE customer_id=$1',
+    'SELECT price_region, stock_branch, is_blocked, allow_sales_multiple, payment_plans, restricted_supplier_ids FROM customer_commercial_conditions WHERE customer_id=$1',
     [customer.id],
   )
   const row = result.rows[0]
@@ -583,7 +586,11 @@ async function customerPricing(database, customer) {
   const restrictedSupplierIds = (Array.isArray(row?.restricted_supplier_ids) ? row.restricted_supplier_ids : [])
     .map(Number).filter((value) => Number.isSafeInteger(value) && value > 0)
   const stockBranch = [1, 3].includes(Number(row?.stock_branch)) ? Number(row.stock_branch) : null
-  return { region, stockBranch, isBlocked: Boolean(row?.is_blocked), plans, priceTables: [...new Set(plans.map((plan) => plan.priceTable))], restrictedSupplierIds }
+  return { region, stockBranch, isBlocked: Boolean(row?.is_blocked), allowSalesMultiple: row?.allow_sales_multiple !== false, plans, priceTables: [...new Set(plans.map((plan) => plan.priceTable))], restrictedSupplierIds }
+}
+
+function purchaseMultiple(pricing, product) {
+  return Math.max(1, Number(pricing?.allowSalesMultiple === false ? product.units_per_box : product.sales_multiple))
 }
 
 // Menor preço positivo entre as tabelas dos planos liberados para o cliente.
@@ -597,7 +604,7 @@ async function priceCartItems(database, pricing, plan, items) {
   const productIds = [...new Set(items.map((item) => item.productId))]
   const placeholders = productIds.map((_, index) => `$${index + 2}`).join(',')
   const result = await database.query(
-    `SELECT p.id, p.external_id, p.supplier_id, p.name, p.units_per_box, p.sales_multiple, CASE WHEN rp.${priceColumn(plan.priceTable)} > 0 THEN rp.${priceColumn(plan.priceTable)} END AS price
+    `SELECT p.id, p.external_id, p.supplier_id, p.section_code, p.name, p.units_per_box, p.sales_multiple, CASE WHEN rp.${priceColumn(plan.priceTable)} > 0 THEN rp.${priceColumn(plan.priceTable)} END AS price
      FROM products p
      LEFT JOIN region_prices rp ON rp.product_id = p.id AND rp.region = $1
      WHERE p.active = TRUE AND p.id IN (${placeholders})`,
@@ -630,7 +637,7 @@ async function priceCartItems(database, pricing, plan, items) {
       throw new RequestError(`O produto ${product.external_id} - ${product.name} está sem preço para o seu cadastro. Remova-o do carrinho.`)
     }
     const units = item.quantity
-    const salesMultiple = Math.max(1, Number(product.sales_multiple))
+    const salesMultiple = purchaseMultiple(pricing, product)
     if (units < salesMultiple || units % salesMultiple !== 0) {
       throw new RequestError(`A quantidade do produto ${product.external_id} deve ser um múltiplo de ${salesMultiple} unidades.`)
     }
@@ -653,6 +660,43 @@ async function priceCartItems(database, pricing, plan, items) {
     }
   })
   return { lines, total: money2(lines.reduce((sum, line) => sum + line.lineTotal, 0)) }
+}
+
+async function applyCoupon(database, couponCode, lines) {
+  const code = String(couponCode || '').trim().toUpperCase()
+  const subtotal = money2(lines.reduce((sum, line) => sum + line.lineTotal, 0))
+  if (!code) return { subtotal, total: subtotal, coupon: null }
+  const result = await database.query(
+    `SELECT c.id,c.code,c.description,c.discount_type,c.discount_value,c.scope_type
+     FROM coupons c
+     WHERE UPPER(c.code)=UPPER($1) AND c.active=TRUE
+       AND (c.starts_at IS NULL OR c.starts_at<=CURRENT_TIMESTAMP)
+       AND (c.ends_at IS NULL OR c.ends_at>CURRENT_TIMESTAMP)
+     LIMIT 1`,
+    [code],
+  )
+  const coupon = result.rows[0]
+  if (!coupon) throw new RequestError('Cupom inválido, inativo ou fora do período de utilização.')
+  const targetResult = coupon.scope_type === 'order' ? { rows: [] } : await database.query('SELECT target_value FROM coupon_targets WHERE coupon_id=$1', [coupon.id])
+  const targets = new Set(targetResult.rows.map((row) => Number(row.target_value)))
+  const eligibleLines = lines.filter((line) => {
+    if (coupon.scope_type === 'order') return true
+    if (coupon.scope_type === 'products') return targets.has(Number(line.product.external_id))
+    if (coupon.scope_type === 'suppliers') return targets.has(Number(line.product.supplier_id))
+    return targets.has(Number(line.product.section_code))
+  })
+  const eligibleSubtotal = money2(eligibleLines.reduce((sum, line) => sum + line.lineTotal, 0))
+  if (eligibleSubtotal <= 0) throw new RequestError('Este cupom não se aplica aos produtos do seu pedido.')
+  const value = Number(coupon.discount_value)
+  const discountAmount = money2(Math.min(eligibleSubtotal, coupon.discount_type === 'percent' ? eligibleSubtotal * value / 100 : value))
+  return {
+    subtotal,
+    total: money2(Math.max(0, subtotal - discountAmount)),
+    coupon: {
+      id: Number(coupon.id), code: coupon.code, description: coupon.description,
+      discountType: coupon.discount_type, discountValue: value, eligibleSubtotal, discountAmount,
+    },
+  }
 }
 
 // Valida o snapshot da filial e desconta pedidos do e-commerce que ainda nao
@@ -1651,20 +1695,21 @@ app.post('/api/integrations/customers/conditions', async (request, response, nex
       )
       const result = await client.query(
         `INSERT INTO customer_commercial_conditions
-          (customer_id, credit_limit, open_titles_amount, open_orders_amount, price_region, stock_branch, is_blocked, restricted_supplier_ids, payment_plans, source_updated_at)
-         SELECT id,$2::numeric,$5::numeric,$6::numeric,$7::int,$9::int,$10::boolean,$8::integer[],$3::jsonb,$4::timestamptz FROM customers WHERE external_id=$1 AND active=TRUE
+          (customer_id, credit_limit, open_titles_amount, open_orders_amount, price_region, stock_branch, is_blocked, allow_sales_multiple, restricted_supplier_ids, payment_plans, source_updated_at)
+         SELECT id,$2::numeric,$5::numeric,$6::numeric,$7::int,$9::int,$10::boolean,$11::boolean,$8::integer[],$3::jsonb,$4::timestamptz FROM customers WHERE external_id=$1 AND active=TRUE
          ON CONFLICT (customer_id) DO UPDATE SET credit_limit=EXCLUDED.credit_limit,
            open_titles_amount=EXCLUDED.open_titles_amount, open_orders_amount=EXCLUDED.open_orders_amount,
            price_region=COALESCE(EXCLUDED.price_region, customer_commercial_conditions.price_region),
            stock_branch=COALESCE(EXCLUDED.stock_branch, customer_commercial_conditions.stock_branch),
            is_blocked=EXCLUDED.is_blocked,
+           allow_sales_multiple=EXCLUDED.allow_sales_multiple,
            restricted_supplier_ids=EXCLUDED.restricted_supplier_ids,
            payment_plans=EXCLUDED.payment_plans, source_updated_at=EXCLUDED.source_updated_at,
            updated_at=CURRENT_TIMESTAMP
          RETURNING customer_id`,
         [condition.externalId, condition.creditLimit, JSON.stringify(condition.paymentPlans), condition.sourceUpdatedAt || null,
           condition.openTitlesAmount, condition.openOrdersAmount, condition.priceRegion ?? null,
-          postgresIntegerArray(condition.restrictedSupplierIds), condition.stockBranch ?? null, condition.isBlocked],
+          postgresIntegerArray(condition.restrictedSupplierIds), condition.stockBranch ?? null, condition.isBlocked, condition.allowSalesMultiple],
       )
       updatedCount += result.rowCount
     }
@@ -1868,7 +1913,8 @@ app.post('/api/customer/quote', async (request, response, next) => {
     const quotes = []
     for (const plan of pricing.plans) {
       try {
-        quotes.push({ plan, ...(await priceCartItems(pool, pricing, plan, parsed.data.items)) })
+        const priced = await priceCartItems(pool, pricing, plan, parsed.data.items)
+        quotes.push({ plan, ...priced, ...(await applyCoupon(pool, parsed.data.couponCode, priced.lines)) })
       } catch (error) {
         if (!(error instanceof RequestError)) throw error
         quotes.push({ plan, error })
@@ -1884,6 +1930,8 @@ app.post('/api/customer/quote', async (request, response, next) => {
         unitPrice: line.unitPrice, lineTotal: line.lineTotal, discountPercent: line.discountPercent,
         campaignCode: line.campaignCode, campaignDescription: line.campaignDescription,
       })),
+      subtotal: selected.subtotal,
+      coupon: selected.coupon,
       total: selected.total,
       planTotals: quotes.map((quote) => ({ code: quote.plan.code, label: quote.plan.label, total: quote.error ? null : quote.total })),
     })
@@ -1916,7 +1964,7 @@ app.post('/api/customer/stock-check', async (request, response, next) => {
     if (!product || pricing.restrictedSupplierIds.includes(Number(product.supplier_id))) {
       throw new RequestError('Este produto não está disponível para o seu cadastro.', 404)
     }
-    const salesMultiple = Math.max(1, Number(product.sales_multiple))
+    const salesMultiple = purchaseMultiple(pricing, product)
     if (parsed.data.quantity < salesMultiple || parsed.data.quantity % salesMultiple !== 0) {
       throw new RequestError(`A quantidade do produto ${product.external_id} deve ser um múltiplo de ${salesMultiple} unidades.`)
     }
@@ -2052,7 +2100,7 @@ app.get('/api/products', async (request, response, next) => {
         package: row.package,
         masterPackage: row.master_package,
         unitsPerBox: Number(row.units_per_box),
-        salesMultiple: Number(row.sales_multiple),
+        salesMultiple: purchaseMultiple(pricing, row),
         minBoxes: Number(row.min_boxes),
         unitPrice: customerPrice,
         listUnitPrice: customerPrice,
@@ -2257,7 +2305,7 @@ app.get('/api/products/:code', async (request, response, next) => {
     return response.json({ product: {
       id: Number(row.id), code: Number(row.external_id), supplierId: Number(row.supplier_id || 0),
       brand: row.brand, name: row.name, package: row.package || '', masterPackage: row.master_package || '',
-      unitsPerBox: Number(row.units_per_box), salesMultiple: Number(row.sales_multiple), minBoxes: Number(row.min_boxes),
+      unitsPerBox: Number(row.units_per_box), salesMultiple: purchaseMultiple(pricing, row), minBoxes: Number(row.min_boxes),
       unitPrice, listUnitPrice: unitPrice, planPrices,
       category: row.category || 'Sem categoria', categories: [],
       departmentCode: Number(row.department_code || 0), department: row.department || '',
@@ -2298,7 +2346,7 @@ app.get('/api/customer/favorites', async (request, response, next) => {
       return {
         id: Number(row.id), code: Number(row.external_id), supplierId: Number(row.supplier_id || 0),
         brand: row.brand, name: row.name, package: row.package || '', masterPackage: row.master_package || '',
-        unitsPerBox: Number(row.units_per_box), salesMultiple: Number(row.sales_multiple), minBoxes: Number(row.min_boxes),
+        unitsPerBox: Number(row.units_per_box), salesMultiple: purchaseMultiple(pricing, row), minBoxes: Number(row.min_boxes),
         unitPrice: customerPrice, listUnitPrice: customerPrice,
         category: row.section || 'Sem seção', categories: row.section ? [row.section] : [],
         departmentCode: Number(row.department_code || 0), department: row.department || '',
@@ -2916,6 +2964,79 @@ app.get('/api/staff/banners', requireMarketingAccess, async (_request, response,
   }
 })
 
+function couponJson(row) {
+  return {
+    id: Number(row.id), code: row.code, description: row.description,
+    discountType: row.discount_type, discountValue: Number(row.discount_value),
+    scopeType: row.scope_type, targetValues: (row.target_values || row.targets || []).map(Number),
+    active: Boolean(row.active), startsAt: row.starts_at || null, endsAt: row.ends_at || null,
+    createdAt: row.created_at, updatedAt: row.updated_at,
+  }
+}
+
+app.get('/api/staff/coupons', requireCommercialAccess, async (_request, response, next) => {
+  try {
+    const [result, targets] = await Promise.all([
+      pool.query('SELECT * FROM coupons ORDER BY active DESC,updated_at DESC,code'),
+      pool.query('SELECT coupon_id,target_value FROM coupon_targets ORDER BY target_value'),
+    ])
+    const targetsByCoupon = new Map()
+    for (const target of targets.rows) targetsByCoupon.set(Number(target.coupon_id), [...(targetsByCoupon.get(Number(target.coupon_id)) || []), Number(target.target_value)])
+    return response.json({ coupons: result.rows.map((row) => couponJson({ ...row, target_values: targetsByCoupon.get(Number(row.id)) || [] })) })
+  } catch (error) { return next(error) }
+})
+
+async function saveCoupon(request, response, next) {
+  const parsed = couponSchema.safeParse(request.body)
+  if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+  const content = parsed.data
+  const couponId = request.params.id ? Number(request.params.id) : null
+  if (couponId !== null && (!Number.isSafeInteger(couponId) || couponId < 1)) return response.status(400).json({ message: 'Cupom inválido.' })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const uniqueTargets = [...new Set(content.targetValues)]
+    if (content.scopeType !== 'order') {
+      const column = content.scopeType === 'products' ? 'external_id' : content.scopeType === 'suppliers' ? 'supplier_id' : 'section_code'
+      const validTargets = await client.query(`SELECT DISTINCT ${column} AS value FROM products WHERE active=TRUE AND ${column}=ANY($1::integer[])`, [postgresIntegerArray(uniqueTargets)])
+      if (validTargets.rows.length !== uniqueTargets.length) throw new RequestError('Um ou mais itens selecionados não estão disponíveis no catálogo ativo.')
+    }
+    const values = [content.code, content.description, content.discountType, content.discountValue, content.scopeType, content.active, content.startsAt || null, content.endsAt || null]
+    const saved = couponId === null
+      ? await client.query(
+        `INSERT INTO coupons (code,description,discount_type,discount_value,scope_type,active,starts_at,ends_at,created_by_staff_user_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [...values, request.staff.id])
+      : await client.query(
+        `UPDATE coupons SET code=$1,description=$2,discount_type=$3,discount_value=$4,scope_type=$5,active=$6,starts_at=$7,ends_at=$8,updated_at=CURRENT_TIMESTAMP
+         WHERE id=$9 RETURNING *`, [...values, couponId])
+    if (!saved.rows.length) throw new RequestError('Cupom não encontrado.', 404)
+    const id = Number(saved.rows[0].id)
+    await client.query('DELETE FROM coupon_targets WHERE coupon_id=$1', [id])
+    if (content.scopeType !== 'order') {
+      for (const target of uniqueTargets) {
+        await client.query('INSERT INTO coupon_targets (coupon_id,target_value) VALUES ($1,$2)', [id, target])
+      }
+    }
+    await client.query('COMMIT')
+    return response.status(couponId === null ? 201 : 200).json({ coupon: couponJson({ ...saved.rows[0], target_values: content.scopeType === 'order' ? [] : uniqueTargets }) })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    if (error?.code === '23505') return response.status(409).json({ message: 'Já existe um cupom com este código.' })
+    if (error instanceof RequestError) return response.status(error.status).json({ message: error.message })
+    return next(error)
+  } finally { client.release() }
+}
+
+app.post('/api/staff/coupons', requireCommercialAccess, saveCoupon)
+app.put('/api/staff/coupons/:id', requireCommercialAccess, saveCoupon)
+app.delete('/api/staff/coupons/:id', requireCommercialAccess, async (request, response, next) => {
+  try {
+    const result = await pool.query('UPDATE coupons SET active=FALSE,updated_at=CURRENT_TIMESTAMP WHERE id=$1 RETURNING id', [request.params.id])
+    if (!result.rows.length) return response.status(404).json({ message: 'Cupom não encontrado.' })
+    return response.status(204).end()
+  } catch (error) { return next(error) }
+})
+
 app.get('/api/staff/campaigns', requireStaff, async (_request, response, next) => {
   try {
     const result = await pool.query(
@@ -3119,11 +3240,13 @@ app.post('/api/orders', async (request, response, next) => {
       await client.query('ROLLBACK')
       return response.status(400).json({ message: 'O plano de pagamento selecionado não está liberado para este cliente.' })
     }
-    const { lines, total } = await priceCartItems(client, pricing, selectedPlan, parsed.data.items)
+    const priced = await priceCartItems(client, pricing, selectedPlan, parsed.data.items)
+    const { subtotal, total, coupon } = await applyCoupon(client, parsed.data.couponCode, priced.lines)
+    const { lines } = priced
 
-    if (total < 200) {
+    if (subtotal < 200) {
       await client.query('ROLLBACK')
-      return response.status(400).json({ message: `O pedido mínimo é R$ 200,00. Adicione mais R$ ${(200 - total).toFixed(2).replace('.', ',')}.` })
+      return response.status(400).json({ message: `O pedido mínimo é R$ 200,00. Adicione mais R$ ${(200 - subtotal).toFixed(2).replace('.', ',')}.` })
     }
     if (total > conditions.availableCredit) {
       await client.query('ROLLBACK')
@@ -3153,6 +3276,13 @@ app.post('/api/orders', async (request, response, next) => {
         `INSERT INTO order_items (order_id, product_id, boxes, units, units_per_box, unit_price, line_total)
          VALUES ($1,$2,$3,$4,$5,$6,$7)`,
         [order.id, line.product.id, line.boxes, line.units, line.product.units_per_box, line.unitPrice, line.lineTotal.toFixed(2)],
+      )
+    }
+    if (coupon) {
+      await client.query(
+        `INSERT INTO order_coupons (order_id,coupon_id,code,description,discount_type,discount_value,eligible_subtotal,discount_amount)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [order.id, coupon.id, coupon.code, coupon.description, coupon.discountType, coupon.discountValue, coupon.eligibleSubtotal, coupon.discountAmount],
       )
     }
     await client.query('COMMIT')

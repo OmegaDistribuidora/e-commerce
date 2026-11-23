@@ -43,7 +43,24 @@ export type OrderQuote = {
   paymentPlan: PricePlan
   items: Array<{ productId: number; units: number; baseUnitPrice: number; unitPrice: number; lineTotal: number; discountPercent: number; campaignCode: number | null; campaignDescription: string | null }>
   total: number
+  subtotal: number
+  coupon: null | { code: string; description: string; discountType: 'fixed' | 'percent'; discountValue: number; eligibleSubtotal: number; discountAmount: number }
   planTotals: Array<{ code: string; label: string; total: number | null }>
+}
+
+export type Coupon = {
+  id: number
+  code: string
+  description: string
+  discountType: 'fixed' | 'percent'
+  discountValue: number
+  scopeType: 'order' | 'products' | 'suppliers' | 'sections'
+  targetValues: number[]
+  active: boolean
+  startsAt: string | null
+  endsAt: string | null
+  createdAt?: string
+  updatedAt?: string
 }
 
 export type CampaignOffer = {
@@ -233,6 +250,7 @@ export type Order = {
   paymentPlan: string
   paymentPlanLabel?: string
   total: number
+  coupon?: null | { code: string; description: string; discountAmount: number }
   notes: string
   createdAt: string
   updatedAt: string

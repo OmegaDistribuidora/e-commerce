@@ -1,0 +1,82 @@
+import { useEffect, useMemo, useState } from 'react'
+import { BadgePercent, LoaderCircle, Pencil, Plus, Save, Search, Trash2, X } from 'lucide-react'
+import { authenticatedFetch } from './api'
+import { formatCatalogName } from './catalog'
+import type { CatalogDepartment, CatalogSupplier, Coupon, StaffCatalogProduct } from './types'
+
+type Props = { products: StaffCatalogProduct[]; suppliers: CatalogSupplier[]; departments: CatalogDepartment[] }
+const emptyCoupon = (): Coupon => ({ id: 0, code: '', description: '', discountType: 'fixed', discountValue: 0, scopeType: 'order', targetValues: [], active: true, startsAt: null, endsAt: null })
+const localValue = (value: string | null) => value ? new Date(value).toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).replace(' ', 'T').slice(0, 16) : ''
+const isoValue = (value: string) => value ? new Date(`${value}:00-03:00`).toISOString() : null
+
+export default function CouponManager({ products, suppliers, departments }: Props) {
+  const [coupons, setCoupons] = useState<Coupon[]>([])
+  const [editing, setEditing] = useState<Coupon | null>(null)
+  const [search, setSearch] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+
+  async function load() {
+    setLoading(true)
+    try {
+      const response = await authenticatedFetch('/api/staff/coupons')
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.message)
+      setCoupons(data.coupons)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível carregar os cupons.') }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { void load() }, [])
+
+  const options = useMemo(() => {
+    if (!editing || editing.scopeType === 'order') return []
+    const term = search.trim().toLocaleLowerCase('pt-BR')
+    if (editing.scopeType === 'products') return products.filter((item) => !term || `${item.code} ${item.name} ${item.brand}`.toLocaleLowerCase('pt-BR').includes(term)).map((item) => ({ value: item.code, label: item.name, detail: `Cód. ${item.code} · ${item.brand}` }))
+    if (editing.scopeType === 'suppliers') return suppliers.filter((item) => !term || `${item.id} ${item.name}`.toLocaleLowerCase('pt-BR').includes(term)).map((item) => ({ value: item.id, label: item.name, detail: `Cód. ${item.id}` }))
+    return departments.flatMap((department) => department.sections.map((section) => ({ value: section.code, label: formatCatalogName(section.name), detail: `${formatCatalogName(department.name)} · cód. ${section.code}` }))).filter((item) => !term || `${item.value} ${item.label} ${item.detail}`.toLocaleLowerCase('pt-BR').includes(term))
+  }, [editing, products, suppliers, departments, search])
+
+  function toggle(value: number) {
+    if (!editing) return
+    setEditing({ ...editing, targetValues: editing.targetValues.includes(value) ? editing.targetValues.filter((item) => item !== value) : [...editing.targetValues, value] })
+  }
+  async function save(event: React.FormEvent) {
+    event.preventDefault()
+    if (!editing) return
+    setLoading(true); setError(''); setNotice('')
+    try {
+      const payload = { ...editing, startsAt: isoValue(localValue(editing.startsAt)), endsAt: isoValue(localValue(editing.endsAt)) }
+      const response = await authenticatedFetch(editing.id ? `/api/staff/coupons/${editing.id}` : '/api/staff/coupons', { method: editing.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.message)
+      setEditing(null); setNotice('Cupom salvo com sucesso.'); await load()
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível salvar o cupom.') }
+    finally { setLoading(false) }
+  }
+  async function remove(coupon: Coupon) {
+    if (!confirm(`Desativar o cupom ${coupon.code}?`)) return
+    setLoading(true); setError('')
+    try {
+      const response = await authenticatedFetch(`/api/staff/coupons/${coupon.id}`, { method: 'DELETE' })
+      if (!response.ok) throw new Error((await response.json()).message)
+      setEditing(null); setNotice('Cupom desativado.'); await load()
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível desativar o cupom.') }
+    finally { setLoading(false) }
+  }
+
+  return <section className="coupon-manager">
+    <div className="staff-section-heading"><div><h2>Cupons de desconto</h2><span>Crie descontos seguros para o pedido inteiro ou para produtos, fornecedores e seções selecionados.</span></div><button className="primary-button" onClick={() => { setEditing(emptyCoupon()); setSearch(''); setError(''); setNotice('') }}><Plus /> Novo cupom</button></div>
+    {error && <div className="staff-alert error">{error}</div>}{notice && <div className="staff-alert success">{notice}</div>}
+    {loading && !coupons.length ? <div className="staff-empty"><LoaderCircle className="spin" /> Carregando cupons...</div> : <div className="coupon-grid">{coupons.map((coupon) => <article key={coupon.id} className={!coupon.active ? 'inactive' : ''}><BadgePercent /><div><strong>{coupon.code}</strong><span>{coupon.description}</span><small>{coupon.discountType === 'percent' ? `${coupon.discountValue}%` : `R$ ${coupon.discountValue.toFixed(2).replace('.', ',')}`} · {coupon.scopeType === 'order' ? 'pedido inteiro' : `${coupon.targetValues.length} itens selecionados`}</small></div><button className="icon-btn" onClick={() => { setEditing({ ...coupon }); setSearch(''); setError(''); setNotice('') }} aria-label="Editar cupom"><Pencil /></button></article>)}</div>}
+    {editing && <div className="banner-modal-backdrop" onMouseDown={() => setEditing(null)}><form className="banner-modal coupon-modal" onSubmit={save} onMouseDown={(event) => event.stopPropagation()}><header className="banner-modal-header"><div><span className="eyebrow">GESTÃO DE CUPONS</span><h2>{editing.id ? 'Editar cupom' : 'Novo cupom'}</h2></div><button type="button" className="icon-btn" onClick={() => setEditing(null)}><X /></button></header><div className="coupon-form">
+      <div className="form-row"><label>Código<input value={editing.code} onChange={(event) => setEditing({ ...editing, code: event.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, '') })} placeholder="EX: PRIMEIRACOMPRA" required /></label><label>Descrição<input value={editing.description} onChange={(event) => setEditing({ ...editing, description: event.target.value })} required /></label></div>
+      <div className="form-row"><label>Tipo de desconto<select value={editing.discountType} onChange={(event) => setEditing({ ...editing, discountType: event.target.value as Coupon['discountType'] })}><option value="fixed">Valor fixo</option><option value="percent">Percentual</option></select></label><label>Valor<input type="number" min="0.01" max={editing.discountType === 'percent' ? 100 : undefined} step="0.01" value={editing.discountValue || ''} onChange={(event) => setEditing({ ...editing, discountValue: Number(event.target.value) })} required /></label></div>
+      <label>Aplicação<select value={editing.scopeType} onChange={(event) => setEditing({ ...editing, scopeType: event.target.value as Coupon['scopeType'], targetValues: [] })}><option value="order">Pedido inteiro</option><option value="products">Produtos</option><option value="suppliers">Fornecedores</option><option value="sections">Seções</option></select></label>
+      {editing.scopeType !== 'order' && <fieldset className="coupon-targets"><legend>Itens válidos <small>{editing.targetValues.length} selecionados</small></legend><label className="coupon-search"><Search /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nome ou código" /></label><div>{options.map((option) => <label key={option.value}><input type="checkbox" checked={editing.targetValues.includes(option.value)} onChange={() => toggle(option.value)} /><span><b>{option.label}</b><small>{option.detail}</small></span></label>)}</div></fieldset>}
+      <div className="form-row"><label>Início opcional<input type="datetime-local" value={localValue(editing.startsAt)} onChange={(event) => setEditing({ ...editing, startsAt: isoValue(event.target.value) })} /></label><label>Encerramento opcional<input type="datetime-local" value={localValue(editing.endsAt)} onChange={(event) => setEditing({ ...editing, endsAt: isoValue(event.target.value) })} /></label></div>
+      <label className="checkbox-line"><input type="checkbox" checked={editing.active} onChange={(event) => setEditing({ ...editing, active: event.target.checked })} /> Cupom ativo</label>
+      {error && <div className="staff-alert error">{error}</div>}
+    </div><footer className="banner-modal-actions">{editing.id ? <button type="button" className="banner-delete-button" onClick={() => remove(editing)}><Trash2 /> Desativar</button> : <span />}<button type="button" className="secondary-button" onClick={() => setEditing(null)}>Cancelar</button><button className="primary-button" disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <><Save /> Salvar cupom</>}</button></footer></form></div>}
+  </section>
+}

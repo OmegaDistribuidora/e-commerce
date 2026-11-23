@@ -156,11 +156,48 @@ CREATE TABLE IF NOT EXISTS customer_commercial_conditions (
   price_region INTEGER,
   stock_branch INTEGER CHECK (stock_branch IN (1, 3)),
   is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
+  allow_sales_multiple BOOLEAN NOT NULL DEFAULT TRUE,
   restricted_supplier_ids INTEGER[] NOT NULL DEFAULT '{}',
   payment_plans JSONB NOT NULL DEFAULT '[]'::jsonb,
   source_updated_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS coupons (
+  id BIGSERIAL PRIMARY KEY,
+  code VARCHAR(40) NOT NULL UNIQUE,
+  description TEXT NOT NULL,
+  discount_type VARCHAR(10) NOT NULL CHECK (discount_type IN ('fixed', 'percent')),
+  discount_value NUMERIC(14,2) NOT NULL CHECK (discount_value > 0),
+  scope_type VARCHAR(12) NOT NULL CHECK (scope_type IN ('order', 'products', 'suppliers', 'sections')),
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  starts_at TIMESTAMPTZ,
+  ends_at TIMESTAMPTZ,
+  created_by_staff_user_id BIGINT REFERENCES staff_users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK (discount_type <> 'percent' OR discount_value <= 100),
+  CHECK (ends_at IS NULL OR starts_at IS NULL OR ends_at > starts_at)
+);
+
+CREATE TABLE IF NOT EXISTS coupon_targets (
+  coupon_id BIGINT NOT NULL REFERENCES coupons(id) ON DELETE CASCADE,
+  target_value INTEGER NOT NULL,
+  PRIMARY KEY (coupon_id, target_value)
+);
+
+CREATE TABLE IF NOT EXISTS order_coupons (
+  order_id BIGINT PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
+  coupon_id BIGINT REFERENCES coupons(id) ON DELETE SET NULL,
+  code VARCHAR(40) NOT NULL,
+  description TEXT NOT NULL,
+  discount_type VARCHAR(10) NOT NULL,
+  discount_value NUMERIC(14,2) NOT NULL,
+  eligible_subtotal NUMERIC(14,2) NOT NULL,
+  discount_amount NUMERIC(14,2) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_coupons_active_dates ON coupons(active, starts_at, ends_at);
 
 CREATE TABLE IF NOT EXISTS customer_favorites (
   customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,

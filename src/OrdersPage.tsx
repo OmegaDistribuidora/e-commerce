@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   ArrowLeft,
+  BadgePercent,
   ChevronDown,
   CircleX,
   Heart,
@@ -372,6 +373,7 @@ export default function OrdersPage() {
                               .
                             </p>
                           )}
+                          {order.coupon && <p className="order-coupon-summary"><BadgePercent size={17} /><span>Cupom <strong>{order.coupon.code}</strong> · {order.coupon.description}</span><b>- {money.format(order.coupon.discountAmount)}</b></p>}
                           <footer>
                             <span>Total do pedido</span>
                             <strong>{money.format(order.total)}</strong>

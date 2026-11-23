@@ -432,6 +432,7 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
                                    WHERE ped.codcli=c.codcli AND ped.codfilial IN ('1','3'))
                                ) AS filial_estoque,
                                CASE WHEN NVL(UPPER(TRIM(c.bloqueio)), 'S') = 'N' THEN 0 ELSE 1 END AS bloqueado,
+                               CASE WHEN NVL(UPPER(TRIM(c.validarmultiplovenda)), 'S') IN ('S','SIM','Y') THEN 1 ELSE 0 END AS permite_multiplo,
                                c.cgcent, c.cliente, c.fantasia, c.email, c.emailnfe,
                                c.telent, c.telcom, c.telcob, c.cepent, c.enderent,
                                c.numeroent, c.complementoent, c.bairroent, c.municent,
@@ -509,7 +510,7 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
     conditions = []
     regions = set()
     for row in customer_rows:
-        (code, credit_limit, primary_plan, price_region, plaza_code, stock_branch, is_blocked,
+        (code, credit_limit, primary_plan, price_region, plaza_code, stock_branch, is_blocked, allow_sales_multiple,
          document, legal_name, trade_name, email, email_nfe, phone_delivery, phone_commercial,
          phone_billing, postal_code, address_line, address_number, address_complement,
          neighborhood, city, state, network_code) = row
@@ -547,6 +548,7 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
             "priceRegion": region,
             "stockBranch": int(stock_branch) if stock_branch is not None and int(stock_branch) in (1, 3) else None,
             "isBlocked": bool(is_blocked),
+            "allowSalesMultiple": bool(allow_sales_multiple),
             "restrictedSupplierIds": sorted(restricted_suppliers),
             "paymentPlans": [
                 {"code": str(value), "label": plan_map[value]["label"], "priceTable": plan_map[value]["priceTable"]}

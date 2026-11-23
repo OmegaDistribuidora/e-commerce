@@ -101,6 +101,7 @@ export const orderSchema = z.object({
   customerId: z.coerce.number().int().positive(),
   paymentPlan: z.string().trim().min(1, 'Selecione um plano de pagamento').max(30),
   notes: z.string().trim().max(1000).optional().default(''),
+  couponCode: z.string().trim().toUpperCase().max(40).optional().default(''),
   items: z.array(z.object({
     productId: z.coerce.number().int().positive(),
     quantity: z.coerce.number().int().positive().max(100000),
@@ -109,6 +110,7 @@ export const orderSchema = z.object({
 
 export const orderQuoteSchema = z.object({
   paymentPlan: z.string().trim().min(1).max(30).optional(),
+  couponCode: z.string().trim().toUpperCase().max(40).optional().default(''),
   items: z.array(z.object({
     productId: z.coerce.number().int().positive(),
     quantity: z.coerce.number().int().positive().max(100000),
@@ -118,6 +120,22 @@ export const orderQuoteSchema = z.object({
 export const stockCheckSchema = z.object({
   productId: z.coerce.number().int().positive(),
   quantity: z.coerce.number().int().positive().max(100000),
+})
+
+export const couponSchema = z.object({
+  code: z.string().trim().toUpperCase().min(3, 'Informe um código com ao menos 3 caracteres').max(40).regex(/^[A-Z0-9_-]+$/, 'Use apenas letras, números, hífen ou sublinhado'),
+  description: z.string().trim().min(1, 'Informe uma descrição').max(180),
+  discountType: z.enum(['fixed', 'percent']),
+  discountValue: z.coerce.number().positive('Informe um desconto maior que zero').max(999999999),
+  scopeType: z.enum(['order', 'products', 'suppliers', 'sections']),
+  targetValues: z.array(z.coerce.number().int().positive()).max(5000).default([]),
+  active: z.boolean().default(true),
+  startsAt: z.string().datetime({ offset: true }).nullable().optional(),
+  endsAt: z.string().datetime({ offset: true }).nullable().optional(),
+}).superRefine((value, context) => {
+  if (value.discountType === 'percent' && value.discountValue > 100) context.addIssue({ code: 'custom', path: ['discountValue'], message: 'O desconto percentual não pode ultrapassar 100%.' })
+  if (value.scopeType !== 'order' && value.targetValues.length === 0) context.addIssue({ code: 'custom', path: ['targetValues'], message: 'Selecione ao menos um item para este cupom.' })
+  if (value.startsAt && value.endsAt && new Date(value.endsAt) <= new Date(value.startsAt)) context.addIssue({ code: 'custom', path: ['endsAt'], message: 'O encerramento deve ser posterior ao início.' })
 })
 
 const campaignProductSyncSchema = z.object({
@@ -279,6 +297,7 @@ export const customerConditionsSyncSchema = z.object({
     priceRegion: z.coerce.number().int().nonnegative().nullable().optional(),
     stockBranch: z.coerce.number().int().refine((value) => value === 1 || value === 3).nullable().optional(),
     isBlocked: z.boolean().default(false),
+    allowSalesMultiple: z.boolean().default(true),
     restrictedSupplierIds: z.array(z.coerce.number().int().positive()).max(10000).default([]),
     paymentPlans: z.array(paymentPlanSyncSchema).max(100),
     sourceUpdatedAt: z.string().datetime({ offset: true }).nullable().optional(),

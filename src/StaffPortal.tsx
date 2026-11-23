@@ -1,9 +1,11 @@
 import PhotoManager from "./PhotoManager";
 import InstitutionalEditor from "./InstitutionalEditor";
+import CouponManager from "./CouponManager";
 import { ImageOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  BadgePercent,
   Building2,
   Camera,
   CheckSquare,
@@ -51,6 +53,7 @@ type Tab =
   | "orders"
   | "customers"
   | "campaigns"
+  | "coupons"
   | "banners"
   | "photos"
   | "institutional"
@@ -886,6 +889,12 @@ export default function StaffPortal() {
                   <b className="nav-count">{pendingCustomers.length}</b>
                 )}
               </button>
+              <button
+                className={tab === "coupons" ? "active" : ""}
+                onClick={() => changeTab("coupons")}
+              >
+                <BadgePercent /> Cupons
+              </button>
             </>
           )}
           <button
@@ -942,6 +951,7 @@ export default function StaffPortal() {
                     orders: "Pedidos do e-Commerce",
                     customers: "Clientes pendentes",
                     campaigns: "Campanhas de desconto",
+                    coupons: "Cupons de desconto",
                     categories: "Categorias de produtos",
                     photos: "Fotos",
                     banners: "Banners da loja",
@@ -1359,6 +1369,9 @@ export default function StaffPortal() {
             )}
           </section>
         )}
+        {tab === "coupons" && user.role !== "MARKETING" && (
+          <CouponManager products={catalogProducts} suppliers={suppliers} departments={catalogDepartments} />
+        )}
         {tab === "photos" && (
           <PhotoManager
             products={catalogProducts}
@@ -1675,6 +1688,7 @@ function StaffOrderCard({
           </div>
         ))}
       </div>
+      {order.coupon && <p className="order-coupon-summary"><BadgePercent size={17} /><span>Cupom <strong>{order.coupon.code}</strong> · {order.coupon.description}</span><b>- {money.format(order.coupon.discountAmount)}</b></p>}
     </details>
   );
 }
