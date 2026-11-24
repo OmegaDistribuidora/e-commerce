@@ -124,9 +124,9 @@ Administradores e Comerciais liberam um pedido informando obrigatoriamente o `NU
 
 - `OMEGA_API_URL=https://apiomega.williamfmarinho.com.br`
 - `OMEGA_API_KEY` com a chave armazenada no `.env` da API Omega
-- `ORDER_STATUS_CACHE_MINUTES=15`
+- `ORDER_STATUS_CACHE_MINUTES=3`
 
-O cliente vê apenas **Em análise**, **Liberado** ou **Enviado**. O painel interno também mostra a posição real retornada pelo WinThor. A última resposta fica persistida no PostgreSQL por 15 minutos e continua disponível durante indisponibilidades temporárias da API ou do WinThor.
+O cliente vê **Em análise**, **Liberado**, **Enviado** ou **Cancelado**, além da previsão de entrega (DTENTREGA + 2 dias úteis) quando o pedido tem NUMPED. O painel interno também mostra a posição real retornada pelo WinThor. A última resposta fica persistida no PostgreSQL por 3 minutos (pedidos cancelados não são mais consultados) e continua disponível durante indisponibilidades temporárias da API ou do WinThor.
 
 Enquanto o pedido está **Em análise** e ainda não tem `NUMPED`, ele pode ser cancelado pelo próprio cliente (Minha conta → Meus pedidos) ou por Administradores e Comerciais no painel de gestão. Pedido cancelado deixa de consumir o crédito do cliente e não pode mais ser vinculado ao WinThor. Depois de vinculado a um `NUMPED`, o cancelamento deve ser feito no WinThor.
 

@@ -15,7 +15,7 @@ app.set('trust proxy', 1)
 const port = Number(process.env.PORT) || 3000
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const distDir = resolve(currentDir, '../dist')
-const orderStatusCacheMs = Math.max(1, Number(process.env.ORDER_STATUS_CACHE_MINUTES) || 15) * 60 * 1000
+const orderStatusCacheMs = Math.max(1, Number(process.env.ORDER_STATUS_CACHE_MINUTES) || 3) * 60 * 1000
 const stockMaxAgeMs = Math.max(2, Number(process.env.STOCK_MAX_AGE_MINUTES) || 5) * 60 * 1000
 const customerOrderStatuses = new Set(['analysis', 'released', 'sent', 'cancelled'])
 
@@ -367,7 +367,8 @@ const fetchWinthorCustomerByCode = (code) => fetchWinthorCustomer({ code })
 async function refreshStaleOrderStatuses(orders) {
   if (!omegaApiConfig()) return
   const now = Date.now()
-  const staleOrders = orders.filter((order) => order.winthor_order_number && (
+  // Pedidos cancelados não mudam mais: só os demais são consultados no WinThor.
+  const staleOrders = orders.filter((order) => order.winthor_order_number && order.status !== 'cancelled' && (
     !order.winthor_status_checked_at
     || now - new Date(order.winthor_status_checked_at).getTime() >= orderStatusCacheMs
   ))
