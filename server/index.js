@@ -239,10 +239,9 @@ async function fetchWinthorOrderStatuses(orderNumbers) {
   for (const order of Array.isArray(data.pedidos) ? data.pedidos : []) {
     const number = Number(order.numped)
     const label = String(order.statusReal || '').trim().slice(0, 80) || 'Em análise'
-    const normalizedStatus = order.status === 'cancelled' || /cancelad/i.test(label) ? 'cancelled' : order.status
-    if (Number.isSafeInteger(number) && customerOrderStatuses.has(normalizedStatus)) {
+    if (Number.isSafeInteger(number) && customerOrderStatuses.has(order.status)) {
       statuses.set(number, {
-        status: normalizedStatus,
+        status: order.status,
         code: String(order.posicao || '').trim().slice(0, 20),
         label,
       })
@@ -3538,7 +3537,7 @@ app.post('/api/orders', async (request, response, next) => {
     await validateOrderStock(client, pricing.stockBranch, lines)
 
     const orderResult = await client.query(
-      'INSERT INTO orders (customer_id, payment_plan, payment_plan_label, stock_branch, total, notes) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, created_at',
+      "INSERT INTO orders (customer_id, status, payment_plan, payment_plan_label, stock_branch, total, notes) VALUES ($1,'analysis',$2,$3,$4,$5,$6) RETURNING id, created_at",
       [request.customer.id, parsed.data.paymentPlan, String(selectedPlan.label).slice(0, 160), pricing.stockBranch, total.toFixed(2), parsed.data.notes],
     )
     const order = orderResult.rows[0]

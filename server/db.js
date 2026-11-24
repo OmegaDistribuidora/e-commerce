@@ -172,6 +172,8 @@ export async function initializeDatabase() {
     }
   }
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_winthor_order_number ON orders(winthor_order_number)')
+  // Tabelas criadas antes de 03/11 mantinham o padrão antigo 'received', que bloqueava o cancelamento.
+  await pool.query("ALTER TABLE orders ALTER COLUMN status SET DEFAULT 'analysis'")
   await pool.query("UPDATE orders SET status='analysis' WHERE status='received'")
   await pool.query('UPDATE products SET retail_unit_price = unit_price WHERE retail_unit_price IS NULL')
   await pool.query('UPDATE products SET network_unit_price = unit_price WHERE network_unit_price IS NULL')
