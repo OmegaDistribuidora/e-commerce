@@ -1811,6 +1811,28 @@ function BannerEditorModal({
         search,
       ),
   );
+  const filteredDestinationCodes = banner.destinationType === "sections"
+    ? filteredSections.map((section) => section.code)
+    : banner.destinationType === "suppliers"
+      ? filteredSuppliers.map((supplier) => supplier.id)
+      : banner.destinationType === "products"
+        ? filteredProducts.map((product) => product.code)
+        : [];
+  const uniqueFilteredCodes = [...new Set(filteredDestinationCodes)];
+  const selectedDestinationCodes = new Set(banner.destinationValues);
+  const allFilteredDestinationsSelected = uniqueFilteredCodes.length > 0 &&
+    uniqueFilteredCodes.every((code) => selectedDestinationCodes.has(code));
+  const bulkDestinationCount = new Set([...selectedDestinationCodes, ...uniqueFilteredCodes]).size;
+  const canSelectAllDestinations = allFilteredDestinationsSelected || bulkDestinationCount <= 100;
+  const toggleFilteredDestinations = () => {
+    if (!uniqueFilteredCodes.length || !canSelectAllDestinations) return;
+    const filtered = new Set(uniqueFilteredCodes);
+    onChange({
+      destinationValues: allFilteredDestinationsSelected
+        ? banner.destinationValues.filter((code) => !filtered.has(code))
+        : [...new Set([...banner.destinationValues, ...uniqueFilteredCodes])],
+    });
+  };
   const destinationIsValid =
     banner.destinationType === "navigation" ||
     (banner.destinationType === "campaigns"
@@ -1989,6 +2011,14 @@ function BannerEditorModal({
                   }
                 />
               </label>
+              {banner.destinationType !== "campaigns" && (
+                <div className="banner-picker-toolbar">
+                  <button type="button" className="picker-select-all" onClick={toggleFilteredDestinations} disabled={!uniqueFilteredCodes.length || !canSelectAllDestinations}>
+                    {allFilteredDestinationsSelected ? "Desmarcar resultados" : "Selecionar todos os resultados"} <small>({uniqueFilteredCodes.length})</small>
+                  </button>
+                  {!canSelectAllDestinations && <small>Refine a busca para selecionar até 100 destinos por banner.</small>}
+                </div>
+              )}
               <div>
                 {banner.destinationType === "sections" &&
                   filteredSections.map((section) => (

@@ -8,7 +8,7 @@ type Props = { products: StaffCatalogProduct[]; suppliers: CatalogSupplier[]; de
 const emptyCoupon = (): Coupon => ({ id: 0, code: '', description: '', discountType: 'fixed', discountValue: 0, scopeType: 'order', targetValues: [], active: true, startsAt: null, endsAt: null })
 const localValue = (value: string | null) => value ? new Date(value).toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).replace(' ', 'T').slice(0, 16) : ''
 const isoValue = (value: string) => value ? new Date(`${value}:00-03:00`).toISOString() : null
-const percentDisplay = (value: number) => value ? value.toFixed(2).replace('.', ',') : ''
+const decimalDisplay = (value: number) => value ? value.toFixed(2).replace('.', ',') : ''
 
 export default function CouponManager({ products, suppliers, departments }: Props) {
   const [coupons, setCoupons] = useState<Coupon[]>([])
@@ -33,20 +33,35 @@ export default function CouponManager({ products, suppliers, departments }: Prop
   const options = useMemo(() => {
     if (!editing || editing.scopeType === 'order') return []
     const term = search.trim().toLocaleLowerCase('pt-BR')
-    if (editing.scopeType === 'products') return products.filter((item) => !term || `${item.code} ${item.name} ${item.brand}`.toLocaleLowerCase('pt-BR').includes(term)).map((item) => ({ value: item.code, label: item.name, detail: `Cód. ${item.code} · ${item.brand}` }))
-    if (editing.scopeType === 'suppliers') return suppliers.filter((item) => !term || `${item.id} ${item.name}`.toLocaleLowerCase('pt-BR').includes(term)).map((item) => ({ value: item.id, label: item.name, detail: `Cód. ${item.id}` }))
-    return departments.flatMap((department) => department.sections.map((section) => ({ value: section.code, label: formatCatalogName(section.name), detail: `${formatCatalogName(department.name)} · cód. ${section.code}` }))).filter((item) => !term || `${item.value} ${item.label} ${item.detail}`.toLocaleLowerCase('pt-BR').includes(term))
+    const items = editing.scopeType === 'products'
+      ? products.filter((item) => !term || `${item.code} ${item.name} ${item.brand}`.toLocaleLowerCase('pt-BR').includes(term)).map((item) => ({ value: item.code, label: item.name, detail: `Cód. ${item.code} · ${item.brand}` }))
+      : editing.scopeType === 'suppliers'
+        ? suppliers.filter((item) => !term || `${item.id} ${item.name}`.toLocaleLowerCase('pt-BR').includes(term)).map((item) => ({ value: item.id, label: item.name, detail: `Cód. ${item.id}` }))
+        : departments.flatMap((department) => department.sections.map((section) => ({ value: section.code, label: formatCatalogName(section.name), detail: `${formatCatalogName(department.name)} · cód. ${section.code}` }))).filter((item) => !term || `${item.value} ${item.label} ${item.detail}`.toLocaleLowerCase('pt-BR').includes(term))
+    const selected = new Set(editing.targetValues)
+    return items.sort((a, b) => Number(selected.has(b.value)) - Number(selected.has(a.value)))
   }, [editing, products, suppliers, departments, search])
 
   function toggle(value: number) {
     if (!editing) return
     setEditing({ ...editing, targetValues: editing.targetValues.includes(value) ? editing.targetValues.filter((item) => item !== value) : [...editing.targetValues, value] })
   }
-  function changePercent(raw: string) {
+  function changeDiscount(raw: string) {
     if (!editing) return
     const value = Number(raw.replace(/\D/g, '')) / 100
-    if (value <= 100) setEditing({ ...editing, discountValue: value })
+    if (value <= (editing.discountType === 'percent' ? 100 : 999999999)) setEditing({ ...editing, discountValue: value })
   }
+  function toggleFilteredOptions() {
+    if (!editing) return
+    const visible = new Set(options.map((option) => option.value))
+    const selected = new Set(editing.targetValues)
+    const allSelected = options.length > 0 && options.every((option) => selected.has(option.value))
+    onClearSelection(allSelected ? new Set([...selected].filter((value) => !visible.has(value))) : new Set([...selected, ...visible]))
+  }
+  function onClearSelection(values: Set<number>) {
+    if (editing) setEditing({ ...editing, targetValues: [...values] })
+  }
+  const allFilteredSelected = options.length > 0 && options.every((option) => editing?.targetValues.includes(option.value))
   async function save(event: React.FormEvent) {
     event.preventDefault()
     if (!editing) return
@@ -74,12 +89,12 @@ export default function CouponManager({ products, suppliers, departments }: Prop
   return <section className="coupon-manager">
     <div className="staff-section-heading"><div><h2>Cupons de desconto</h2><span>Crie descontos seguros para o pedido inteiro ou para produtos, fornecedores e seções selecionados.</span></div><button className="primary-button" onClick={() => { setEditing(emptyCoupon()); setSearch(''); setError(''); setNotice('') }}><Plus /> Novo cupom</button></div>
     {error && <div className="staff-alert error">{error}</div>}{notice && <div className="staff-alert success">{notice}</div>}
-    {loading && !coupons.length ? <div className="staff-empty"><LoaderCircle className="spin" /> Carregando cupons...</div> : <div className="coupon-grid">{coupons.map((coupon) => <article key={coupon.id} className={!coupon.active ? 'inactive' : ''}><BadgePercent /><div><strong>{coupon.code}</strong><span>{coupon.description}</span><small>{coupon.discountType === 'percent' ? `${coupon.discountValue}%` : `R$ ${coupon.discountValue.toFixed(2).replace('.', ',')}`} · {coupon.scopeType === 'order' ? 'pedido inteiro' : `${coupon.targetValues.length} itens selecionados`}</small></div><button className="icon-btn" onClick={() => { setEditing({ ...coupon }); setSearch(''); setError(''); setNotice('') }} aria-label="Editar cupom"><Pencil /></button></article>)}</div>}
+    {loading && !coupons.length ? <div className="staff-empty"><LoaderCircle className="spin" /> Carregando cupons...</div> : <div className="coupon-grid">{coupons.map((coupon) => <article key={coupon.id} className={!coupon.active ? 'inactive' : ''}><BadgePercent /><div><strong>{coupon.code}</strong><span>{coupon.description}</span><small>{coupon.discountType === 'percent' ? `${decimalDisplay(coupon.discountValue)}%` : `R$ ${decimalDisplay(coupon.discountValue)}`} · {coupon.scopeType === 'order' ? 'pedido inteiro' : `${coupon.targetValues.length} itens selecionados`}</small></div><button className="icon-btn" onClick={() => { setEditing({ ...coupon }); setSearch(''); setError(''); setNotice('') }} aria-label="Editar cupom"><Pencil /></button></article>)}</div>}
     {editing && <div className="banner-modal-backdrop" onMouseDown={() => setEditing(null)}><form className="banner-modal coupon-modal" onSubmit={save} onMouseDown={(event) => event.stopPropagation()}><header className="banner-modal-header"><div><span className="eyebrow">GESTÃO DE CUPONS</span><h2>{editing.id ? 'Editar cupom' : 'Novo cupom'}</h2></div><button type="button" className="icon-btn" onClick={() => setEditing(null)}><X /></button></header><div className="coupon-form">
       <div className="form-row"><label>Código<input value={editing.code} onChange={(event) => setEditing({ ...editing, code: event.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, '') })} placeholder="EX: PRIMEIRACOMPRA" required /></label><label>Descrição<input value={editing.description} onChange={(event) => setEditing({ ...editing, description: event.target.value })} required /></label></div>
-      <div className="form-row"><label>Tipo de desconto<select value={editing.discountType} onChange={(event) => setEditing({ ...editing, discountType: event.target.value as Coupon['discountType'], discountValue: 0 })}><option value="fixed">Valor fixo</option><option value="percent">Percentual</option></select></label><label>Valor{editing.discountType === 'percent' ? <span className="coupon-value-input"><input type="text" inputMode="numeric" autoComplete="off" value={percentDisplay(editing.discountValue)} onChange={(event) => changePercent(event.target.value)} placeholder="0,00" aria-label="Percentual de desconto" required /><span aria-hidden="true">%</span></span> : <span className="coupon-value-input"><span aria-hidden="true">R$</span><input type="number" min="0.01" step="0.01" value={editing.discountValue || ''} onChange={(event) => setEditing({ ...editing, discountValue: Number(event.target.value) })} placeholder="0,00" required /></span>}</label></div>
+      <div className="form-row"><label>Tipo de desconto<select value={editing.discountType} onChange={(event) => setEditing({ ...editing, discountType: event.target.value as Coupon['discountType'], discountValue: 0 })}><option value="fixed">Valor fixo</option><option value="percent">Percentual</option></select></label><label>Valor<span className="coupon-value-input">{editing.discountType === 'fixed' && <span aria-hidden="true">R$</span>}<input type="text" inputMode="numeric" autoComplete="off" value={decimalDisplay(editing.discountValue)} onChange={(event) => changeDiscount(event.target.value)} placeholder="0,00" aria-label={editing.discountType === 'percent' ? 'Percentual de desconto' : 'Valor do desconto em reais'} required />{editing.discountType === 'percent' && <span aria-hidden="true">%</span>}</span></label></div>
       <label>Aplicação<select value={editing.scopeType} onChange={(event) => setEditing({ ...editing, scopeType: event.target.value as Coupon['scopeType'], targetValues: [] })}><option value="order">Pedido inteiro</option><option value="products">Produtos</option><option value="suppliers">Fornecedores</option><option value="sections">Seções</option></select></label>
-      {editing.scopeType !== 'order' && <fieldset className="coupon-targets"><legend>Itens válidos <small>{editing.targetValues.length} selecionados</small></legend><label className="coupon-search"><Search /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nome ou código" /></label><div>{options.map((option) => <label key={option.value}><input type="checkbox" checked={editing.targetValues.includes(option.value)} onChange={() => toggle(option.value)} /><span><b>{option.label}</b><small>{option.detail}</small></span></label>)}</div></fieldset>}
+      {editing.scopeType !== 'order' && <fieldset className="coupon-targets"><legend>Itens válidos <small>{editing.targetValues.length} selecionados</small></legend><label className="coupon-search"><Search /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nome ou código" /></label><button type="button" className="picker-select-all" onClick={toggleFilteredOptions} disabled={!options.length}>{allFilteredSelected ? 'Desmarcar resultados' : 'Selecionar todos os resultados'} <small>({options.length})</small></button><div>{options.map((option) => <label key={option.value}><input type="checkbox" checked={editing.targetValues.includes(option.value)} onChange={() => toggle(option.value)} /><span><b>{option.label}</b><small>{option.detail}</small></span></label>)}</div></fieldset>}
       <div className="form-row"><label>Início opcional<input type="datetime-local" value={localValue(editing.startsAt)} onChange={(event) => setEditing({ ...editing, startsAt: isoValue(event.target.value) })} /></label><label>Encerramento opcional<input type="datetime-local" value={localValue(editing.endsAt)} onChange={(event) => setEditing({ ...editing, endsAt: isoValue(event.target.value) })} /></label></div>
       <label className="checkbox-line"><input type="checkbox" checked={editing.active} onChange={(event) => setEditing({ ...editing, active: event.target.checked })} /> Cupom ativo</label>
       {error && <div className="staff-alert error">{error}</div>}
