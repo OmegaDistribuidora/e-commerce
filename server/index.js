@@ -46,7 +46,8 @@ app.use(async (request, _response, next) => {
           `SELECT id, external_id, document, person_type, legal_name, trade_name, phone,
                   email, postal_code, address_line, address_number, address_complement,
                   neighborhood, city, state, sales_channel, registration_status,
-                  COALESCE(cc.is_blocked, FALSE) AS commercial_blocked
+                  COALESCE(cc.is_blocked, FALSE) AS commercial_blocked,
+                  cc.customer_id IS NULL AS prices_pending
            FROM customers
            LEFT JOIN customer_commercial_conditions cc ON cc.customer_id=customers.id
            WHERE supabase_user_id = $1 AND active = TRUE
@@ -72,7 +73,8 @@ app.use(async (request, _response, next) => {
       `SELECT c.id, c.external_id, c.document, c.person_type, c.legal_name, c.trade_name, c.phone,
               c.email, c.postal_code, c.address_line, c.address_number, c.address_complement,
               c.neighborhood, c.city, c.state, c.sales_channel, c.registration_status,
-              COALESCE(cc.is_blocked, FALSE) AS commercial_blocked
+              COALESCE(cc.is_blocked, FALSE) AS commercial_blocked,
+              cc.customer_id IS NULL AS prices_pending
        FROM sessions s
        JOIN customers c ON c.id = s.customer_id
        LEFT JOIN customer_commercial_conditions cc ON cc.customer_id=c.id
@@ -142,6 +144,9 @@ function customerJson(customer) {
     registrationStatus: customer.registration_status || 'approved',
     commercialBlocked: Boolean(customer.commercial_blocked),
     canOrder: (customer.registration_status || 'approved') === 'approved' && !customer.commercial_blocked,
+    // Cliente aprovado cujas condições comerciais (região e planos) ainda não chegaram do WinThor.
+    pricesPending: (customer.registration_status || 'approved') === 'approved'
+      && customer.external_id != null && Boolean(customer.prices_pending),
   }
 }
 
@@ -974,7 +979,7 @@ app.post('/api/auth/link', authLinkLimiter, async (request, response, next) => {
         )
         if (conflicting.rows.length) {
           await client.query('ROLLBACK')
-          return response.status(409).json({ message: 'O cadastro oficial já está vinculado a outra conta. Fale com a equipe Ômega.' })
+          return response.status(409).json({ message: 'Este CPF/CNPJ já está ligado a outra conta de acesso. Fale com a equipe Ômega.' })
         }
         const created = await client.query(
           `INSERT INTO customers (
@@ -1015,7 +1020,7 @@ app.post('/api/auth/link', authLinkLimiter, async (request, response, next) => {
     if ((!customerResult.rows.length || !customerResult.rows[0].supabase_user_id) && !profile) {
       await client.query('ROLLBACK')
       return response.status(409).json({
-        message: 'Complete a identificação do cliente para vincular esta conta.',
+        message: 'Informe seu CPF ou CNPJ para continuar.',
         code: 'PROFILE_REQUIRED',
       })
     }
@@ -1104,7 +1109,7 @@ app.post('/api/auth/link', authLinkLimiter, async (request, response, next) => {
 app.post('/api/auth/login', async (request, response, next) => {
   try {
     if (supabaseAuthConfigured()) {
-      return response.status(410).json({ message: 'Use a autenticação segura do Supabase para entrar.' })
+      return response.status(410).json({ message: 'Entre pela página de login da loja.' })
     }
     const parsed = loginSchema.safeParse(request.body)
     if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
@@ -1154,7 +1159,7 @@ app.get('/api/auth/me', (request, response) => {
 app.patch('/api/customer/profile', async (request, response, next) => {
   if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para alterar seus dados.' })
   if (request.customer.registration_status === 'approved') {
-    return response.status(403).json({ message: 'Os dados de clientes aprovados são atualizados pelo cadastro oficial. Fale com a equipe Ômega para solicitar uma alteração.' })
+    return response.status(403).json({ message: 'Para alterar seus dados, fale com a equipe Ômega.' })
   }
   try {
     const parsed = customerUpdateSchema.safeParse(request.body)
@@ -1715,6 +1720,20 @@ app.get('/api/integrations/customers', async (request, response) => {
     `SELECT DISTINCT external_id FROM customers
      WHERE active=TRUE AND registration_status='approved' AND external_id IS NOT NULL
      ORDER BY external_id`,
+  )
+  return response.json({ externalIds: result.rows.map((row) => Number(row.external_id)) })
+})
+
+// Clientes aprovados nas últimas 24h ainda sem condições comerciais: o job de estoque
+// (a cada minuto) usa esta lista para liberar os preços logo após o primeiro acesso.
+app.get('/api/integrations/customers/pending', async (request, response) => {
+  if (!validIntegrationToken(request)) return response.status(401).json({ message: 'Credencial de integração inválida.' })
+  const result = await pool.query(
+    `SELECT DISTINCT c.external_id FROM customers c
+     LEFT JOIN customer_commercial_conditions cc ON cc.customer_id=c.id
+     WHERE c.active=TRUE AND c.registration_status='approved' AND c.external_id IS NOT NULL
+       AND cc.customer_id IS NULL AND c.created_at > CURRENT_TIMESTAMP - INTERVAL '1 day'
+     ORDER BY c.external_id`,
   )
   return response.json({ externalIds: result.rows.map((row) => Number(row.external_id)) })
 })
@@ -2670,7 +2689,7 @@ app.post('/api/customers/lookup', firstAccessLimiter, async (request, response, 
       // Cada e-mail é o login de uma única conta: o e-mail do WinThor precisa ser exclusivo.
       return response.status(409).json({
         message: conflictingCustomer.rows[0].same_code
-          ? 'O cadastro oficial já está vinculado a outra conta. Fale com a equipe Ômega.'
+          ? 'Este CPF/CNPJ já está ligado a outra conta de acesso. Fale com a equipe Ômega.'
           : `O e-mail cadastrado (${maskEmail(official.email)}) já é usado por outro cliente no e-commerce. Fale com a equipe Ômega para corrigir o e-mail do seu cadastro.`,
       })
     }
@@ -2691,7 +2710,7 @@ app.post('/api/customers/lookup', firstAccessLimiter, async (request, response, 
       }
       const linkedCustomer = await pool.query('SELECT id FROM customers WHERE supabase_user_id=$1 LIMIT 1', [authUser.id])
       if (linkedCustomer.rows.length) {
-        return response.status(409).json({ message: 'O cadastro oficial já está vinculado a outra conta. Fale com a equipe Ômega.' })
+        return response.status(409).json({ message: 'Este CPF/CNPJ já está ligado a outra conta de acesso. Fale com a equipe Ômega.' })
       }
       // Conta de autenticação sem cadastro vinculado: um primeiro acesso anterior não foi
       // concluído. O convite só pode ser reenviado para contas ainda não confirmadas.
@@ -2709,7 +2728,7 @@ app.post('/api/customers/lookup', firstAccessLimiter, async (request, response, 
 })
 
 app.post('/api/customers', (_request, response) => response.status(410).json({
-  message: 'O cadastro agora é concluído com confirmação de e-mail pelo Supabase.',
+  message: 'Faça seu cadastro pela página de login da loja.',
 }))
 
 app.get('/api/orders', async (request, response, next) => {

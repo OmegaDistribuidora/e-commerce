@@ -151,6 +151,7 @@ export type Customer = {
   salesChannel: 'Varejo' | 'Redes'
   registrationStatus: 'pending' | 'approved'
   commercialBlocked?: boolean
+  pricesPending?: boolean
   canOrder: boolean
   createdAt?: string
   approvedAt?: string | null

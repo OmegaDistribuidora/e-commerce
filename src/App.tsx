@@ -210,6 +210,22 @@ function StorePage({
       .finally(() => setAuthReady(true));
   }, []);
 
+  // Logo após o primeiro acesso as condições comerciais ainda estão chegando do WinThor
+  // (cerca de 1 minuto). Consulta a conta até liberar e recarrega a loja com os preços.
+  useEffect(() => {
+    if (!customer?.pricesPending) return;
+    const timer = window.setInterval(() => {
+      authenticatedFetch("/api/auth/me")
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => {
+          if (data?.accountType === "customer" && !data.customer?.pricesPending)
+            window.location.reload();
+        })
+        .catch(() => undefined);
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [customer?.pricesPending]);
+
   useEffect(() => {
     if (!authReady) return;
     const controller = new AbortController();
@@ -1230,6 +1246,19 @@ function StorePage({
         </nav>
       </header>
 
+      {customer?.canOrder && customer.pricesPending && (
+        <div className="store-pending-banner">
+          <LoaderCircle className="spin" />
+          <div>
+            <strong>Carregando seus preços</strong>
+            <span>
+              Estamos buscando as condições do seu cadastro. Isso leva cerca de
+              1 minuto e a página atualiza sozinha.
+            </span>
+          </div>
+        </div>
+      )}
+
       {customer && !customer.canOrder && (
         <div className="store-pending-banner">
           <LoaderCircle />
@@ -1242,7 +1271,7 @@ function StorePage({
             <span>
               {customer.commercialBlocked
                 ? "Entre em contato com a equipe Ômega para verificar a situação do seu cadastro."
-                : "Você já pode consultar o catálogo e os preços. A compra será liberada após a validação do seu cadastro."}
+                : "Você já pode navegar pelo catálogo. Preços e pedidos são liberados após a aprovação do seu cadastro."}
             </span>
           </div>
           <a href="/pedidos">Ver meu cadastro</a>
@@ -1903,8 +1932,7 @@ function StorePage({
                 </span>
                 <h3>Seu carrinho está vazio</h3>
                 <p>
-                  Explore o catálogo e adicione os produtos que seu negócio
-                  precisa.
+                  Adicione produtos do catálogo para montar seu pedido.
                 </p>
                 <button
                   className="primary-button"
@@ -2000,9 +2028,9 @@ function StorePage({
                   </div>
                   <p>
                     Pedido para {customer?.tradeName || customer?.legalName}. Os
-                    preços exibidos são os menores entre os seus planos de
-                    pagamento; o total é recalculado conforme o plano escolhido
-                    na finalização. Frete confirmado pela equipe.
+                    preços mostrados são do seu melhor plano de pagamento; o
+                    total final depende do plano escolhido ao finalizar. O frete
+                    é confirmado pela nossa equipe.
                   </p>
                   <button
                     className="checkout-button"
@@ -2150,7 +2178,7 @@ function StorePage({
                 Observações
                 <textarea
                   name="notes"
-                  placeholder="Informe preferências de entrega, contato ou condições."
+                  placeholder="Ex.: melhor horário para entrega, nome de quem vai receber."
                   rows={3}
                 />
               </label>
@@ -2199,9 +2227,8 @@ function StorePage({
             </span>
             <h2>Pedido recebido!</h2>
             <p>
-              Sua solicitação foi registrada como <strong>{orderNumber}</strong>
-              . Nossa equipe comercial fará a análise e dará continuidade ao
-              atendimento.
+              Seu pedido <strong>{orderNumber}</strong> foi recebido. Nossa
+              equipe comercial vai conferir e dar andamento.
             </p>
             <a className="primary-button" href="/pedidos">
               Ver meus pedidos

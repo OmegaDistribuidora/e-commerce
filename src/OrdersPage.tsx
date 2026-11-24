@@ -281,7 +281,7 @@ export default function OrdersPage() {
               <p>
                 {customer.commercialBlocked
                   ? "Entre em contato com a equipe Ômega para verificar a situação do seu cadastro."
-                  : "Você pode navegar pelo catálogo enquanto seu cadastro é analisado. Os preços ficam disponíveis após a aprovação e a vinculação ao seu código de cliente."}
+                  : "Você já pode navegar pelo catálogo. Preços e pedidos são liberados após a aprovação do seu cadastro."}
               </p>
             </div>
           </div>
@@ -462,8 +462,7 @@ export default function OrdersPage() {
                     <Heart />
                     <h2>Você ainda não tem favoritos</h2>
                     <p>
-                      Use o coração nos produtos para guardar os itens que
-                      deseja encontrar rapidamente.
+                      Toque no coração de um produto para salvá-lo aqui.
                     </p>
                     <a className="primary-button" href="/#produtos">
                       Explorar produtos
@@ -478,8 +477,8 @@ export default function OrdersPage() {
                       <h2>Dados cadastrais e contato</h2>
                       <p>
                         {customer.registrationStatus === "approved"
-                          ? "Estes são os dados oficiais utilizados pela Ômega. Para alterá-los, fale com nossa equipe."
-                          : "Confira os dados enviados enquanto seu cadastro está em análise."}
+                          ? "Estes são os dados do seu cadastro na Ômega. Para alterar, fale com nossa equipe."
+                          : "Estes são os dados que você enviou. Seu cadastro está em análise."}
                       </p>
                     </div>
                   </header>

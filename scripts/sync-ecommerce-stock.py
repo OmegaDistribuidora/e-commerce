@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 import glob
+import importlib.util
 import os
+from pathlib import Path
 
 import oracledb
 import requests
@@ -107,5 +109,46 @@ def main() -> None:
     )
 
 
+def sync_pending_customers() -> None:
+    """Libera os precos de clientes recem-cadastrados sem esperar a carga de 30 minutos.
+
+    So consulta o WinThor quando a API informa cliente aprovado ainda sem condicoes
+    comerciais; nos demais minutos custa uma unica chamada HTTP.
+    """
+    base_url = required("ECOMMERCE_API_URL").rstrip("/")
+    token = required("ECOMMERCE_PRODUCT_SYNC_TOKEN")
+    response = requests.get(
+        f"{base_url}/api/integrations/customers/pending",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=(15, 30),
+    )
+    if response.status_code == 404:
+        return  # rota ainda nao publicada
+    response.raise_for_status()
+    pending = response.json().get("externalIds", [])
+    if not pending:
+        return
+    print(f"Clientes novos sem condicoes comerciais: {pending}. Sincronizando agora.")
+
+    spec = importlib.util.spec_from_file_location(
+        "sync_ecommerce_winthor", Path(__file__).with_name("sync-ecommerce-winthor.py"),
+    )
+    catalog = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(catalog)
+    dsn = oracledb.makedsn(
+        required("ORACLE_FILIAL_HOST"),
+        int(os.getenv("ORACLE_FILIAL_PORT", "1521")),
+        service_name=required("ORACLE_FILIAL_SERVICE"),
+    )
+    # Mesma rotina da carga de 30 minutos: condicoes de todos os clientes aprovados e
+    # precos de todas as regioes em uso (a carga de precos substitui o conjunto inteiro).
+    regions = catalog.sync_customer_conditions(dsn, token)
+    catalog.sync_region_prices(dsn, token, set(catalog.DEFAULT_PRICE_REGIONS) | regions)
+
+
 if __name__ == "__main__":
     main()
+    try:
+        sync_pending_customers()
+    except Exception as error:  # o estoque ja foi gravado; a carga de 30 minutos cobre a falha
+        print(f"Aviso: condicoes de clientes novos nao sincronizadas agora: {error}")

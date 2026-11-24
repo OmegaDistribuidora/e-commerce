@@ -11,9 +11,9 @@ import {
   LockKeyhole,
   Mail,
   MailCheck,
+  Package,
   RefreshCw,
   Search,
-  ShieldCheck,
   UserPlus,
 } from "lucide-react";
 import { authenticatedFetch, responseJson } from "./api";
@@ -181,7 +181,7 @@ export default function AccountPage() {
         setRegistrationEmail(authData.user?.email || "");
         setStep("lookup");
         setNotice(
-          "Confirme seu CPF ou CNPJ para concluir a vinculação desta conta.",
+          "Informe seu CPF ou CNPJ para continuar.",
         );
         return null;
       }
@@ -191,7 +191,7 @@ export default function AccountPage() {
       }
       throw new Error(
         data.message ||
-          "Não foi possível vincular sua conta ao cadastro da Ômega.",
+          "Não foi possível entrar na sua conta. Tente novamente.",
       );
     }
     sessionStorage.removeItem(pendingKey);
@@ -212,7 +212,7 @@ export default function AccountPage() {
     try {
       if (!supabaseConfigured)
         throw new Error(
-          "A autenticação ainda não está configurada neste ambiente.",
+          "O login está indisponível no momento. Tente novamente mais tarde.",
         );
       const email = String(form.get("email")).trim().toLowerCase();
       const password = String(form.get("password"));
@@ -551,10 +551,7 @@ export default function AccountPage() {
           </h1>
           <div className="account-benefits">
             <span>
-              <ShieldCheck /> Autenticação protegida
-            </span>
-            <span>
-              <Mail /> Confirmação por e-mail
+              <Package /> Acompanhe seus pedidos
             </span>
           </div>
         </div>
@@ -565,10 +562,6 @@ export default function AccountPage() {
                 <CircleUserRound />
               </span>
               <h2>Entrar na sua conta</h2>
-              <p>
-                Clientes, Administradores e equipe Comercial entram pelo mesmo
-                acesso.
-              </p>
               {notice && <div className="form-notice">{notice}</div>}
               <form onSubmit={login}>
                 <label>
@@ -650,8 +643,8 @@ export default function AccountPage() {
               <span className="account-card-icon">
                 <Search />
               </span>
-              <h2>Identifique o cliente</h2>
-              <p>Selecione o tipo de pessoa e informe o documento.</p>
+              <h2>Primeiro acesso</h2>
+              <p>Informe seu CPF ou CNPJ.</p>
               {notice && <div className="form-notice">{notice}</div>}
               <form onSubmit={lookup}>
                 <div
@@ -740,9 +733,8 @@ export default function AccountPage() {
               </span>
               <h2>Atualize seu e-mail</h2>
               <p>
-                Seu cadastro foi localizado, mas ainda não possui um e-mail
-                válido. Fale com nossa equipe para atualizar os dados e liberar
-                seu primeiro acesso.
+                Encontramos seu cadastro, mas ele está sem e-mail. Fale com a
+                nossa equipe para incluir o e-mail e liberar seu acesso.
               </p>
               <a
                 className="checkout-button"
@@ -768,9 +760,8 @@ export default function AccountPage() {
               </span>
               <h2>Cadastro em análise</h2>
               <p>
-                Seu cadastro já foi recebido e está sendo analisado pela equipe
-                Ômega. Você pode entrar para acompanhar a conta; os pedidos
-                serão liberados após a aprovação.
+                Recebemos seu cadastro e nossa equipe está analisando. Você já
+                pode entrar na loja; os pedidos são liberados após a aprovação.
               </p>
               <button
                 className="checkout-button"
@@ -786,8 +777,8 @@ export default function AccountPage() {
               <h2>Complete seus dados</h2>
               <p>
                 {locatedCustomer
-                  ? `Localizamos ${locatedCustomer.tradeName || locatedCustomer.legalName}. Confirme todos os dados para enviar o cadastro para análise.`
-                  : `Não localizamos ${formatDocument(document)}. Preencha todos os dados para análise.`}
+                  ? `Localizamos ${locatedCustomer.tradeName || locatedCustomer.legalName}. Confira os dados e envie o cadastro para análise.`
+                  : `Não localizamos ${formatDocument(document)}. Preencha os dados para enviarmos seu cadastro para análise.`}
               </p>
               <form className="registration-form" onSubmit={register}>
                 <input
@@ -1025,7 +1016,7 @@ export default function AccountPage() {
                 <KeyRound />
               </span>
               <h2>Recuperar senha</h2>
-              <p>Enviaremos um link seguro para você criar uma nova senha.</p>
+              <p>Informe seu e-mail e enviaremos um link para criar uma nova senha.</p>
               {notice && <div className="form-notice">{notice}</div>}
               <form onSubmit={requestRecovery}>
                 <label>

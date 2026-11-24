@@ -23,7 +23,7 @@ export default function AboutPage() {
       {!content ? error ? <div className="content-page-state"><ImageOff /><h1>Conteúdo indisponível</h1><p>{error}</p></div> : <ContentSkeleton cards={2} /> : <>
         <section className="about-hero"><div className="container"><div><span className="eyebrow">ÔMEGA DISTRIBUIDORA</span><h1>{content.heroTitle}</h1><p>{content.heroSubtitle}</p></div>{content.heroImageUrl ? <img src={content.heroImageUrl} alt="Ômega Distribuidora" /> : <span className="about-image-placeholder"><Building2 /></span>}</div></section>
         <section className="container about-story"><div className="about-story-image">{content.historyImageUrl ? <img src={content.historyImageUrl} alt="Nossa história" /> : <Building2 />}</div><div><span className="eyebrow">NOSSA TRAJETÓRIA</span><h2>{content.historyTitle}</h2>{content.historyText.split(/\n+/).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div></section>
-        <section className="about-values"><div className="container"><Handshake /><div><span className="eyebrow">PARCERIAS QUE CONSTROEM RESULTADOS</span><h2>{content.valuesTitle}</h2>{content.valuesText.split(/\n+/).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div></div></section>
+        <section className="about-values"><div className="container"><Handshake /><div><span className="eyebrow">NOSSOS VALORES</span><h2>{content.valuesTitle}</h2>{content.valuesText.split(/\n+/).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div></div></section>
       </>}
     </main>
     <PublicSiteFooter />

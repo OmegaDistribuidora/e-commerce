@@ -9,10 +9,10 @@ export async function authenticatedFetch(input: RequestInfo | URL, init: Request
 
 export async function responseJson<T>(response: Response): Promise<T> {
   const body = await response.text()
-  if (!body) throw new Error(response.ok ? 'O servidor respondeu sem os dados esperados.' : 'Não foi possível acessar o servidor.')
+  if (!body) throw new Error(response.ok ? 'Não foi possível carregar as informações. Tente novamente.' : 'Não foi possível conectar à loja. Tente novamente.')
   try {
     return JSON.parse(body) as T
   } catch {
-    throw new Error('O servidor enviou uma resposta inválida. Tente novamente.')
+    throw new Error('Não foi possível carregar as informações. Tente novamente.')
   }
 }
