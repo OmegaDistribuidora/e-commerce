@@ -408,6 +408,18 @@ async function refreshStaleOrderStatuses(orders) {
   }
 }
 
+// Previsão mostrada ao cliente: DTENTREGA do WinThor + 2 dias úteis (pula sábado e domingo).
+function deliveryForecast(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''))
+  if (!match) return null
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
+  for (let added = 0; added < 2;) {
+    date.setUTCDate(date.getUTCDate() + 1)
+    if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) added += 1
+  }
+  return date.toISOString().slice(0, 10)
+}
+
 async function listOrders(whereClause = '', params = []) {
   const result = await pool.query(
     `SELECT o.id, o.status, o.winthor_order_number, o.winthor_status_code,
@@ -451,7 +463,7 @@ async function listOrders(whereClause = '', params = []) {
     winthorStatusLabel: order.winthor_status_label || '',
     statusUpdatedAt: order.winthor_status_checked_at,
     // Previsão de entrega (AAAA-MM-DD) só existe depois que o pedido recebe o NUMPED.
-    deliveryDate: order.winthor_order_number == null ? null : (order.winthor_delivery_date || null),
+    deliveryDate: order.winthor_order_number == null ? null : deliveryForecast(order.winthor_delivery_date),
     enteredAt: order.winthor_entered_at,
     enteredBy: order.winthor_entered_by_name || '',
     paymentPlan: order.payment_plan_label || order.payment_plan,
