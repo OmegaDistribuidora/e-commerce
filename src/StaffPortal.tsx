@@ -1331,6 +1331,9 @@ export default function StaffPortal() {
                           {campaign.usesProductFamily
                             ? "Considera a família de produtos."
                             : "Considera somente os produtos cadastrados."}
+                          {campaign.allowedCustomerIds?.length
+                            ? ` Exclusiva para os clientes: ${campaign.allowedCustomerIds.join(", ")}.`
+                            : " Disponível para todos os clientes elegíveis."}
                           {campaign.sourceUpdatedAt &&
                             ` Sincronizada em ${new Date(campaign.sourceUpdatedAt).toLocaleString("pt-BR")}.`}
                         </p>

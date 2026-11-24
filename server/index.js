@@ -600,7 +600,7 @@ function lowestPlanPrice(row, priceTables) {
 }
 
 // Calcula as linhas do carrinho com o preço da região do cliente na tabela do plano escolhido.
-async function priceCartItems(database, pricing, plan, items) {
+async function priceCartItems(database, pricing, plan, items, customerExternalId = null) {
   const productIds = [...new Set(items.map((item) => item.productId))]
   const placeholders = productIds.map((_, index) => `$${index + 2}`).join(',')
   const result = await database.query(
@@ -611,14 +611,18 @@ async function priceCartItems(database, pricing, plan, items) {
     [pricing.region, ...productIds],
   )
   const productMap = new Map(result.rows.map((product) => [Number(product.id), product]))
+  const customerParam = productIds.length + 2
   const campaignResult = await database.query(
     `SELECT dcp.product_id,dc.external_id,dc.description,dcp.min_quantity,dcp.max_quantity,dcp.discount_percent
      FROM discount_campaign_products dcp
      JOIN discount_campaigns dc ON dc.id=dcp.campaign_id
+     LEFT JOIN discount_campaign_customers dcc
+       ON dcc.campaign_id=dc.id AND dcc.customer_external_id=$${customerParam}::integer
      WHERE dc.active=TRUE AND dc.starts_on<=$1::date AND dc.ends_on>=$1::date
        AND dcp.product_id IN (${placeholders})
+       AND (dc.customer_restricted=FALSE OR dcc.customer_external_id IS NOT NULL)
      ORDER BY dcp.discount_percent DESC,dc.external_id`,
-    [currentBrasiliaDate(), ...productIds],
+    [currentBrasiliaDate(), ...productIds, customerExternalId],
   )
   const campaignRules = new Map()
   const campaignProducts = new Map()
@@ -761,19 +765,23 @@ async function validateOrderStock(database, stockBranch, lines) {
   }
 }
 
-async function activeCampaignOffers(database, productIds) {
+async function activeCampaignOffers(database, productIds, customerExternalId = null) {
   const ids = [...new Set(productIds.map(Number).filter((value) => Number.isSafeInteger(value) && value > 0))]
   if (!ids.length) return new Map()
   const placeholders = ids.map((_, index) => `$${index + 2}`).join(',')
+  const customerParam = ids.length + 2
   const result = await database.query(
     `SELECT dcp.product_id,dc.external_id,dc.description,dcp.min_quantity,dcp.max_quantity,
             dcp.discount_percent,dcp.discount_type
      FROM discount_campaign_products dcp
      JOIN discount_campaigns dc ON dc.id=dcp.campaign_id
+     LEFT JOIN discount_campaign_customers dcc
+       ON dcc.campaign_id=dc.id AND dcc.customer_external_id=$${customerParam}::integer
      WHERE dc.active=TRUE AND dc.starts_on<=$1::date AND dc.ends_on>=$1::date
        AND dcp.product_id IN (${placeholders})
+       AND (dc.customer_restricted=FALSE OR dcc.customer_external_id IS NOT NULL)
      ORDER BY dcp.product_id,dcp.discount_percent DESC,dc.external_id`,
-    [currentBrasiliaDate(), ...ids],
+    [currentBrasiliaDate(), ...ids, customerExternalId],
   )
   const offers = new Map()
   for (const row of result.rows) {
@@ -1306,6 +1314,7 @@ app.get('/api/banners', async (request, response, next) => {
     const placement = request.query.placement === 'catalog' ? 'catalog' : 'hero'
     const pricing = await customerPricing(pool, request.customer)
     const restrictedSupplierIds = pricing?.restrictedSupplierIds || []
+    const customerExternalId = Number(request.customer?.external_id) || null
     // pg-mem não implementa referências correlacionadas dentro destes EXISTS.
     // O PostgreSQL do Railway mantém a filtragem completa; no banco temporário
     // local, os banners de demonstração são apenas filtrados por vigência e tipo.
@@ -1327,9 +1336,12 @@ app.get('/api/banners', async (request, response, next) => {
              FROM discount_campaigns bdc
              JOIN discount_campaign_products bdcp ON bdcp.campaign_id=bdc.id
              JOIN products bp ON bp.id=bdcp.product_id AND bp.active=TRUE
+              LEFT JOIN discount_campaign_customers bdcc
+                ON bdcc.campaign_id=bdc.id AND bdcc.customer_external_id=$4::integer
              WHERE bdc.external_id=ANY(b.destination_values)
                AND bdc.active=TRUE AND bdc.starts_on<=$3::date AND bdc.ends_on>=$3::date
                AND ($2::integer[] = '{}'::integer[] OR NOT (bp.supplier_id = ANY($2::integer[])))
+                AND (bdc.customer_restricted=FALSE OR bdcc.customer_external_id IS NOT NULL)
            ))
          )` : ''
     const result = await pool.query(
@@ -1353,7 +1365,7 @@ app.get('/api/banners', async (request, response, next) => {
          ${destinationAvailability}
        ORDER BY b.position, b.id`,
       process.env.DATABASE_URL
-        ? [placement, postgresIntegerArray(restrictedSupplierIds), currentBrasiliaDate()]
+        ? [placement, postgresIntegerArray(restrictedSupplierIds), currentBrasiliaDate(), customerExternalId]
         : [placement],
     )
     return response.json({ banners: result.rows.map((banner) => ({
@@ -1621,26 +1633,43 @@ app.post('/api/integrations/campaigns/sync', async (request, response, next) => 
     for (const removed of removedCampaigns) {
       await client.query('UPDATE discount_campaigns SET active=FALSE,updated_at=CURRENT_TIMESTAMP WHERE id=$1', [removed.id])
       await client.query('DELETE FROM discount_campaign_products WHERE campaign_id=$1', [removed.id])
+      await client.query('DELETE FROM discount_campaign_customers WHERE campaign_id=$1', [removed.id])
     }
     const deactivatedCount = removedCampaigns.length
 
     let productCount = 0
     let skippedProducts = 0
+    let customerRestrictionCount = 0
     for (const campaign of campaigns) {
       const campaignResult = await client.query(
         `INSERT INTO discount_campaigns
-          (external_id,description,starts_on,ends_on,branch_code,uses_product_family,active,source_updated_at)
-         VALUES ($1,$2,$3::date,$4::date,$5,$6,TRUE,$7::timestamptz)
+          (external_id,description,starts_on,ends_on,branch_code,uses_product_family,customer_restricted,active,source_updated_at)
+         VALUES ($1,$2,$3::date,$4::date,$5,$6,COALESCE($7::boolean,FALSE),TRUE,$8::timestamptz)
          ON CONFLICT (external_id) DO UPDATE SET description=EXCLUDED.description,
            starts_on=EXCLUDED.starts_on,ends_on=EXCLUDED.ends_on,branch_code=EXCLUDED.branch_code,
-           uses_product_family=EXCLUDED.uses_product_family,active=TRUE,
+           uses_product_family=EXCLUDED.uses_product_family,
+           customer_restricted=COALESCE($7::boolean,discount_campaigns.customer_restricted),active=TRUE,
            source_updated_at=EXCLUDED.source_updated_at,updated_at=CURRENT_TIMESTAMP
          RETURNING id`,
         [campaign.externalId, campaign.description, campaign.startsOn, campaign.endsOn,
-          campaign.branchCode, campaign.usesProductFamily, parsed.data.sourceUpdatedAt],
+          campaign.branchCode, campaign.usesProductFamily,
+          Array.isArray(campaign.allowedCustomerIds) ? campaign.allowedCustomerIds.length > 0 : null,
+          parsed.data.sourceUpdatedAt],
       )
       const campaignId = Number(campaignResult.rows[0].id)
       await client.query('DELETE FROM discount_campaign_products WHERE campaign_id=$1', [campaignId])
+      if (Array.isArray(campaign.allowedCustomerIds)) {
+        await client.query('DELETE FROM discount_campaign_customers WHERE campaign_id=$1', [campaignId])
+        const allowedCustomerIds = [...new Set(campaign.allowedCustomerIds)]
+        for (const customerExternalId of allowedCustomerIds) {
+          await client.query(
+            `INSERT INTO discount_campaign_customers (campaign_id,customer_external_id)
+             VALUES ($1,$2) ON CONFLICT (campaign_id,customer_external_id) DO NOTHING`,
+            [campaignId, customerExternalId],
+          )
+          customerRestrictionCount += 1
+        }
+      }
       const uniqueProducts = [...new Map(campaign.products.map((product) => [
         `${product.externalId}:${product.sequence}`, product,
       ])).values()]
@@ -1665,7 +1694,14 @@ app.post('/api/integrations/campaigns/sync', async (request, response, next) => 
       }
     }
     await client.query('COMMIT')
-    return response.json({ synchronized: true, campaignCount: campaigns.length, productCount, skippedProducts, deactivatedCount })
+    return response.json({
+      synchronized: true,
+      campaignCount: campaigns.length,
+      productCount,
+      customerRestrictionCount,
+      skippedProducts,
+      deactivatedCount,
+    })
   } catch (error) {
     await client.query('ROLLBACK')
     return next(error)
@@ -1952,7 +1988,7 @@ app.post('/api/customer/quote', async (request, response, next) => {
     const quotes = []
     for (const plan of pricing.plans) {
       try {
-        const priced = await priceCartItems(pool, pricing, plan, parsed.data.items)
+        const priced = await priceCartItems(pool, pricing, plan, parsed.data.items, request.customer.external_id)
         quotes.push({ plan, ...priced, ...(await applyCoupon(pool, parsed.data.couponCode, priced.lines)) })
       } catch (error) {
         if (!(error instanceof RequestError)) throw error
@@ -2037,7 +2073,11 @@ app.get('/api/customer/cart', async (request, response, next) => {
        ORDER BY cci.created_at, p.name`,
       [request.customer.id, priceTables.length ? pricing.region : -1, postgresIntegerArray(restrictedSupplierIds)],
     )
-    const campaignOffers = await activeCampaignOffers(pool, result.rows.map((row) => Number(row.id)))
+    const campaignOffers = await activeCampaignOffers(
+      pool,
+      result.rows.map((row) => Number(row.id)),
+      request.customer.external_id,
+    )
     return response.json({
       updatedAt: result.rows[0]?.cart_updated_at || null,
       items: result.rows.map((row) => {
@@ -2145,6 +2185,7 @@ app.get('/api/campaigns', async (request, response, next) => {
   try {
     const pricing = await customerPricing(pool, request.customer)
     const restrictedSupplierIds = pricing?.restrictedSupplierIds || []
+    const customerExternalId = Number(request.customer?.external_id) || null
     const result = await pool.query(
       `SELECT dc.external_id,dc.description,dc.starts_on,dc.ends_on,dc.uses_product_family,
               p.id AS product_id,p.external_id AS product_code,p.name,p.brand,p.supplier_id,
@@ -2153,10 +2194,13 @@ app.get('/api/campaigns', async (request, response, next) => {
        FROM discount_campaigns dc
        JOIN discount_campaign_products dcp ON dcp.campaign_id=dc.id
        JOIN products p ON p.id=dcp.product_id AND p.active=TRUE
+       LEFT JOIN discount_campaign_customers dcc
+         ON dcc.campaign_id=dc.id AND dcc.customer_external_id=$3::integer
        WHERE dc.active=TRUE AND dc.starts_on<=$1::date AND dc.ends_on>=$1::date
          AND ($2::integer[]='{}'::integer[] OR NOT (p.supplier_id=ANY($2::integer[])))
+         AND (dc.customer_restricted=FALSE OR dcc.customer_external_id IS NOT NULL)
        ORDER BY dc.starts_on DESC,dc.external_id,p.orders_last_30_days DESC,p.name,dcp.discount_percent DESC`,
-      [currentBrasiliaDate(), postgresIntegerArray(restrictedSupplierIds)],
+      [currentBrasiliaDate(), postgresIntegerArray(restrictedSupplierIds), customerExternalId],
     )
     const campaigns = new Map()
     for (const row of result.rows) {
@@ -2196,6 +2240,7 @@ app.get('/api/products', async (request, response, next) => {
     const limit = Math.min(Math.max(Number(request.query.limit) || 180, 1), 5000)
     const params = []
     const conditions = ['p.active = TRUE']
+    const customerExternalId = Number(request.customer?.external_id) || null
     if (search) {
       params.push(`%${search}%`)
       conditions.push(`(p.name ILIKE $${params.length} OR p.brand ILIKE $${params.length} OR p.external_id::text ILIKE $${params.length})`)
@@ -2213,12 +2258,18 @@ app.get('/api/products', async (request, response, next) => {
       conditions.push(`p.section_code = $${params.length}`)
     }
     if (Number.isSafeInteger(campaign) && campaign > 0) {
-      params.push(campaign, currentBrasiliaDate())
+      params.push(campaign, currentBrasiliaDate(), customerExternalId)
+      const campaignCodeParam = params.length - 2
+      const campaignDateParam = params.length - 1
+      const campaignCustomerParam = params.length
       conditions.push(`p.id IN (
         SELECT dcpf.product_id FROM discount_campaign_products dcpf
         JOIN discount_campaigns dcf ON dcf.id=dcpf.campaign_id
-        WHERE dcf.external_id=$${params.length - 1}
-          AND dcf.active=TRUE AND dcf.starts_on<=$${params.length}::date AND dcf.ends_on>=$${params.length}::date
+        LEFT JOIN discount_campaign_customers dccf
+          ON dccf.campaign_id=dcf.id AND dccf.customer_external_id=$${campaignCustomerParam}::integer
+        WHERE dcf.external_id=$${campaignCodeParam}
+          AND dcf.active=TRUE AND dcf.starts_on<=$${campaignDateParam}::date AND dcf.ends_on>=$${campaignDateParam}::date
+          AND (dcf.customer_restricted=FALSE OR dccf.customer_external_id IS NOT NULL)
       )`)
     }
     const pricing = await customerPricing(pool, request.customer)
@@ -2252,7 +2303,11 @@ app.get('/api/products', async (request, response, next) => {
       params,
     )
 
-    const campaignOffers = await activeCampaignOffers(pool, result.rows.map((row) => Number(row.id)))
+    const campaignOffers = await activeCampaignOffers(
+      pool,
+      result.rows.map((row) => Number(row.id)),
+      customerExternalId,
+    )
     response.json({
       products: result.rows.map((row) => {
         const customerPrice = request.customer ? lowestPlanPrice(row, priceTables) : null
@@ -2466,7 +2521,7 @@ app.get('/api/products/:code', async (request, response, next) => {
         updatedAt: stock.source_updated_at || null,
       }))
     }
-    const campaignOffers = await activeCampaignOffers(pool, [Number(row.id)])
+    const campaignOffers = await activeCampaignOffers(pool, [Number(row.id)], request.customer?.external_id)
     return response.json({ product: {
       id: Number(row.id), code: Number(row.external_id), supplierId: Number(row.supplier_id || 0),
       brand: row.brand, name: row.name, package: row.package || '', masterPackage: row.master_package || '',
@@ -3208,23 +3263,37 @@ app.delete('/api/staff/coupons/:id', requireCommercialAccess, async (request, re
 
 app.get('/api/staff/campaigns', requireStaff, async (_request, response, next) => {
   try {
-    const result = await pool.query(
-      `SELECT dc.external_id,dc.description,dc.starts_on,dc.ends_on,dc.branch_code,
-              dc.uses_product_family,dc.active,dc.source_updated_at,
-              p.external_id AS product_code,p.name,p.brand,
-              dcp.min_quantity,dcp.max_quantity,dcp.discount_percent,dcp.discount_type,dcp.product_origin
-       FROM discount_campaigns dc
-       LEFT JOIN discount_campaign_products dcp ON dcp.campaign_id=dc.id
-       LEFT JOIN products p ON p.id=dcp.product_id
-       ORDER BY dc.starts_on DESC,dc.external_id,p.name,dcp.discount_percent DESC`,
-    )
+    const [result, audienceResult] = await Promise.all([
+      pool.query(
+        `SELECT dc.external_id,dc.description,dc.starts_on,dc.ends_on,dc.branch_code,
+                dc.uses_product_family,dc.active,dc.source_updated_at,
+                p.external_id AS product_code,p.name,p.brand,
+                dcp.min_quantity,dcp.max_quantity,dcp.discount_percent,dcp.discount_type,dcp.product_origin
+         FROM discount_campaigns dc
+         LEFT JOIN discount_campaign_products dcp ON dcp.campaign_id=dc.id
+         LEFT JOIN products p ON p.id=dcp.product_id
+         ORDER BY dc.starts_on DESC,dc.external_id,p.name,dcp.discount_percent DESC`,
+      ),
+      pool.query(
+        `SELECT dc.external_id,dcc.customer_external_id
+         FROM discount_campaign_customers dcc
+         JOIN discount_campaigns dc ON dc.id=dcc.campaign_id
+         ORDER BY dc.external_id,dcc.customer_external_id`,
+      ),
+    ])
+    const audiences = new Map()
+    for (const row of audienceResult.rows) {
+      const code = Number(row.external_id)
+      audiences.set(code, [...(audiences.get(code) || []), Number(row.customer_external_id)])
+    }
     const campaigns = new Map()
     for (const row of result.rows) {
       const code = Number(row.external_id)
       const campaign = campaigns.get(code) || {
         code, description: row.description, startsOn: row.starts_on, endsOn: row.ends_on,
         branchCode: row.branch_code || '', usesProductFamily: Boolean(row.uses_product_family),
-        active: Boolean(row.active), sourceUpdatedAt: row.source_updated_at, products: [],
+        active: Boolean(row.active), sourceUpdatedAt: row.source_updated_at,
+        allowedCustomerIds: audiences.get(code) || [], products: [],
       }
       if (row.product_code != null) campaign.products.push({
         code: Number(row.product_code), name: row.name, brand: row.brand,
@@ -3427,7 +3496,7 @@ app.post('/api/orders', async (request, response, next) => {
       await client.query('ROLLBACK')
       return response.status(400).json({ message: 'O plano de pagamento selecionado não está liberado para este cliente.' })
     }
-    const priced = await priceCartItems(client, pricing, selectedPlan, parsed.data.items)
+    const priced = await priceCartItems(client, pricing, selectedPlan, parsed.data.items, request.customer.external_id)
     const { subtotal, total, coupon } = await applyCoupon(client, parsed.data.couponCode, priced.lines)
     const { lines } = priced
 

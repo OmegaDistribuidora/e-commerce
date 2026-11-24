@@ -108,6 +108,15 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT FALSE')
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS allow_sales_multiple BOOLEAN NOT NULL DEFAULT TRUE')
   await pool.query("ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS restricted_supplier_ids INTEGER[] NOT NULL DEFAULT '{}'")
+  await pool.query('ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS customer_restricted BOOLEAN NOT NULL DEFAULT FALSE')
+  if (process.env.DATABASE_URL) {
+    await pool.query(`CREATE TABLE IF NOT EXISTS discount_campaign_customers (
+      campaign_id BIGINT NOT NULL REFERENCES discount_campaigns(id) ON DELETE CASCADE,
+      customer_external_id INTEGER NOT NULL CHECK (customer_external_id > 0),
+      PRIMARY KEY (campaign_id, customer_external_id)
+    )`)
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_discount_campaign_customers_customer ON discount_campaign_customers(customer_external_id, campaign_id)')
+  }
   if (process.env.DATABASE_URL) {
     await pool.query(`CREATE TABLE IF NOT EXISTS coupons (
     id BIGSERIAL PRIMARY KEY, code VARCHAR(40) NOT NULL UNIQUE, description TEXT NOT NULL,

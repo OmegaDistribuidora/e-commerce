@@ -276,6 +276,7 @@ CREATE TABLE IF NOT EXISTS discount_campaigns (
   ends_on DATE NOT NULL,
   branch_code TEXT,
   uses_product_family BOOLEAN NOT NULL DEFAULT FALSE,
+  customer_restricted BOOLEAN NOT NULL DEFAULT FALSE,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   source_updated_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -295,10 +296,21 @@ CREATE TABLE IF NOT EXISTS discount_campaign_products (
   PRIMARY KEY (campaign_id, product_id, sequence)
 );
 
+-- Quando uma campanha possui linhas aqui, somente estes CODCLI podem
+-- visualizá-la e receber seus descontos. Sem linhas, a campanha é geral para
+-- os clientes elegíveis do e-commerce.
+CREATE TABLE IF NOT EXISTS discount_campaign_customers (
+  campaign_id BIGINT NOT NULL REFERENCES discount_campaigns(id) ON DELETE CASCADE,
+  customer_external_id INTEGER NOT NULL CHECK (customer_external_id > 0),
+  PRIMARY KEY (campaign_id, customer_external_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_discount_campaigns_period
   ON discount_campaigns(active, starts_on, ends_on);
 CREATE INDEX IF NOT EXISTS idx_discount_campaign_products_product
   ON discount_campaign_products(product_id, campaign_id);
+CREATE INDEX IF NOT EXISTS idx_discount_campaign_customers_customer
+  ON discount_campaign_customers(customer_external_id, campaign_id);
 
 CREATE TABLE IF NOT EXISTS product_sync_runs (
   id BIGSERIAL PRIMARY KEY,

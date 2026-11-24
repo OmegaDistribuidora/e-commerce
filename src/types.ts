@@ -81,6 +81,7 @@ export type DiscountCampaign = {
   branchCode?: string
   active?: boolean
   sourceUpdatedAt?: string | null
+  allowedCustomerIds?: number[]
   products: Array<{
     id?: number
     code: number

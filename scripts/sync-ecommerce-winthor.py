@@ -128,6 +128,25 @@ WHERE NVL(UPPER(TRIM(pf.obs2)),'ATIVO')<>'FL'
 ORDER BY c.codigo,c.sequencia,pf.codprod
 """
 
+# TIPO 6 na PCDESCONTORESTRICAO limita a campanha aos CODCLI informados.
+# A ausência de linhas deste tipo mantém a campanha disponível para todos os
+# clientes elegíveis do canal. O vendedor 3068 continua sendo o requisito para
+# que a campanha faça parte do snapshot do e-commerce.
+CAMPAIGN_CUSTOMER_QUERY = """
+SELECT DISTINCT r.codigo, r.codigon
+FROM pcdescontorestricao r
+WHERE r.tipo = 6
+  AND r.codigon > 0
+  AND EXISTS (
+    SELECT 1
+    FROM pcdescontorestricao vendedor
+    WHERE vendedor.codigo = r.codigo
+      AND vendedor.tipo = 5
+      AND vendedor.codigon = 3068
+  )
+ORDER BY r.codigo, r.codigon
+"""
+
 def required(name: str) -> str:
     value = os.getenv(name, "").strip()
     if not value:
@@ -286,6 +305,12 @@ def sync_campaigns(dsn, token: str) -> None:
             cursor.arraysize = 5000
             cursor.execute(CAMPAIGN_QUERY)
             rows = cursor.fetchall()
+            cursor.execute(CAMPAIGN_CUSTOMER_QUERY)
+            customer_rows = cursor.fetchall()
+
+    allowed_customers = {}
+    for campaign_code, customer_code in customer_rows:
+        allowed_customers.setdefault(int(campaign_code), set()).add(int(customer_code))
 
     campaigns = {}
     for row in rows:
@@ -302,6 +327,7 @@ def sync_campaigns(dsn, token: str) -> None:
             "endsOn": iso_date(ends_on),
             "branchCode": text(branch_code),
             "usesProductFamily": text(uses_family).upper() == "S",
+            "allowedCustomerIds": sorted(allowed_customers.get(code, set())),
             "products": [],
         })
         minimum = max(1, int(number(min_quantity) or 1))
@@ -336,6 +362,7 @@ def sync_campaigns(dsn, token: str) -> None:
     print(
         "Campanhas concluídas: "
         f"campanhas={result.get('campaignCount')}, produtos={result.get('productCount')}, "
+        f"restricoes_clientes={result.get('customerRestrictionCount')}, "
         f"ignorados={result.get('skippedProducts')}, desativadas={result.get('deactivatedCount')}"
     )
 

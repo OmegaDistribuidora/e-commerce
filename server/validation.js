@@ -162,6 +162,9 @@ export const campaignSyncSchema = z.object({
     endsOn: z.string().date(),
     branchCode: z.string().trim().max(80).optional().default(''),
     usesProductFamily: z.boolean().default(false),
+    // Opcional durante a transição para que um sincronizador antigo não
+    // apague restrições já gravadas. A versão atual sempre envia o snapshot.
+    allowedCustomerIds: z.array(z.coerce.number().int().positive()).max(100000).optional(),
     products: z.array(campaignProductSyncSchema).max(100000),
   })).max(10000),
 })
