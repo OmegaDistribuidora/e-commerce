@@ -77,6 +77,9 @@ export async function initializeDatabase() {
   await pool.query("ALTER TABLE banners ADD COLUMN IF NOT EXISTS destination_type VARCHAR(20) NOT NULL DEFAULT 'navigation'")
   await pool.query("ALTER TABLE banners ADD COLUMN IF NOT EXISTS destination_values INTEGER[] NOT NULL DEFAULT '{}'")
   await pool.query("ALTER TABLE banners ADD COLUMN IF NOT EXISTS navigation_path TEXT NOT NULL DEFAULT '/#produtos'")
+  await pool.query('ALTER TABLE banners ADD COLUMN IF NOT EXISTS mobile_image_path TEXT')
+  await pool.query('ALTER TABLE banners ADD COLUMN IF NOT EXISTS mobile_image_data BYTEA')
+  await pool.query('ALTER TABLE banners ADD COLUMN IF NOT EXISTS mobile_image_mime VARCHAR(50)')
   if (process.env.DATABASE_URL) {
     await pool.query('ALTER TABLE banners DROP CONSTRAINT IF EXISTS banners_destination_type_check')
     await pool.query("ALTER TABLE banners ADD CONSTRAINT banners_destination_type_check CHECK (destination_type IN ('navigation', 'sections', 'products', 'suppliers', 'campaigns'))")

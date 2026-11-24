@@ -170,6 +170,7 @@ export type Banner = {
   title: string
   altText: string
   imageUrl: string
+  mobileImageUrl: string
   targetUrl: string
   sectionCode: number | null
   destinationType: 'navigation' | 'sections' | 'products' | 'suppliers' | 'campaigns'
@@ -184,6 +185,7 @@ export type Banner = {
   startsAt: string | null
   endsAt: string | null
   imageDataUrl?: string
+  mobileImageDataUrl?: string
 }
 
 export type CommercialConditions = {

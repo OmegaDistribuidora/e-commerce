@@ -111,6 +111,7 @@ img { display: block; max-width: 100%; }
 .hero { position: relative; width: 100%; aspect-ratio: 3 / 1; overflow: hidden; background: #fff; touch-action: pan-y; }
 .hero-track { height: 100%; display: flex; transition: transform .8s cubic-bezier(.65,0,.35,1); will-change: transform; }
 .hero-slide { flex: 0 0 100%; height: 100%; padding: 0; border: 0; background: transparent; }
+.hero-slide picture { display: block; width: 100%; height: 100%; }
 .hero-slide img { width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; }
 .slider-arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; border: 1px solid rgba(255,255,255,.36); background: rgba(3,30,72,.48); color: #fff; backdrop-filter: blur(8px); opacity: 0; transition: .2s; }
 .hero:hover .slider-arrow { opacity: 1; }
@@ -166,6 +167,7 @@ img { display: block; max-width: 100%; }
 .catalog-flow, .catalog-row-group { display: grid; gap: 32px; }
 .catalog-row-group { gap: 24px; }
 .catalog-banner { width: 100%; aspect-ratio: 6 / 1; display: grid; place-items: center; overflow: hidden; background: #fff; border-radius: 16px; }
+.catalog-banner picture { display: block; width: 100%; height: 100%; }
 .catalog-banner img { width: 100%; height: 100%; object-fit: contain; }
 .product-card { min-width: 0; background: #fff; display: flex; flex-direction: column; transition: .22s ease; }
 .product-card:hover { transform: translateY(-3px); }
@@ -561,6 +563,10 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .banner-modal .banner-form-fields { padding: 22px 24px 24px; border: 0; border-radius: 0; }
 .banner-modal-preview { height: 180px; padding: 8px; border-radius: 12px; background: #f2f6fa; display: grid; place-items: center; overflow: hidden; }
 .banner-modal-preview img { width: 100%; height: 100%; object-fit: contain; }
+.banner-modal-previews { display: grid; grid-template-columns: minmax(0, 3fr) minmax(180px, 1fr); gap: 12px; }
+.banner-modal-previews > div { min-width: 0; display: grid; gap: 5px; }
+.banner-modal-previews > div > span { color: var(--muted); font-size: 9px; font-weight: 850; text-transform: uppercase; letter-spacing: .08em; }
+.banner-modal-preview.mobile { aspect-ratio: 2 / 1; height: auto; }
 .banner-form-grid { display: grid; grid-template-columns: minmax(0,1fr) 190px; gap: 12px; }
 .banner-destination-picker { min-width: 0; margin: 0; padding: 12px; border: 1px solid #cfdae7; border-radius: 10px; }
 .banner-destination-picker legend { padding: 0 5px; color: var(--navy); font-size: 11px; font-weight: 800; }
@@ -979,6 +985,7 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
   .banner-modal { width: 100%; max-height: 94vh; border-radius: 18px 18px 0 0; }
   .banner-modal-header { padding: 17px 18px; }
   .banner-modal .banner-form-fields { padding: 18px; }
+  .banner-modal-previews { grid-template-columns: 1fr; }
   .banner-modal-preview { height: 125px; }
   .banner-form-grid { grid-template-columns: 1fr; }
   .banner-destination-picker > div { grid-template-columns: 1fr; }
@@ -1005,7 +1012,7 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
   .logout-button { display: none; }
   .cart-icon > svg { width: 26px; }
   .main-nav { display: none; }
-  .hero { height: auto; max-height: none; }
+  .hero { height: auto; max-height: none; aspect-ratio: 2 / 1; }
   .hero-slide img { object-fit: contain; }
   .hero-slide:first-child img { object-position: center; }
   .hero-slide:nth-child(2) img { object-position: center; }
@@ -1026,7 +1033,7 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
   .result-count { padding-top: 20px; white-space: nowrap; }
   .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .catalog-flow, .catalog-row-group { gap: 20px; }
-  .catalog-banner { aspect-ratio: 4.5 / 1; }
+  .catalog-banner { aspect-ratio: 2 / 1; }
   .product-image-wrap { height: 175px; }
   .product-image-link { padding: 12px; }
   .product-content { padding: 13px; }

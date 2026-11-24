@@ -122,6 +122,10 @@ export const stockCheckSchema = z.object({
   quantity: z.coerce.number().int().positive().max(100000),
 })
 
+export const cartQuantitySchema = z.object({
+  quantity: z.coerce.number().int().positive().max(100000),
+})
+
 export const couponSchema = z.object({
   code: z.string().trim().toUpperCase().min(3, 'Informe um código com ao menos 3 caracteres').max(40).regex(/^[A-Z0-9_-]+$/, 'Use apenas letras, números, hífen ou sublinhado'),
   description: z.string().trim().min(1, 'Informe uma descrição').max(180),
@@ -212,6 +216,7 @@ export const bannerSchema = z.object({
   active: z.boolean(),
   placement: z.enum(['hero', 'catalog']).default('hero'),
   imageDataUrl: z.string().optional().default(''),
+  mobileImageDataUrl: z.string().optional().default(''),
   startsAt: z.string().datetime({ offset: true }).nullable().optional(),
   endsAt: z.string().datetime({ offset: true }).nullable().optional(),
 }).refine((value) => !value.startsAt || !value.endsAt || new Date(value.endsAt) > new Date(value.startsAt), {

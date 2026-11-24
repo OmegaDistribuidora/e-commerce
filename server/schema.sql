@@ -71,6 +71,22 @@ CREATE TABLE IF NOT EXISTS customers (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS customer_carts (
+  customer_id BIGINT PRIMARY KEY REFERENCES customers(id) ON DELETE CASCADE,
+  reminder_sent_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS customer_cart_items (
+  customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  quantity INTEGER NOT NULL CHECK (quantity > 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (customer_id, product_id)
+);
+
 CREATE TABLE IF NOT EXISTS orders (
   id BIGSERIAL PRIMARY KEY,
   customer_id BIGINT NOT NULL REFERENCES customers(id),
@@ -133,6 +149,9 @@ CREATE TABLE IF NOT EXISTS banners (
   image_path TEXT,
   image_data BYTEA,
   image_mime VARCHAR(50),
+  mobile_image_path TEXT,
+  mobile_image_data BYTEA,
+  mobile_image_mime VARCHAR(50),
   target_url TEXT NOT NULL DEFAULT '#produtos',
   section_code INTEGER,
   destination_type VARCHAR(20) NOT NULL DEFAULT 'navigation' CHECK (destination_type IN ('navigation', 'sections', 'products', 'suppliers', 'campaigns')),
@@ -342,6 +361,8 @@ CREATE INDEX IF NOT EXISTS idx_orders_customer_date ON orders(customer_id, creat
 CREATE INDEX IF NOT EXISTS idx_product_stocks_branch ON product_stocks(branch, product_id);
 CREATE INDEX IF NOT EXISTS idx_staff_sessions_user ON staff_sessions(staff_user_id);
 CREATE INDEX IF NOT EXISTS idx_banners_active_position ON banners(active, position);
+CREATE INDEX IF NOT EXISTS idx_customer_cart_items_customer ON customer_cart_items(customer_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_carts_updated ON customer_carts(updated_at);
 CREATE INDEX IF NOT EXISTS idx_product_categories_category ON product_categories(category_id, product_id);
 CREATE INDEX IF NOT EXISTS idx_product_categories_product ON product_categories(product_id, category_id);
 CREATE TABLE IF NOT EXISTS supplier_logos (

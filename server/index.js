@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
 import { findSupabaseUserByEmail, inviteSupabaseUser, removeSupabaseUser, updateSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
-import { bannerSchema, bannersBulkSchema, campaignSyncSchema, couponSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, institutionalPageSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerApproveSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
+import { bannerSchema, bannersBulkSchema, campaignSyncSchema, cartQuantitySchema, couponSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, institutionalPageSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerApproveSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -1334,6 +1334,7 @@ app.get('/api/banners', async (request, response, next) => {
          )` : ''
     const result = await pool.query(
       `SELECT b.id, b.title, b.alt_text, b.image_path, b.image_data IS NOT NULL AS uploaded,
+              b.mobile_image_path, b.mobile_image_data IS NOT NULL AS mobile_uploaded,
               b.target_url, b.section_code, b.destination_type, b.destination_values, b.navigation_path,
               b.position, b.active, b.placement,
               b.starts_at, b.ends_at, b.updated_at,
@@ -1360,6 +1361,9 @@ app.get('/api/banners', async (request, response, next) => {
       title: banner.title,
       altText: banner.alt_text,
       imageUrl: banner.uploaded ? `/api/banners/${banner.id}/image?v=${new Date(banner.updated_at).getTime()}` : banner.image_path,
+      mobileImageUrl: banner.mobile_uploaded
+        ? `/api/banners/${banner.id}/mobile-image?v=${new Date(banner.updated_at).getTime()}`
+        : (banner.mobile_image_path || (banner.uploaded ? `/api/banners/${banner.id}/image?v=${new Date(banner.updated_at).getTime()}` : banner.image_path)),
       targetUrl: banner.target_url,
       sectionCode: banner.section_code === null ? null : Number(banner.section_code),
       destinationType: banner.destination_type,
@@ -1383,6 +1387,22 @@ app.get('/api/banners/:id/image', async (request, response, next) => {
   try {
     const result = await pool.query(
       'SELECT image_data, image_mime FROM banners WHERE id = $1 LIMIT 1',
+      [request.params.id],
+    )
+    if (!result.rows[0]?.image_data) return response.status(404).end()
+    response.setHeader('Cache-Control', 'public, max-age=3600')
+    return response.type(result.rows[0].image_mime || 'image/jpeg').send(result.rows[0].image_data)
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.get('/api/banners/:id/mobile-image', async (request, response, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT COALESCE(mobile_image_data,image_data) AS image_data,
+              COALESCE(mobile_image_mime,image_mime) AS image_mime
+       FROM banners WHERE id=$1 LIMIT 1`,
       [request.params.id],
     )
     if (!result.rows[0]?.image_data) return response.status(404).end()
@@ -1991,6 +2011,132 @@ app.post('/api/customer/stock-check', async (request, response, next) => {
     return response.json({ available: true })
   } catch (error) {
     if (error instanceof RequestError) return response.status(error.status).json({ message: error.message })
+    return next(error)
+  }
+})
+
+app.get('/api/customer/cart', async (request, response, next) => {
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para consultar o carrinho.' })
+  try {
+    const pricing = await customerPricing(pool, request.customer)
+    const priceTables = pricing?.region != null ? pricing.priceTables : []
+    const priceColumns = priceTables.map((table) => `, rp.${priceColumn(table)}`).join('')
+    const restrictedSupplierIds = pricing?.restrictedSupplierIds || []
+    const result = await pool.query(
+      `SELECT p.id,p.external_id,p.supplier_id,p.brand,p.name,p.package,p.master_package,
+              p.units_per_box,p.sales_multiple,p.min_boxes,p.department_code,p.department,
+              p.section_code,p.section,p.image_path,p.image_data IS NOT NULL AS image_uploaded,
+              p.image_hidden,p.image_updated_at,p.ean,p.manufacturer_code,p.ncm_code,
+              p.price_date,p.orders_last_30_days,cci.quantity,cc.updated_at AS cart_updated_at${priceColumns}
+       FROM customer_cart_items cci
+       JOIN customer_carts cc ON cc.customer_id=cci.customer_id
+       JOIN products p ON p.id=cci.product_id AND p.active=TRUE
+       LEFT JOIN region_prices rp ON rp.product_id=p.id AND rp.region=$2
+       WHERE cci.customer_id=$1
+         AND ($3::integer[]='{}'::integer[] OR NOT (p.supplier_id=ANY($3::integer[])))
+       ORDER BY cci.created_at, p.name`,
+      [request.customer.id, priceTables.length ? pricing.region : -1, postgresIntegerArray(restrictedSupplierIds)],
+    )
+    const campaignOffers = await activeCampaignOffers(pool, result.rows.map((row) => Number(row.id)))
+    return response.json({
+      updatedAt: result.rows[0]?.cart_updated_at || null,
+      items: result.rows.map((row) => {
+        const customerPrice = lowestPlanPrice(row, priceTables)
+        return {
+          id: Number(row.id), code: Number(row.external_id), supplierId: Number(row.supplier_id || 0),
+          brand: row.brand, name: row.name, package: row.package || '', masterPackage: row.master_package || '',
+          unitsPerBox: Number(row.units_per_box), salesMultiple: purchaseMultiple(pricing, row), minBoxes: Number(row.min_boxes),
+          unitPrice: customerPrice, listUnitPrice: customerPrice,
+          category: row.section || 'Sem seção', categories: row.section ? [row.section] : [],
+          departmentCode: Number(row.department_code || 0), department: row.department || '',
+          sectionCode: Number(row.section_code || 0), section: row.section || '',
+          image: productImageUrl(row), priceDate: row.price_date, ordersLast30Days: Number(row.orders_last_30_days || 0),
+          ean: row.ean || '', manufacturerCode: row.manufacturer_code || '', ncm: row.ncm_code || '',
+          campaignOffers: campaignOffers.get(Number(row.id)) || [], quantity: Number(row.quantity),
+        }
+      }),
+    })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.put('/api/customer/cart/:productId', async (request, response, next) => {
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para alterar o carrinho.' })
+  if ((request.customer.registration_status || 'approved') !== 'approved') {
+    return response.status(403).json({ message: 'Seu cadastro ainda está em análise.' })
+  }
+  const parsed = cartQuantitySchema.safeParse(request.body)
+  if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+  const productId = Number(request.params.productId)
+  if (!Number.isSafeInteger(productId) || productId < 1) return response.status(400).json({ message: 'Produto inválido.' })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const pricing = await customerPricing(client, request.customer)
+    if (!pricing || pricing.isBlocked) throw new RequestError('Seu cadastro está bloqueado para compras. Fale com a equipe Ômega.', 403)
+    const productResult = await client.query(
+      'SELECT id,external_id,supplier_id,name,units_per_box,sales_multiple FROM products WHERE id=$1 AND active=TRUE LIMIT 1',
+      [productId],
+    )
+    const product = productResult.rows[0]
+    if (!product || pricing.restrictedSupplierIds.includes(Number(product.supplier_id))) {
+      throw new RequestError('Este produto não está disponível para o seu cadastro.', 404)
+    }
+    const salesMultiple = purchaseMultiple(pricing, product)
+    if (parsed.data.quantity < salesMultiple || parsed.data.quantity % salesMultiple !== 0) {
+      throw new RequestError(`A quantidade do produto ${product.external_id} deve ser um múltiplo de ${salesMultiple} unidades.`)
+    }
+    await validateOrderStock(client, pricing.stockBranch, [{ product, units: parsed.data.quantity }])
+    await client.query(
+      `INSERT INTO customer_carts(customer_id,reminder_sent_at,updated_at) VALUES ($1,NULL,CURRENT_TIMESTAMP)
+       ON CONFLICT (customer_id) DO UPDATE SET reminder_sent_at=NULL,updated_at=CURRENT_TIMESTAMP`,
+      [request.customer.id],
+    )
+    await client.query(
+      `INSERT INTO customer_cart_items(customer_id,product_id,quantity) VALUES ($1,$2,$3)
+       ON CONFLICT (customer_id,product_id) DO UPDATE SET quantity=EXCLUDED.quantity,updated_at=CURRENT_TIMESTAMP`,
+      [request.customer.id, productId, parsed.data.quantity],
+    )
+    await client.query('COMMIT')
+    return response.json({ productId, quantity: parsed.data.quantity })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    if (error instanceof RequestError) return response.status(error.status).json({ message: error.message })
+    return next(error)
+  } finally {
+    client.release()
+  }
+})
+
+app.delete('/api/customer/cart/:productId', async (request, response, next) => {
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para alterar o carrinho.' })
+  const productId = Number(request.params.productId)
+  if (!Number.isSafeInteger(productId) || productId < 1) return response.status(400).json({ message: 'Produto inválido.' })
+  try {
+    await pool.query('DELETE FROM customer_cart_items WHERE customer_id=$1 AND product_id=$2', [request.customer.id, productId])
+    await pool.query(
+      `INSERT INTO customer_carts(customer_id,reminder_sent_at,updated_at) VALUES ($1,NULL,CURRENT_TIMESTAMP)
+       ON CONFLICT (customer_id) DO UPDATE SET reminder_sent_at=NULL,updated_at=CURRENT_TIMESTAMP`,
+      [request.customer.id],
+    )
+    return response.status(204).end()
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.delete('/api/customer/cart', async (request, response, next) => {
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para alterar o carrinho.' })
+  try {
+    await pool.query('DELETE FROM customer_cart_items WHERE customer_id=$1', [request.customer.id])
+    await pool.query(
+      `INSERT INTO customer_carts(customer_id,reminder_sent_at,updated_at) VALUES ($1,NULL,CURRENT_TIMESTAMP)
+       ON CONFLICT (customer_id) DO UPDATE SET reminder_sent_at=NULL,updated_at=CURRENT_TIMESTAMP`,
+      [request.customer.id],
+    )
+    return response.status(204).end()
+  } catch (error) {
     return next(error)
   }
 })
@@ -2952,6 +3098,7 @@ app.get('/api/staff/banners', requireMarketingAccess, async (_request, response,
   try {
     const result = await pool.query(
       `SELECT b.id, b.title, b.alt_text, b.image_path, b.image_data IS NOT NULL AS uploaded,
+              b.mobile_image_path, b.mobile_image_data IS NOT NULL AS mobile_uploaded,
               b.target_url, b.section_code, b.destination_type, b.destination_values, b.navigation_path,
               b.position, b.active, b.placement,
               b.starts_at, b.ends_at, b.updated_at,
@@ -2969,6 +3116,9 @@ app.get('/api/staff/banners', requireMarketingAccess, async (_request, response,
     return response.json({ banners: result.rows.map((banner) => ({
       id: Number(banner.id), title: banner.title, altText: banner.alt_text,
       imageUrl: banner.uploaded ? `/api/banners/${banner.id}/image?v=${new Date(banner.updated_at).getTime()}` : banner.image_path,
+      mobileImageUrl: banner.mobile_uploaded
+        ? `/api/banners/${banner.id}/mobile-image?v=${new Date(banner.updated_at).getTime()}`
+        : (banner.mobile_image_path || (banner.uploaded ? `/api/banners/${banner.id}/image?v=${new Date(banner.updated_at).getTime()}` : banner.image_path)),
       targetUrl: banner.target_url, position: Number(banner.position), active: banner.active, placement: banner.placement,
       sectionCode: banner.section_code === null ? null : Number(banner.section_code),
       destinationType: banner.destination_type,
@@ -3105,9 +3255,14 @@ app.put('/api/staff/banners', requireMarketingAccess, async (request, response, 
     }
     for (const banner of parsed.data.banners) {
       let image = null
+      let mobileImage = null
       try { image = decodeBannerImage(banner.imageDataUrl, banner.placement === 'hero', 10) } catch (error) {
         await client.query('ROLLBACK')
         return response.status(400).json({ message: error.message })
+      }
+      try { mobileImage = decodeBannerImage(banner.mobileImageDataUrl, banner.placement === 'hero', 10) } catch (error) {
+        await client.query('ROLLBACK')
+        return response.status(400).json({ message: `Imagem mobile: ${error.message}` })
       }
       if (banner.id) {
         const result = await client.query(
@@ -3116,25 +3271,27 @@ app.put('/api/staff/banners', requireMarketingAccess, async (request, response, 
              position=$8, active=$9, placement=$10,
              starts_at=$11, ends_at=$12, image_data=COALESCE($13, image_data), image_mime=COALESCE($14, image_mime),
              image_path=CASE WHEN $13::bytea IS NOT NULL THEN NULL ELSE image_path END,
+             mobile_image_data=COALESCE($15, mobile_image_data), mobile_image_mime=COALESCE($16, mobile_image_mime),
+             mobile_image_path=CASE WHEN $15::bytea IS NOT NULL THEN NULL ELSE mobile_image_path END,
              updated_at=CURRENT_TIMESTAMP
-           WHERE id=$15 RETURNING id`,
+           WHERE id=$17 RETURNING id`,
           [banner.title, banner.altText, bannerDestinationUrl(banner),
             banner.destinationType === 'sections' ? banner.destinationValues[0] : null,
             banner.destinationType, postgresIntegerArray(banner.destinationValues), banner.navigationPath,
             banner.position, banner.active, banner.placement, banner.startsAt || null, banner.endsAt || null,
-            image?.data ?? null, image?.mime ?? null, banner.id],
+            image?.data ?? null, image?.mime ?? null, mobileImage?.data ?? null, mobileImage?.mime ?? null, banner.id],
         )
         if (!result.rows.length) throw new Error('Um dos banners editados não existe mais.')
       } else {
-        if (!image) {
+        if (!image || !mobileImage) {
           await client.query('ROLLBACK')
-          return response.status(400).json({ message: `Selecione uma imagem para o banner â€œ${banner.title}â€.` })
+          return response.status(400).json({ message: `Selecione as imagens para desktop e mobile do banner “${banner.title}”.` })
         }
         await client.query(
-          `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, section_code,
+          `INSERT INTO banners (title, alt_text, image_data, image_mime, mobile_image_data, mobile_image_mime, target_url, section_code,
              destination_type, destination_values, navigation_path, position, active, placement, starts_at, ends_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-          [banner.title, banner.altText, image.data, image.mime, bannerDestinationUrl(banner),
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+          [banner.title, banner.altText, image.data, image.mime, mobileImage.data, mobileImage.mime, bannerDestinationUrl(banner),
             banner.destinationType === 'sections' ? banner.destinationValues[0] : null,
             banner.destinationType, postgresIntegerArray(banner.destinationValues), banner.navigationPath,
             banner.position, banner.active, banner.placement, banner.startsAt || null, banner.endsAt || null],
@@ -3158,8 +3315,12 @@ app.put('/api/staff/banners/:id', requireMarketingAccess, async (request, respon
     const missingDestination = await findMissingBannerDestination(pool, [parsed.data])
     if (missingDestination) return response.status(400).json({ message: `O ${missingDestination.label} ${missingDestination.code} não está disponível no catálogo ativo.` })
     let image = null
+    let mobileImage = null
     try { image = decodeBannerImage(parsed.data.imageDataUrl, parsed.data.placement === 'hero', 10) } catch (error) {
       return response.status(400).json({ message: error.message })
+    }
+    try { mobileImage = decodeBannerImage(parsed.data.mobileImageDataUrl, parsed.data.placement === 'hero', 10) } catch (error) {
+      return response.status(400).json({ message: `Imagem mobile: ${error.message}` })
     }
     const values = [
       parsed.data.title, parsed.data.altText, bannerDestinationUrl(parsed.data),
@@ -3167,6 +3328,7 @@ app.put('/api/staff/banners/:id', requireMarketingAccess, async (request, respon
       parsed.data.destinationType, postgresIntegerArray(parsed.data.destinationValues), parsed.data.navigationPath,
       parsed.data.position, parsed.data.active, parsed.data.placement,
       parsed.data.startsAt || null, parsed.data.endsAt || null, image?.data ?? null, image?.mime ?? null,
+      mobileImage?.data ?? null, mobileImage?.mime ?? null,
       request.params.id,
     ]
     const result = await pool.query(
@@ -3176,8 +3338,10 @@ app.put('/api/staff/banners/:id', requireMarketingAccess, async (request, respon
          starts_at=$11, ends_at=$12,
          image_data=COALESCE($13, image_data), image_mime=COALESCE($14, image_mime),
          image_path=CASE WHEN $13::bytea IS NOT NULL THEN NULL ELSE image_path END,
+         mobile_image_data=COALESCE($15, mobile_image_data), mobile_image_mime=COALESCE($16, mobile_image_mime),
+         mobile_image_path=CASE WHEN $15::bytea IS NOT NULL THEN NULL ELSE mobile_image_path END,
          updated_at=CURRENT_TIMESTAMP
-       WHERE id=$15 RETURNING id`,
+       WHERE id=$17 RETURNING id`,
       values,
     )
     if (!result.rows.length) return response.status(404).json({ message: 'Banner não encontrado.' })
@@ -3194,15 +3358,19 @@ app.post('/api/staff/banners', requireMarketingAccess, async (request, response,
     const missingDestination = await findMissingBannerDestination(pool, [parsed.data])
     if (missingDestination) return response.status(400).json({ message: `O ${missingDestination.label} ${missingDestination.code} não está disponível no catálogo ativo.` })
     let image
+    let mobileImage
     try { image = decodeBannerImage(parsed.data.imageDataUrl, parsed.data.placement === 'hero', 10) } catch (error) {
       return response.status(400).json({ message: error.message })
     }
-    if (!image) return response.status(400).json({ message: 'Selecione uma imagem para o novo banner.' })
+    try { mobileImage = decodeBannerImage(parsed.data.mobileImageDataUrl, parsed.data.placement === 'hero', 10) } catch (error) {
+      return response.status(400).json({ message: `Imagem mobile: ${error.message}` })
+    }
+    if (!image || !mobileImage) return response.status(400).json({ message: 'Selecione as imagens para desktop e mobile do novo banner.' })
     const result = await pool.query(
-      `INSERT INTO banners (title, alt_text, image_data, image_mime, target_url, section_code,
+      `INSERT INTO banners (title, alt_text, image_data, image_mime, mobile_image_data, mobile_image_mime, target_url, section_code,
          destination_type, destination_values, navigation_path, position, active, placement, starts_at, ends_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
-      [parsed.data.title, parsed.data.altText, image.data, image.mime, bannerDestinationUrl(parsed.data),
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+      [parsed.data.title, parsed.data.altText, image.data, image.mime, mobileImage.data, mobileImage.mime, bannerDestinationUrl(parsed.data),
         parsed.data.destinationType === 'sections' ? parsed.data.destinationValues[0] : null,
         parsed.data.destinationType, postgresIntegerArray(parsed.data.destinationValues), parsed.data.navigationPath,
         parsed.data.position, parsed.data.active, parsed.data.placement,
@@ -3304,6 +3472,12 @@ app.post('/api/orders', async (request, response, next) => {
         [order.id, coupon.id, coupon.code, coupon.description, coupon.discountType, coupon.discountValue, coupon.eligibleSubtotal, coupon.discountAmount],
       )
     }
+    await client.query('DELETE FROM customer_cart_items WHERE customer_id=$1', [request.customer.id])
+    await client.query(
+      `INSERT INTO customer_carts(customer_id,reminder_sent_at,updated_at) VALUES ($1,NULL,CURRENT_TIMESTAMP)
+       ON CONFLICT (customer_id) DO UPDATE SET reminder_sent_at=NULL,updated_at=CURRENT_TIMESTAMP`,
+      [request.customer.id],
+    )
     await client.query('COMMIT')
     return response.status(201).json({
       order: {

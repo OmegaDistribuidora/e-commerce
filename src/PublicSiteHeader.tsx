@@ -7,24 +7,22 @@ import type { Customer, StaffUser } from './types'
 
 const whatsappUrl = `https://wa.me/558592020207?text=${encodeURIComponent('Olá! Venho do e-Commerce da Ômega Distribuidora e preciso de atendimento!')}`
 
-function storedCartCount() {
-  try {
-    const cart = JSON.parse(localStorage.getItem('omega-cart-v2') || '[]')
-    return Array.isArray(cart) ? cart.length : 0
-  } catch { return 0 }
-}
-
 export default function PublicSiteHeader({ active }: { active?: 'about' | 'partners' }) {
   const [departmentsOpen, setDepartmentsOpen] = useState(false)
   const [customer, setCustomer] = useState<Customer | null>(null)
   const [staffUser, setStaffUser] = useState<StaffUser | null>(null)
   const [ready, setReady] = useState(false)
-  const cartCount = storedCartCount()
+  const [cartCount, setCartCount] = useState(0)
 
   useEffect(() => {
-    authenticatedFetch('/api/auth/me').then(async (response) => response.ok ? response.json() : null).then((account) => {
+    authenticatedFetch('/api/auth/me').then(async (response) => response.ok ? response.json() : null).then(async (account) => {
       setCustomer(account?.accountType === 'customer' ? account.customer : null)
       setStaffUser(account?.accountType === 'staff' ? account.user : null)
+      if (account?.accountType === 'customer' && account.customer?.canOrder) {
+        const response = await authenticatedFetch('/api/customer/cart')
+        const data = await response.json().catch(() => ({ items: [] }))
+        setCartCount(response.ok && Array.isArray(data.items) ? data.items.length : 0)
+      }
     }).catch(() => undefined).finally(() => setReady(true))
   }, [])
 
@@ -34,7 +32,6 @@ export default function PublicSiteHeader({ active }: { active?: 'about' | 'partn
       fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined),
       fetch('/api/staff/auth/logout', { method: 'POST' }).catch(() => undefined),
     ])
-    localStorage.removeItem('omega-cart-v2')
     window.location.reload()
   }
 

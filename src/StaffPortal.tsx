@@ -324,6 +324,7 @@ export default function StaffPortal() {
       title: "",
       altText: "",
       imageUrl: "",
+      mobileImageUrl: "",
       targetUrl: "#produtos",
       sectionCode: null,
       destinationType: "navigation",
@@ -364,7 +365,7 @@ export default function StaffPortal() {
     }
   }
 
-  async function selectBannerImage(file?: File) {
+  async function selectBannerImage(file?: File, mobile = false) {
     if (!file?.size) return;
     if (file.size > 10 * 1024 * 1024) {
       setBannerError("A imagem deve ter no máximo 10 MB.");
@@ -392,7 +393,9 @@ export default function StaffPortal() {
       setBannerError("");
       setEditingBanner((current) =>
         current
-          ? { ...current, imageDataUrl, imageUrl: imageDataUrl }
+          ? mobile
+            ? { ...current, mobileImageDataUrl: imageDataUrl, mobileImageUrl: imageDataUrl }
+            : { ...current, imageDataUrl, imageUrl: imageDataUrl }
           : current,
       );
     } catch {
@@ -418,6 +421,7 @@ export default function StaffPortal() {
         navigationPath: banner.navigationPath,
         placement: banner.placement,
         imageDataUrl: banner.imageDataUrl || "",
+        mobileImageDataUrl: banner.mobileImageDataUrl || "",
         startsAt: banner.startsAt,
         endsAt: banner.endsAt,
       };
@@ -1433,6 +1437,7 @@ export default function StaffPortal() {
                 }}
                 onClearError={() => setBannerError("")}
                 onImage={selectBannerImage}
+                onMobileImage={(file) => selectBannerImage(file, true)}
                 onDelete={deleteBanner}
                 onClose={() => {
                   setBannerError("");
@@ -1741,6 +1746,7 @@ function BannerEditorModal({
   onChange,
   onClearError,
   onImage,
+  onMobileImage,
   onDelete,
   onClose,
   onSave,
@@ -1755,6 +1761,7 @@ function BannerEditorModal({
   onChange: (values: Partial<Banner>) => void;
   onClearError: () => void;
   onImage: (file?: File) => void;
+  onMobileImage: (file?: File) => void;
   onDelete: (banner: Banner) => void;
   onClose: () => void;
   onSave: (banner: Banner) => void;
@@ -1863,9 +1870,10 @@ function BannerEditorModal({
             onSave(banner);
           }}
         >
-          {banner.imageUrl && (
-            <div className="banner-modal-preview">
-              <img src={banner.imageUrl} alt={banner.altText} />
+          {(banner.imageUrl || banner.mobileImageUrl) && (
+            <div className="banner-modal-previews">
+              {banner.imageUrl && <div><span>Desktop</span><div className="banner-modal-preview"><img src={banner.imageUrl} alt={banner.altText} /></div></div>}
+              {(banner.mobileImageUrl || banner.imageUrl) && <div><span>Mobile</span><div className="banner-modal-preview mobile"><img src={banner.mobileImageUrl || banner.imageUrl} alt={banner.altText} /></div></div>}
             </div>
           )}
           {error && (
@@ -2118,20 +2126,20 @@ function BannerEditorModal({
             <div>
               <b>
                 {banner.placement === "hero"
-                  ? "Tamanho recomendado: 1920 × 640 px"
-                  : "Tamanho recomendado: 1920 × 320 px"}
+                  ? "Desktop: 1920 × 640 px (3:1)"
+                  : "Desktop: 1920 × 320 px (6:1)"}
               </b>
               <span>
-                {banner.placement === "hero"
-                  ? "Proporção 3:1 para o carrossel principal. Também aceita GIF animado."
-                  : "Proporção 6:1 para o banner entre produtos."}{" "}
+                Mobile: 1200 × 600 px (2:1). {banner.placement === "hero"
+                  ? "O banner principal também aceita GIF animado."
+                  : "Use PNG, JPG ou WEBP."}{" "}
                 Imagens maiores funcionam normalmente quando mantêm a mesma
                 proporção. Mantenha textos importantes afastados das bordas.
               </span>
             </div>
           </div>
           <label>
-            Imagem{" "}
+            Imagem para desktop{" "}
             <small>
               {banner.id > 0
                 ? `Selecione apenas se quiser substituir a atual${banner.placement === "hero" ? " · GIF aceito" : ""} · máximo 10 MB`
@@ -2145,6 +2153,20 @@ function BannerEditorModal({
                   : "image/png,image/jpeg,image/webp"
               }
               onChange={(event) => onImage(event.target.files?.[0])}
+            />
+          </label>
+          <label>
+            Imagem para mobile{" "}
+            <small>
+              {banner.id > 0
+                ? `Selecione apenas se quiser substituir a atual${banner.placement === "hero" ? " · GIF aceito" : ""} · proporção 2:1 · máximo 10 MB`
+                : `${banner.placement === "hero" ? "PNG, JPG, WEBP ou GIF" : "PNG, JPG ou WEBP"} · proporção 2:1 · máximo 10 MB`}
+            </small>
+            <input
+              type="file"
+              accept={banner.placement === "hero" ? "image/png,image/jpeg,image/webp,image/gif" : "image/png,image/jpeg,image/webp"}
+              onChange={(event) => onMobileImage(event.target.files?.[0])}
+              required={banner.id < 0 && !banner.mobileImageDataUrl}
             />
           </label>
           <label className="staff-check">

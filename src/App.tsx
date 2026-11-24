@@ -55,17 +55,6 @@ import { formatDocument } from "./validation";
 
 const whatsappUrl = `https://wa.me/558592020207?text=${encodeURIComponent("Olá! Venho do e-Commerce da Ômega Distribuidora e preciso de atendimento!")}`;
 
-function readStoredCart(): CartItem[] {
-  try {
-    const stored = JSON.parse(localStorage.getItem("omega-cart-v2") ?? "[]");
-    return Array.isArray(stored)
-      ? stored.filter((item) => Number.isFinite(item.unitPrice))
-      : [];
-  } catch {
-    return [];
-  }
-}
-
 function queryCodes(value: string | null) {
   return [
     ...new Set(
@@ -199,14 +188,20 @@ function StorePage({
   useEffect(() => {
     authenticatedFetch("/api/auth/me")
       .then(async (response) => (response.ok ? response.json() : null))
-      .then((data) => {
+      .then(async (data) => {
         const authenticatedCustomer =
           data?.accountType === "customer" ? data.customer : null;
         const authenticatedStaff =
           data?.accountType === "staff" ? data.user : null;
         setCustomer(authenticatedCustomer);
         setStaffUser(authenticatedStaff);
-        setCart(authenticatedCustomer?.canOrder ? readStoredCart() : []);
+        if (authenticatedCustomer?.canOrder) {
+          const cartResponse = await authenticatedFetch("/api/customer/cart");
+          const cartData = await cartResponse.json().catch(() => ({ items: [] }));
+          setCart(cartResponse.ok && Array.isArray(cartData.items) ? cartData.items : []);
+        } else {
+          setCart([]);
+        }
       })
       .catch(() => {
         setCustomer(null);
@@ -238,26 +233,6 @@ function StorePage({
     return () => controller.abort();
   }, [authReady, catalogMode, customer?.id, initialCampaignCode]);
 
-  useEffect(() => {
-    if (authReady) localStorage.setItem("omega-cart-v2", JSON.stringify(cart));
-  }, [authReady, cart]);
-  useEffect(() => {
-    if (!products.length) return;
-    const current = new Map(products.map((product) => [product.id, product]));
-    setCart((items) => {
-      const refreshed = items.flatMap((item) => {
-        const product = current.get(item.id);
-        return product && product.unitPrice !== null
-          ? [{ ...product, quantity: item.quantity }]
-          : [];
-      });
-      if (refreshed.length < items.length)
-        setToast(
-          "Itens sem preço ou indisponíveis foram removidos do carrinho.",
-        );
-      return refreshed;
-    });
-  }, [products]);
   useEffect(() => {
     if (authReady && !customer) setCart([]);
   }, [authReady, customer]);
@@ -564,10 +539,10 @@ function StorePage({
     stockChecksRef.current.add(productId);
     setStockCheckingIds((current) => new Set(current).add(productId));
     try {
-      const response = await authenticatedFetch("/api/customer/stock-check", {
-        method: "POST",
+      const response = await authenticatedFetch(`/api/customer/cart/${productId}`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, quantity }),
+        body: JSON.stringify({ quantity }),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok)
@@ -662,7 +637,6 @@ function StorePage({
         () => undefined,
       ),
     ]);
-    localStorage.removeItem("omega-cart-v2");
     window.location.reload();
   }
 
@@ -849,8 +823,7 @@ function StorePage({
     if (!item) return false;
     const nextQuantity = item.quantity + delta;
     if (nextQuantity <= 0) {
-      removeFromCart(id);
-      return true;
+      return removeFromCart(id);
     }
     if (!(await validateCartQuantity(id, nextQuantity))) return false;
     setCart((current) =>
@@ -876,8 +849,29 @@ function StorePage({
     return true;
   }
 
-  function removeFromCart(id: number) {
-    setCart((current) => current.filter((item) => item.id !== id));
+  async function removeFromCart(id: number) {
+    if (stockChecksRef.current.has(id)) return false;
+    stockChecksRef.current.add(id);
+    setStockCheckingIds((current) => new Set(current).add(id));
+    try {
+      const response = await authenticatedFetch(`/api/customer/cart/${id}`, { method: "DELETE" });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.message || "Não foi possível remover o item.");
+      }
+      setCart((current) => current.filter((item) => item.id !== id));
+      return true;
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Não foi possível remover o item.");
+      return false;
+    } finally {
+      stockChecksRef.current.delete(id);
+      setStockCheckingIds((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }
   }
 
   function showBestSellers() {
@@ -1282,11 +1276,10 @@ function StorePage({
                       if (suppressHeroClickRef.current) event.preventDefault();
                     }}
                   >
-                    <img
-                      src={item.imageUrl}
-                      alt={item.altText}
-                      draggable="false"
-                    />
+                    <picture>
+                      <source media="(max-width: 760px)" srcSet={item.mobileImageUrl || item.imageUrl} />
+                      <img src={item.imageUrl} alt={item.altText} draggable="false" />
+                    </picture>
                   </a>
                 ))}
               </div>
@@ -1588,10 +1581,10 @@ function StorePage({
                         className="catalog-banner"
                         href={bannerTarget(row.bannerBefore)}
                       >
-                        <img
-                          src={row.bannerBefore.imageUrl}
-                          alt={row.bannerBefore.altText}
-                        />
+                        <picture>
+                          <source media="(max-width: 760px)" srcSet={row.bannerBefore.mobileImageUrl || row.bannerBefore.imageUrl} />
+                          <img src={row.bannerBefore.imageUrl} alt={row.bannerBefore.altText} />
+                        </picture>
                       </a>
                     )}
                     <div className="product-grid">

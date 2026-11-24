@@ -13,13 +13,6 @@ import type { CartItem, CatalogDepartment, Customer, Partner, Product, StaffUser
 
 const whatsappUrl = `https://wa.me/558592020207?text=${encodeURIComponent('Olá! Venho do e-Commerce da Ômega Distribuidora e preciso de atendimento!')}`
 
-function readCart(): CartItem[] {
-  try {
-    const value = JSON.parse(localStorage.getItem('omega-cart-v2') || '[]')
-    return Array.isArray(value) ? value : []
-  } catch { return [] }
-}
-
 export default function ProductPage({ code }: { code: number }) {
   const [departmentsOpen, setDepartmentsOpen] = useState(false)
   const [product, setProduct] = useState<Product | null>(null)
@@ -36,6 +29,7 @@ export default function ProductPage({ code }: { code: number }) {
   const [search, setSearch] = useState('')
   const [departments, setDepartments] = useState<CatalogDepartment[]>([])
   const [partners, setPartners] = useState<Partner[]>([])
+  const [cart, setCart] = useState<CartItem[]>([])
 
   useEffect(() => {
     Promise.all([
@@ -45,11 +39,18 @@ export default function ProductPage({ code }: { code: number }) {
         if (!response.ok) throw new Error(data.message)
         return data.product as Product
       }),
-    ]).then(([account, loadedProduct]) => {
+    ]).then(async ([account, loadedProduct]) => {
       setCustomer(account?.accountType === 'customer' ? account.customer : null)
       setStaffUser(account?.accountType === 'staff' ? account.user : null)
       setProduct(loadedProduct)
-      const storedQuantity = readCart().find((item) => item.id === loadedProduct.id)?.quantity || 0
+      let onlineCart: CartItem[] = []
+      if (account?.accountType === 'customer' && account.customer?.canOrder) {
+        const cartResponse = await authenticatedFetch('/api/customer/cart')
+        const cartData = await cartResponse.json().catch(() => ({ items: [] }))
+        if (cartResponse.ok && Array.isArray(cartData.items)) onlineCart = cartData.items
+      }
+      setCart(onlineCart)
+      const storedQuantity = onlineCart.find((item) => item.id === loadedProduct.id)?.quantity || 0
       setQuantity(storedQuantity)
       setQuantityDraft(String(storedQuantity))
     }).catch((requestError) => setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar o produto.'))
@@ -72,32 +73,30 @@ export default function ProductPage({ code }: { code: number }) {
       return false
     }
     setQuantityError('')
-    if (nextQuantity > 0) {
-      stockCheckRef.current = true
-      setCheckingStock(true)
-      try {
-        const response = await authenticatedFetch('/api/customer/stock-check', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ productId: product.id, quantity: nextQuantity }),
-        })
-        const data = await response.json().catch(() => null)
-        if (!response.ok) throw new Error(data?.message || 'Não foi possível validar o estoque agora.')
-      } catch (requestError) {
-        setQuantityDraft(String(quantity))
-        setQuantityError(requestError instanceof Error ? requestError.message : 'Não foi possível validar o estoque agora.')
-        return false
-      } finally {
-        stockCheckRef.current = false
-        setCheckingStock(false)
-      }
+    stockCheckRef.current = true
+    setCheckingStock(true)
+    try {
+      const response = await authenticatedFetch(`/api/customer/cart/${product.id}`, nextQuantity > 0 ? {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quantity: nextQuantity }),
+      } : { method: 'DELETE' })
+      const data = response.status === 204 ? null : await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.message || 'Não foi possível atualizar o carrinho agora.')
+      setCart((current) => {
+        const next = current.filter((item) => item.id !== product.id)
+        if (nextQuantity > 0) next.push({ ...product, quantity: nextQuantity })
+        return next
+      })
+      setQuantity(nextQuantity)
+      setQuantityDraft(String(nextQuantity))
+      return true
+    } catch (requestError) {
+      setQuantityDraft(String(quantity))
+      setQuantityError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar o carrinho agora.')
+      return false
+    } finally {
+      stockCheckRef.current = false
+      setCheckingStock(false)
     }
-    const cart = readCart().filter((item) => item.id !== product.id)
-    if (nextQuantity > 0) cart.push({ ...product, quantity: nextQuantity })
-    localStorage.setItem('omega-cart-v2', JSON.stringify(cart))
-    setQuantity(nextQuantity)
-    setQuantityDraft(String(nextQuantity))
-    return true
   }
 
   async function commitQuantity() {
@@ -121,16 +120,14 @@ export default function ProductPage({ code }: { code: number }) {
       fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined),
       fetch('/api/staff/auth/logout', { method: 'POST' }).catch(() => undefined),
     ])
-    localStorage.removeItem('omega-cart-v2')
     window.location.reload()
   }
 
   if (loading) return <PageSkeleton />
   if (!product || error) return <main className="product-page-state"><ImageOff /><h1>Produto indisponível</h1><p>{error}</p><a href="/"><ArrowLeft /> Voltar para a loja</a></main>
 
-  const storedCart = readCart()
-  const cartCount = storedCart.length
-  const campaignQuantities = campaignQuantitiesForCart(storedCart)
+  const cartCount = cart.length
+  const campaignQuantities = campaignQuantitiesForCart(cart)
   const campaignPrice = productPriceForQuantity(product, quantity, campaignQuantities)
   const nextOffer = [...(product.campaignOffers || [])].sort((a, b) => b.discountPercent - a.discountPercent)[0]
 

@@ -21,19 +21,24 @@ export default function CampaignsPage() {
   const [staffUser, setStaffUser] = useState<StaffUser | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const cartCount = (() => { try { const value = JSON.parse(localStorage.getItem('omega-cart-v2') || '[]'); return Array.isArray(value) ? value.length : 0 } catch { return 0 } })()
+  const [cartCount, setCartCount] = useState(0)
 
   useEffect(() => {
     Promise.all([
       authenticatedFetch('/api/auth/me').then(async (response) => response.ok ? response.json() : null),
       authenticatedFetch('/api/campaigns').then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data.message); return data.campaigns }),
       fetch('/api/catalog/navigation').then((response) => response.json()),
-    ]).then(([account, availableCampaigns, navigation]) => {
+    ]).then(async ([account, availableCampaigns, navigation]) => {
       setCustomer(account?.accountType === 'customer' ? account.customer : null)
       setStaffUser(account?.accountType === 'staff' ? account.user : null)
       setCampaigns(Array.isArray(availableCampaigns) ? availableCampaigns : [])
       setDepartments(Array.isArray(navigation.departments) ? navigation.departments : [])
       setPartners(Array.isArray(navigation.partners) ? navigation.partners : [])
+      if (account?.accountType === 'customer' && account.customer?.canOrder) {
+        const response = await authenticatedFetch('/api/customer/cart')
+        const data = await response.json().catch(() => ({ items: [] }))
+        setCartCount(response.ok && Array.isArray(data.items) ? data.items.length : 0)
+      }
     }).catch((requestError) => setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar as campanhas.'))
       .finally(() => setLoading(false))
   }, [])
@@ -44,7 +49,6 @@ export default function CampaignsPage() {
       fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined),
       fetch('/api/staff/auth/logout', { method: 'POST' }).catch(() => undefined),
     ])
-    localStorage.removeItem('omega-cart-v2')
     window.location.reload()
   }
 
