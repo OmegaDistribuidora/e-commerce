@@ -1026,7 +1026,7 @@ export default function StaffPortal() {
         )}
         {tab === "abandoned" && <section className="abandoned-carts">
           <div className="abandoned-intro">
-            <p>Carrinhos com itens sem alteração há pelo menos 30 minutos. Os valores são estimados antes de eventuais descontos.</p>
+            <p>Carrinhos com itens sem alteração há pelo menos 1 dia. Os valores são estimados antes de eventuais descontos.</p>
             <button type="button" onClick={() => api<{ carts: AbandonedCart[] }>("/api/staff/abandoned-carts").then((data) => setAbandonedCarts(data.carts)).catch((requestError) => setError(requestError.message))}>Atualizar lista</button>
           </div>
           {abandonedCarts.length ? abandonedCarts.map((cart) => <article className="abandoned-card" key={cart.customerId}>

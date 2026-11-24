@@ -2991,11 +2991,11 @@ app.get('/api/staff/abandoned-carts', requireTelevendasAccess, async (_request, 
               ccc.price_region,ccc.payment_plans,ccc.restricted_supplier_ids
        FROM customer_carts cc JOIN customers c ON c.id=cc.customer_id
        LEFT JOIN customer_commercial_conditions ccc ON ccc.customer_id=c.id
-       WHERE cc.updated_at<=CURRENT_TIMESTAMP-INTERVAL '30 minutes' AND c.active=TRUE
+       WHERE cc.updated_at<=CURRENT_TIMESTAMP-INTERVAL '1 day' AND c.active=TRUE
          AND EXISTS(SELECT 1 FROM customer_cart_items ci JOIN products p ON p.id=ci.product_id AND p.active=TRUE WHERE ci.customer_id=cc.customer_id)
        ORDER BY cc.updated_at DESC LIMIT 100`,
     )
-    if (!carts.rows.length) return response.json({ carts: [], minimumIdleMinutes: 30 })
+    if (!carts.rows.length) return response.json({ carts: [], minimumIdleMinutes: 1440 })
     const ids = carts.rows.map((cart) => Number(cart.customer_id))
     const items = await pool.query(
       `SELECT ci.customer_id,ci.quantity,p.id,p.external_id,p.name,p.supplier_id,p.image_path,
@@ -3034,7 +3034,7 @@ app.get('/api/staff/abandoned-carts', requireTelevendasAccess, async (_request, 
         neighborhood: cart.neighborhood, city: cart.city, state: cart.state, updatedAt: cart.updated_at,
         items: cartItems, subtotal: pricesAvailable ? money2(subtotal) : null }
     }).filter((cart) => cart.items.length)
-    return response.json({ carts: output, minimumIdleMinutes: 30 })
+    return response.json({ carts: output, minimumIdleMinutes: 1440 })
   } catch (error) { return next(error) }
 })
 
