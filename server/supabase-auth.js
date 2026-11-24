@@ -24,11 +24,13 @@ export function supabaseAuthConfigured() {
   return Boolean(authConfig())
 }
 
-export async function findSupabaseUserByEmail(email) {
+// Percorre as contas de autenticação (até 20 mil) e devolve as que atendem ao filtro.
+async function filterSupabaseUsers(predicate, { first = false } = {}) {
   const config = authConfig()
   const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim()
-  if (!config || !serviceRoleKey) return null
+  if (!config || !serviceRoleKey) return []
 
+  const matches = []
   for (let page = 1; page <= 20; page += 1) {
     const response = await fetch(`${config.url}/auth/v1/admin/users?page=${page}&per_page=1000`, {
       headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` },
@@ -37,11 +39,26 @@ export async function findSupabaseUserByEmail(email) {
     if (!response.ok) throw new Error('Não foi possível consultar as contas de autenticação.')
     const payload = await response.json()
     const users = Array.isArray(payload.users) ? payload.users : []
-    const user = users.find((item) => String(item.email || '').toLowerCase() === email.toLowerCase())
-    if (user) return user
-    if (users.length < 1000) return null
+    for (const user of users) {
+      if (!predicate(user)) continue
+      matches.push(user)
+      if (first) return matches
+    }
+    if (users.length < 1000) return matches
   }
   throw new Error('A consulta de contas excedeu o limite seguro.')
+}
+
+export async function findSupabaseUserByEmail(email) {
+  const normalized = email.toLowerCase()
+  const [user] = await filterSupabaseUsers((item) => String(item.email || '').toLowerCase() === normalized, { first: true })
+  return user || null
+}
+
+// Convites de primeiro acesso de um CPF/CNPJ (contas de cliente criadas pelo convite).
+export async function findCustomerInvitesByDocument(document) {
+  return filterSupabaseUsers((item) => item.user_metadata?.account_type === 'customer'
+    && String(item.user_metadata?.document || '').replace(/\D/g, '') === document)
 }
 
 export async function verifySupabaseAccessToken(request) {

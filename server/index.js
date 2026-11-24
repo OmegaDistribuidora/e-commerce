@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
-import { findSupabaseUserByEmail, inviteSupabaseUser, removeSupabaseUser, updateSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
+import { findCustomerInvitesByDocument, findSupabaseUserByEmail, inviteSupabaseUser, removeSupabaseUser, updateSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
 import { bannerSchema, bannersBulkSchema, campaignSyncSchema, cartQuantitySchema, couponSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, institutionalPageSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerApproveSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
 
 const app = express()
@@ -2661,13 +2661,28 @@ app.post('/api/customers/lookup', firstAccessLimiter, async (request, response, 
       return response.status(409).json({ message: 'Este e-mail pertence a uma conta interna. Fale com a equipe Ômega para regularizar o acesso.' })
     }
     const conflictingCustomer = await pool.query(
-      `SELECT id FROM customers
+      `SELECT external_id=$1 AS same_code FROM customers
        WHERE active=TRUE AND (external_id=$1 OR LOWER(email)=LOWER($2)) AND document<>$3
+       ORDER BY (external_id=$1) DESC
        LIMIT 1`,
       [official.code, official.email, official.document],
     )
     if (conflictingCustomer.rows.length) {
-      return response.status(409).json({ message: 'O cadastro oficial já está vinculado a outra conta. Fale com a equipe Ômega.' })
+      // Cada e-mail é o login de uma única conta: o e-mail do WinThor precisa ser exclusivo.
+      return response.status(409).json({
+        message: conflictingCustomer.rows[0].same_code
+          ? 'O cadastro oficial já está vinculado a outra conta. Fale com a equipe Ômega.'
+          : `O e-mail cadastrado (${maskEmail(official.email)}) já é usado por outro cliente no e-commerce. Fale com a equipe Ômega para corrigir o e-mail do seu cadastro.`,
+      })
+    }
+
+    // Enquanto o primeiro acesso não é concluído (sem cadastro vinculado), um novo pedido
+    // invalida os convites enviados para e-mails anteriores do mesmo CPF/CNPJ — por exemplo,
+    // quando o e-mail do WinThor estava errado e foi corrigido.
+    for (const invite of await findCustomerInvitesByDocument(official.document)) {
+      if (String(invite.email || '').toLowerCase() === official.email.toLowerCase()) continue
+      const linked = await pool.query('SELECT 1 FROM customers WHERE supabase_user_id=$1 LIMIT 1', [invite.id])
+      if (!linked.rows.length) await removeSupabaseUser(invite.id)
     }
 
     const authUser = await findSupabaseUserByEmail(official.email)
