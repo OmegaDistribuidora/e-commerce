@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { authenticatedFetch } from "./api";
 import { formatBrasiliaDateTime, money, unitMoney } from "./data";
+import OrderProgress from "./OrderProgress";
 import { formatDeliveryDate, orderStatusLabel } from "./orderStatus";
 import { supabase } from "./supabase";
 import { ContentSkeleton } from "./Skeleton";
@@ -321,6 +322,7 @@ export default function OrdersPage() {
                           <ChevronDown className="order-expand-icon" />
                         </summary>
                         <div className="customer-order-details">
+                          <OrderProgress order={order} />
                           <div className="customer-order-meta">
                             <span>
                               <small>Pagamento</small>

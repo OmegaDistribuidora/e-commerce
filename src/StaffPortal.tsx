@@ -33,6 +33,7 @@ import {
 import { authenticatedFetch } from "./api";
 import { formatBrasiliaDateTime, money } from "./data";
 import { formatCatalogName } from "./catalog";
+import OrderProgress from "./OrderProgress";
 import { formatDeliveryDate, orderStatusLabel } from "./orderStatus";
 import { supabase } from "./supabase";
 import { PageSkeleton } from "./Skeleton";
@@ -1582,6 +1583,7 @@ function StaffOrderCard({
           </b>
         </div>
       </summary>
+      <OrderProgress order={order} />
       <div className="order-detail-grid">
         <p>
           <b>Cliente</b>

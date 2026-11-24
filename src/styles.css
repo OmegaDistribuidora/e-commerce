@@ -1264,3 +1264,33 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
   .partners-page-grid { grid-template-columns: 1fr; }
   .institutional-editor-grid { grid-template-columns: 1fr; }
 }
+
+/* Barra de progresso do pedido (cliente e gestão) */
+.order-progress { --progress-node: 38px; --progress-done: var(--navy); --progress-current: var(--orange); --progress-idle: #d5deea; --progress-cancel: #c2412d; list-style: none; margin: 0; padding: 22px 20px 8px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.order-progress-step { position: relative; display: grid; justify-items: center; align-content: start; gap: 4px; text-align: center; padding: 0 6px; }
+.order-progress-step:not(:first-child)::before { content: ""; position: absolute; top: calc(var(--progress-node) / 2 - 1.5px); right: calc(50% + var(--progress-node) / 2 + 6px); left: calc(-50% + var(--progress-node) / 2 + 6px); height: 3px; border-radius: 3px; background: var(--progress-idle); }
+.order-progress-step.done::before, .order-progress-step.current::before { background: var(--progress-done); }
+.order-progress-step.cancelled::before { background: linear-gradient(90deg, var(--progress-done), var(--progress-cancel)); }
+.order-progress-node { width: var(--progress-node); height: var(--progress-node); border-radius: 50%; display: grid; place-items: center; margin-bottom: 6px; background: #fff; border: 2px solid var(--progress-idle); color: #a3b1c4; transition: background .2s, border-color .2s; }
+.order-progress-node svg { width: 17px; height: 17px; stroke-width: 2.1; }
+.order-progress-step strong { color: #8a98ab; font-size: 12px; font-weight: 800; letter-spacing: .01em; }
+.order-progress-step small { min-height: 15px; color: var(--muted); font-size: 11px; }
+.order-progress-step.done .order-progress-node { background: var(--progress-done); border-color: var(--progress-done); color: #fff; }
+.order-progress-step.done strong { color: var(--navy); }
+.order-progress-step.current .order-progress-node { background: var(--progress-current); border-color: var(--progress-current); color: #fff; box-shadow: 0 0 0 5px rgba(255, 115, 0, .16); }
+.order-progress-step.current strong { color: #b65200; }
+.order-progress-step.cancelled .order-progress-node { background: var(--progress-cancel); border-color: var(--progress-cancel); color: #fff; box-shadow: 0 0 0 5px rgba(194, 65, 45, .13); }
+.order-progress-step.cancelled strong { color: var(--progress-cancel); }
+.order-progress-step.skipped { opacity: .45; }
+.order-progress-step.skipped strong { text-decoration: line-through; }
+.staff-order .order-progress { border-top: 1px solid var(--line); background: #fff; }
+.order-status.delivered { background: #e3f0ff; color: var(--navy); }
+
+@media (max-width: 640px) {
+  .order-progress { --progress-node: 32px; grid-template-columns: 1fr; gap: 14px; padding: 18px 16px 6px; }
+  .order-progress-step { grid-template-columns: var(--progress-node) 1fr; grid-template-rows: auto auto; justify-items: start; column-gap: 12px; row-gap: 0; text-align: left; padding: 0; }
+  .order-progress-node { grid-row: 1 / 3; margin: 0; }
+  .order-progress-step strong { align-self: end; }
+  .order-progress-step:not(:first-child)::before { top: auto; bottom: calc(100% + 2px); left: calc(var(--progress-node) / 2 - 1.5px); right: auto; width: 3px; height: 12px; }
+  .order-progress-step.cancelled::before { background: linear-gradient(180deg, var(--progress-done), var(--progress-cancel)); }
+}

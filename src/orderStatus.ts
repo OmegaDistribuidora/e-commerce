@@ -2,6 +2,7 @@ export const orderStatusLabels: Record<string, string> = {
   analysis: 'Em análise',
   released: 'Liberado',
   sent: 'Enviado',
+  delivered: 'Entregue',
   cancelled: 'Cancelado',
 }
 

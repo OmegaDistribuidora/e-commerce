@@ -68,6 +68,9 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS winthor_status_checked_at TIMESTAMP')
   // Previsão de entrega do WinThor (PCPEDC.DTENTREGA), lida pelo NUMPED.
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS winthor_delivery_date DATE')
+  // Datas das etapas (barra de progresso do pedido), lidas do WinThor pelo NUMPED.
+  await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS winthor_released_at TIMESTAMPTZ')
+  await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS winthor_invoiced_at TIMESTAMPTZ')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS winthor_entered_by_staff_user_id BIGINT')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS winthor_entered_at TIMESTAMP')
   await pool.query('ALTER TABLE order_items ADD COLUMN IF NOT EXISTS units INTEGER')

@@ -250,6 +250,8 @@ export type Order = {
   winthorStatusLabel: string
   statusUpdatedAt: string | null
   deliveryDate?: string | null
+  releasedAt?: string | null
+  invoicedAt?: string | null
   enteredAt: string | null
   enteredBy: string
   paymentPlan: string
