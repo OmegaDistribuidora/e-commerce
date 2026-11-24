@@ -403,10 +403,15 @@ async function refreshStaleOrderStatuses(orders) {
         releasedAt: null, invoicedAt: null,
       }
       const checkedAt = new Date()
-      const previousStatus = order.status
       const statusClient = await pool.connect()
       try {
         await statusClient.query('BEGIN')
+        const lockedOrder = await statusClient.query('SELECT status FROM orders WHERE id=$1 FOR UPDATE', [order.id])
+        if (!lockedOrder.rows.length || lockedOrder.rows[0].status === 'cancelled') {
+          await statusClient.query('COMMIT')
+          return
+        }
+        const previousStatus = lockedOrder.rows[0].status
         await statusClient.query(
         `UPDATE orders SET status=$2::varchar, winthor_status_code=$3, winthor_status_label=$4,
            winthor_status_checked_at=$5, winthor_delivery_date=$7::date,
@@ -415,7 +420,7 @@ async function refreshStaleOrderStatuses(orders) {
            cancelled_at=CASE WHEN $2::varchar='cancelled' THEN COALESCE(cancelled_at,$5) ELSE cancelled_at END,
            cancelled_by=CASE WHEN $2::varchar='cancelled' THEN COALESCE(NULLIF(cancelled_by,''),'Sistema comercial') ELSE cancelled_by END,
            updated_at=CASE WHEN status<>$2::varchar THEN CURRENT_TIMESTAMP ELSE updated_at END
-         WHERE id=$1 AND winthor_order_number=$6`,
+         WHERE id=$1 AND winthor_order_number=$6 AND status<>'cancelled'`,
         [order.id, winthorStatus.status, winthorStatus.code, winthorStatus.label, checkedAt, winthorOrderNumber,
           winthorStatus.deliveryDate, winthorStatus.releasedAt, winthorStatus.invoicedAt],
         )
