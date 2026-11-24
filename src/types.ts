@@ -249,6 +249,7 @@ export type Order = {
   winthorStatusCode: string
   winthorStatusLabel: string
   statusUpdatedAt: string | null
+  deliveryDate?: string | null
   enteredAt: string | null
   enteredBy: string
   paymentPlan: string

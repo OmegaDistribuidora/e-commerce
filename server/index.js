@@ -249,6 +249,7 @@ async function fetchWinthorOrderStatuses(orderNumbers) {
         status: order.status,
         code: String(order.posicao || '').trim().slice(0, 20),
         label,
+        deliveryDate: /^\d{4}-\d{2}-\d{2}$/.test(String(order.previsaoEntrega || '')) ? order.previsaoEntrega : null,
       })
     }
   }
@@ -379,22 +380,24 @@ async function refreshStaleOrderStatuses(orders) {
       // anteriormente confirmado desaparece da PCPEDC/PCPEDI, ele foi removido no WinThor
       // (caso observado em cancelamentos) e não deve permanecer como liberado no e-commerce.
       const winthorStatus = statuses.get(winthorOrderNumber) || {
-        status: 'cancelled', code: 'C', label: 'Cancelado no sistema comercial',
+        status: 'cancelled', code: 'C', label: 'Cancelado no sistema comercial', deliveryDate: null,
       }
       const checkedAt = new Date()
       await pool.query(
         `UPDATE orders SET status=$2::varchar, winthor_status_code=$3, winthor_status_label=$4,
-           winthor_status_checked_at=$5,
+           winthor_status_checked_at=$5, winthor_delivery_date=$7::date,
            cancelled_at=CASE WHEN $2::varchar='cancelled' THEN COALESCE(cancelled_at,$5) ELSE cancelled_at END,
            cancelled_by=CASE WHEN $2::varchar='cancelled' THEN COALESCE(NULLIF(cancelled_by,''),'Sistema comercial') ELSE cancelled_by END,
            updated_at=CASE WHEN status<>$2::varchar THEN CURRENT_TIMESTAMP ELSE updated_at END
          WHERE id=$1 AND winthor_order_number=$6`,
-        [order.id, winthorStatus.status, winthorStatus.code, winthorStatus.label, checkedAt, winthorOrderNumber],
+        [order.id, winthorStatus.status, winthorStatus.code, winthorStatus.label, checkedAt, winthorOrderNumber,
+          winthorStatus.deliveryDate],
       )
       order.status = winthorStatus.status
       order.winthor_status_code = winthorStatus.code
       order.winthor_status_label = winthorStatus.label
       order.winthor_status_checked_at = checkedAt
+      order.winthor_delivery_date = winthorStatus.deliveryDate
       if (winthorStatus.status === 'cancelled') {
         order.cancelled_at ||= checkedAt
         order.cancelled_by ||= 'Sistema comercial'
@@ -409,6 +412,7 @@ async function listOrders(whereClause = '', params = []) {
   const result = await pool.query(
     `SELECT o.id, o.status, o.winthor_order_number, o.winthor_status_code,
             o.winthor_status_label, o.winthor_status_checked_at,
+            to_char(o.winthor_delivery_date, 'YYYY-MM-DD') AS winthor_delivery_date,
             o.winthor_entered_at, o.payment_plan, o.payment_plan_label, o.total, o.notes, o.created_at, o.updated_at,
             o.cancelled_at, o.cancelled_by,
             c.id AS customer_id, c.legal_name, c.trade_name, c.document, c.email, c.phone,
@@ -446,6 +450,8 @@ async function listOrders(whereClause = '', params = []) {
     winthorStatusCode: order.winthor_status_code || '',
     winthorStatusLabel: order.winthor_status_label || '',
     statusUpdatedAt: order.winthor_status_checked_at,
+    // Previsão de entrega (AAAA-MM-DD) só existe depois que o pedido recebe o NUMPED.
+    deliveryDate: order.winthor_order_number == null ? null : (order.winthor_delivery_date || null),
     enteredAt: order.winthor_entered_at,
     enteredBy: order.winthor_entered_by_name || '',
     paymentPlan: order.payment_plan_label || order.payment_plan,
@@ -2939,12 +2945,13 @@ app.put('/api/staff/orders/:id/winthor', requireCommercialAccess, async (request
     const result = await pool.query(
       `UPDATE orders SET winthor_order_number=$2, status=$3,
          winthor_status_code=$4, winthor_status_label=$5,
-         winthor_status_checked_at=CURRENT_TIMESTAMP,
+         winthor_status_checked_at=CURRENT_TIMESTAMP, winthor_delivery_date=$7::date,
          winthor_entered_by_staff_user_id=$6,
          winthor_entered_at=CURRENT_TIMESTAMP,
          updated_at=CURRENT_TIMESTAMP
        WHERE id=$1 AND status <> 'cancelled' RETURNING id`,
-      [orderId, winthorOrderNumber, winthorStatus.status, winthorStatus.code, winthorStatus.label, request.staff.id],
+      [orderId, winthorOrderNumber, winthorStatus.status, winthorStatus.code, winthorStatus.label, request.staff.id,
+        winthorStatus.deliveryDate],
     )
     if (!result.rows.length) {
       const exists = await pool.query('SELECT 1 FROM orders WHERE id=$1', [orderId])

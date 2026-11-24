@@ -33,7 +33,7 @@ import {
 import { authenticatedFetch } from "./api";
 import { formatBrasiliaDateTime, money } from "./data";
 import { formatCatalogName } from "./catalog";
-import { orderStatusLabel } from "./orderStatus";
+import { formatDeliveryDate, orderStatusLabel } from "./orderStatus";
 import { supabase } from "./supabase";
 import { PageSkeleton } from "./Skeleton";
 import type {
@@ -1597,6 +1597,12 @@ function StaffOrderCard({
           <br />
           <b>Status para o cliente</b>
           {orderStatusLabel(order.status)}
+          {order.deliveryDate && order.status !== "cancelled" && (
+            <>
+              <b>Previsão de entrega</b>
+              {formatDeliveryDate(order.deliveryDate)}
+            </>
+          )}
           {order.winthorStatusLabel && (
             <>
               <b>Status interno do pedido</b>

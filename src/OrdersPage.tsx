@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { authenticatedFetch } from "./api";
 import { formatBrasiliaDateTime, money, unitMoney } from "./data";
-import { orderStatusLabel } from "./orderStatus";
+import { formatDeliveryDate, orderStatusLabel } from "./orderStatus";
 import { supabase } from "./supabase";
 import { ContentSkeleton } from "./Skeleton";
 import type { Customer, Order, Product } from "./types";
@@ -330,6 +330,15 @@ export default function OrdersPage() {
                               <small>Itens</small>
                               <strong>{order.items.length}</strong>
                             </span>
+                            {order.deliveryDate &&
+                              order.status !== "cancelled" && (
+                                <span>
+                                  <small>Previsão de entrega</small>
+                                  <strong>
+                                    {formatDeliveryDate(order.deliveryDate)}
+                                  </strong>
+                                </span>
+                              )}
                           </div>
                           <div className="customer-order-lines">
                             {order.items.map((item) => (
