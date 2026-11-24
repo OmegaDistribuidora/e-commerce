@@ -203,7 +203,7 @@ export const staffUserSchema = z.object({
     .regex(/[A-Z]/, 'Inclua uma letra maiúscula na senha')
     .regex(/[a-z]/, 'Inclua uma letra minúscula na senha')
     .regex(/\d/, 'Inclua um número na senha'),
-  role: z.enum(['ADMIN', 'COMERCIAL', 'MARKETING']),
+  role: z.enum(['ADMIN', 'COMERCIAL', 'MARKETING', 'TELEVENDAS']),
 })
 
 export const bannerSchema = z.object({

@@ -457,6 +457,27 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .staff-alert.error { background: #fff0f0; color: #a02727; }
 .staff-alert.success { background: #ebf8f0; color: #18713c; }
 .staff-orders { display: grid; gap: 12px; }
+.abandoned-carts { display: grid; gap: 16px; }
+.abandoned-intro { display: flex; justify-content: space-between; align-items: center; gap: 20px; color: #61738f; }
+.abandoned-intro p { margin: 0; }
+.abandoned-intro button { border: 1px solid #c7d9f0; background: #fff; border-radius: 9px; padding: 10px 16px; color: #0751ac; font-weight: 700; cursor: pointer; }
+.abandoned-card { background: #fff; border: 1px solid #dce7f5; border-radius: 16px; padding: 22px; }
+.abandoned-card > header { display: flex; justify-content: space-between; gap: 20px; align-items: start; border-bottom: 1px solid #e4ecf6; padding-bottom: 16px; }
+.abandoned-card h2 { margin: 0 0 6px; color: #092b66; font-size: 20px; }
+.abandoned-card header span { color: #667d9c; font-size: 13px; }
+.abandoned-card header > strong { color: #092b66; white-space: nowrap; font-size: 22px; }
+.abandoned-contact { display: grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap: 16px; padding: 18px 0; }
+.abandoned-contact span { display: grid; gap: 3px; color: #153865; overflow-wrap: anywhere; }
+.abandoned-contact b { color: #6d809d; font-size: 11px; text-transform: uppercase; }
+.abandoned-contact a { color: #0759ba; }
+.abandoned-items { display: grid; gap: 8px; }
+.abandoned-items > div { display: flex; align-items: center; gap: 12px; background: #f5f8fc; border-radius: 10px; padding: 8px 12px; }
+.abandoned-items img { width: 48px; height: 48px; object-fit: contain; background: #fff; border-radius: 7px; }
+.abandoned-items div div { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.abandoned-items strong { color: #092b66; }
+.abandoned-items small { color: #6d809d; }
+.abandoned-items > div > b { color: #092b66; white-space: nowrap; }
+@media (max-width: 650px) { .abandoned-intro,.abandoned-card > header { flex-direction: column; } .abandoned-items > div { flex-wrap: wrap; } }
 .staff-order { border: 1px solid #dfe7f1; border-radius: 12px; background: #fff; overflow: hidden; }
 .staff-order summary { cursor: pointer; padding: 17px 19px; list-style: none; display: flex; justify-content: space-between; gap: 20px; }
 .staff-order summary::-webkit-details-marker { display: none; }

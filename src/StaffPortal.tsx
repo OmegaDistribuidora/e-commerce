@@ -5,6 +5,7 @@ import { ImageOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  ShoppingCart,
   BadgePercent,
   Building2,
   Camera,
@@ -52,6 +53,7 @@ import { formatDocument, formatPhone, formatPostalCode } from "./validation";
 
 type Tab =
   | "orders"
+  | "abandoned"
   | "customers"
   | "campaigns"
   | "coupons"
@@ -61,6 +63,15 @@ type Tab =
   | "categories"
   | "users"
   | "settings";
+
+type AbandonedCart = {
+  customerId: number; customerCode: number | null; name: string; legalName: string;
+  document: string; email: string; phone: string; postalCode: string;
+  addressLine: string; addressNumber: string; addressComplement: string;
+  neighborhood: string; city: string; state: string; updatedAt: string;
+  subtotal: number | null;
+  items: { code: number; name: string; quantity: number; unitPrice: number | null; lineTotal: number | null; image: string }[];
+};
 
 const bannerNavigationOptions = [
   ["/", "Página inicial"],
@@ -136,6 +147,7 @@ export default function StaffPortal() {
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState<Tab>("orders");
   const [orders, setOrders] = useState<Order[]>([]);
+  const [abandonedCarts, setAbandonedCarts] = useState<AbandonedCart[]>([]);
   const [pendingCustomers, setPendingCustomers] = useState<Customer[]>([]);
   const [approvedCustomers, setApprovedCustomers] = useState<Customer[]>([]);
   const [banners, setBanners] = useState<Banner[]>([]);
@@ -174,6 +186,7 @@ export default function StaffPortal() {
       .then((data) => {
         setUser(data.user);
         if (data.user.role === "MARKETING") setTab("photos");
+        if (data.user.role === "TELEVENDAS") setTab("abandoned");
       })
       .catch(() => setUser(null))
       .finally(() => setReady(true));
@@ -181,6 +194,12 @@ export default function StaffPortal() {
 
   useEffect(() => {
     if (!user) return;
+    if (user.role === "TELEVENDAS") {
+      api<{ carts: AbandonedCart[] }>("/api/staff/abandoned-carts")
+        .then((data) => setAbandonedCarts(data.carts))
+        .catch((requestError) => setError(requestError.message));
+      return;
+    }
     const requests: Promise<unknown>[] = [
       api<{ banners: Banner[] }>("/api/staff/banners").then((data) =>
         setBanners(data.banners),
@@ -221,6 +240,9 @@ export default function StaffPortal() {
           setUsers(data.users),
         ),
       );
+    if (user.role === "ADMIN")
+      requests.push(api<{ carts: AbandonedCart[] }>("/api/staff/abandoned-carts")
+        .then((data) => setAbandonedCarts(data.carts)));
     Promise.all(requests).catch((requestError) =>
       setError(requestError.message),
     );
@@ -278,7 +300,7 @@ export default function StaffPortal() {
           body: JSON.stringify({ email, password }),
         });
       }
-      setTab(data.user.role === "MARKETING" ? "photos" : "orders");
+      setTab(data.user.role === "MARKETING" ? "photos" : data.user.role === "TELEVENDAS" ? "abandoned" : "orders");
       setUser(data.user);
     } catch (requestError) {
       setError(
@@ -873,11 +895,11 @@ export default function StaffPortal() {
               ? "Administrador"
               : user.role === "MARKETING"
                 ? "Marketing"
-                : "Comercial"}
+                : user.role === "TELEVENDAS" ? "Televendas" : "Comercial"}
           </span>
         </div>
         <nav>
-          {user.role !== "MARKETING" && (
+          {['ADMIN', 'COMERCIAL'].includes(user.role) && (
             <>
               <button
                 className={tab === "orders" ? "active" : ""}
@@ -902,6 +924,13 @@ export default function StaffPortal() {
               </button>
             </>
           )}
+          {['ADMIN', 'TELEVENDAS'].includes(user.role) && (
+            <button className={tab === "abandoned" ? "active" : ""} onClick={() => changeTab("abandoned")}>
+              <ShoppingCart /> Carrinhos abandonados
+              {abandonedCarts.length > 0 && <b className="nav-count">{abandonedCarts.length}</b>}
+            </button>
+          )}
+          {user.role !== "TELEVENDAS" && <>
           <button
             className={tab === "campaigns" ? "active" : ""}
             onClick={() => changeTab("campaigns")}
@@ -926,6 +955,7 @@ export default function StaffPortal() {
           >
             <Building2 /> Institucional
           </button>
+          </>}
           {user.role === "ADMIN" && (
             <button
               className={tab === "users" ? "active" : ""}
@@ -954,6 +984,7 @@ export default function StaffPortal() {
                 (
                   {
                     orders: "Pedidos do e-Commerce",
+                    abandoned: "Carrinhos abandonados",
                     customers: "Clientes pendentes",
                     campaigns: "Campanhas de desconto",
                     coupons: "Cupons de desconto",
@@ -993,6 +1024,28 @@ export default function StaffPortal() {
             )}
           </section>
         )}
+        {tab === "abandoned" && <section className="abandoned-carts">
+          <div className="abandoned-intro">
+            <p>Carrinhos com itens sem alteração há pelo menos 30 minutos. Os valores são estimados antes de eventuais descontos.</p>
+            <button type="button" onClick={() => api<{ carts: AbandonedCart[] }>("/api/staff/abandoned-carts").then((data) => setAbandonedCarts(data.carts)).catch((requestError) => setError(requestError.message))}>Atualizar lista</button>
+          </div>
+          {abandonedCarts.length ? abandonedCarts.map((cart) => <article className="abandoned-card" key={cart.customerId}>
+            <header><div><h2>{cart.name}</h2><span>Atualizado em {formatBrasiliaDateTime(cart.updatedAt)}</span></div><strong>{cart.subtotal == null ? "Preço indisponível" : money.format(cart.subtotal)}</strong></header>
+            <div className="abandoned-contact">
+              <span><b>Nome cadastral</b>{cart.legalName}</span>
+              <span><b>Documento</b>{formatDocument(cart.document)}</span>
+              {cart.customerCode && <span><b>Código do cliente</b>{cart.customerCode}</span>}
+              <span><b>Telefone</b><a href={`tel:+55${cart.phone}`}>{formatPhone(cart.phone)}</a></span>
+              <span><b>E-mail</b><a href={`mailto:${cart.email}`}>{cart.email}</a></span>
+              <span><b>Endereço</b>{[cart.addressLine, cart.addressNumber, cart.addressComplement, cart.neighborhood, cart.city, cart.state, cart.postalCode && formatPostalCode(cart.postalCode)].filter(Boolean).join(", ")}</span>
+            </div>
+            <div className="abandoned-items">{cart.items.map((item) => <div key={item.code}>
+              <img src={item.image} alt="" loading="lazy" />
+              <div><strong>{item.name}</strong><small>Cód. {item.code} · {item.quantity} unidades</small></div>
+              <b>{item.lineTotal == null ? "Sem preço" : money.format(item.lineTotal)}</b>
+            </div>)}</div>
+          </article>) : <div className="staff-empty">Nenhum carrinho abandonado no momento.</div>}
+        </section>}
         {tab === "customers" && approvedCustomers.length > 0 && (
           <section className="approved-customers">
             <h2>Clientes aprovados</h2>
@@ -1476,6 +1529,7 @@ export default function StaffPortal() {
                 <select name="role" defaultValue="COMERCIAL">
                   <option value="COMERCIAL">Comercial</option>
                   <option value="MARKETING">Marketing</option>
+                  <option value="TELEVENDAS">Televendas</option>
                   <option value="ADMIN">Administrador</option>
                 </select>
               </label>

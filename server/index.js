@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
+import { isForwardStage, queueOrderStage, startOrderEmailWorker } from './order-email.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
 import { findCustomerInvitesByDocument, findSupabaseUserByEmail, inviteSupabaseUser, removeSupabaseUser, updateSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
 import { bannerSchema, bannersBulkSchema, campaignSyncSchema, cartQuantitySchema, couponSchema, customerConditionsSyncSchema, customerProfileSchema, customerUpdateSchema, digits, emailCheckSchema, institutionalPageSchema, loginSchema, lookupSchema, orderQuoteSchema, orderSchema, productStocksSyncSchema, productSyncSchema, regionPricesSyncSchema, staffCustomerApproveSchema, staffOrderLinkSchema, staffPasswordSchema, staffUserSchema, stockCheckSchema } from './validation.js'
@@ -182,6 +183,13 @@ function requireMarketingAccess(request, response, next) {
   if (!['ADMIN', 'COMERCIAL', 'MARKETING'].includes(request.staff.role)) {
     return response.status(403).json({ message: 'Este perfil não possui acesso ao conteúdo da loja.' })
   }
+  return next()
+}
+
+function requireTelevendasAccess(request, response, next) {
+  if (request.authError) return response.status(401).json({ message: 'Sua sessão expirou. Entre novamente.' })
+  if (!request.staff) return response.status(401).json({ message: 'Entre na área de gestão para continuar.' })
+  if (!['ADMIN', 'TELEVENDAS'].includes(request.staff.role)) return response.status(403).json({ message: 'Este perfil não possui acesso aos carrinhos.' })
   return next()
 }
 
@@ -395,7 +403,11 @@ async function refreshStaleOrderStatuses(orders) {
         releasedAt: null, invoicedAt: null,
       }
       const checkedAt = new Date()
-      await pool.query(
+      const previousStatus = order.status
+      const statusClient = await pool.connect()
+      try {
+        await statusClient.query('BEGIN')
+        await statusClient.query(
         `UPDATE orders SET status=$2::varchar, winthor_status_code=$3, winthor_status_label=$4,
            winthor_status_checked_at=$5, winthor_delivery_date=$7::date,
            winthor_released_at=COALESCE($8::timestamptz, winthor_released_at),
@@ -406,7 +418,13 @@ async function refreshStaleOrderStatuses(orders) {
          WHERE id=$1 AND winthor_order_number=$6`,
         [order.id, winthorStatus.status, winthorStatus.code, winthorStatus.label, checkedAt, winthorOrderNumber,
           winthorStatus.deliveryDate, winthorStatus.releasedAt, winthorStatus.invoicedAt],
-      )
+        )
+        if (isForwardStage(previousStatus, winthorStatus.status)) await queueOrderStage(statusClient, order.id, winthorStatus.status)
+        await statusClient.query('COMMIT')
+      } catch (error) {
+        await statusClient.query('ROLLBACK')
+        throw error
+      } finally { statusClient.release() }
       order.status = winthorStatus.status
       order.winthor_status_code = winthorStatus.code
       order.winthor_status_label = winthorStatus.label
@@ -2960,6 +2978,61 @@ app.get('/api/staff/orders', requireCommercialAccess, async (_request, response,
   }
 })
 
+app.get('/api/staff/abandoned-carts', requireTelevendasAccess, async (_request, response, next) => {
+  try {
+    const carts = await pool.query(
+      `SELECT cc.customer_id,cc.updated_at,c.external_id,c.legal_name,c.trade_name,c.document,c.email,c.phone,
+              c.postal_code,c.address_line,c.address_number,c.address_complement,c.neighborhood,c.city,c.state,
+              ccc.price_region,ccc.payment_plans,ccc.restricted_supplier_ids
+       FROM customer_carts cc JOIN customers c ON c.id=cc.customer_id
+       LEFT JOIN customer_commercial_conditions ccc ON ccc.customer_id=c.id
+       WHERE cc.updated_at<=CURRENT_TIMESTAMP-INTERVAL '30 minutes' AND c.active=TRUE
+         AND EXISTS(SELECT 1 FROM customer_cart_items ci JOIN products p ON p.id=ci.product_id AND p.active=TRUE WHERE ci.customer_id=cc.customer_id)
+       ORDER BY cc.updated_at DESC LIMIT 100`,
+    )
+    if (!carts.rows.length) return response.json({ carts: [], minimumIdleMinutes: 30 })
+    const ids = carts.rows.map((cart) => Number(cart.customer_id))
+    const items = await pool.query(
+      `SELECT ci.customer_id,ci.quantity,p.id,p.external_id,p.name,p.supplier_id,p.image_path,
+              p.image_data IS NOT NULL AS image_uploaded,p.image_hidden,p.image_updated_at,
+              rp.price_1,rp.price_2,rp.price_3,rp.price_4,rp.price_5,rp.price_6,rp.price_7
+       FROM customer_cart_items ci JOIN products p ON p.id=ci.product_id AND p.active=TRUE
+       JOIN customers c ON c.id=ci.customer_id
+       LEFT JOIN customer_commercial_conditions ccc ON ccc.customer_id=c.id
+       LEFT JOIN region_prices rp ON rp.product_id=p.id AND rp.region=ccc.price_region
+       WHERE ci.customer_id=ANY($1::bigint[]) ORDER BY ci.customer_id,ci.created_at`, [ids],
+    )
+    const grouped = new Map()
+    for (const item of items.rows) {
+      const id = Number(item.customer_id)
+      if (!grouped.has(id)) grouped.set(id, [])
+      grouped.get(id).push(item)
+    }
+    const output = carts.rows.map((cart) => {
+      const plans = Array.isArray(cart.payment_plans) ? cart.payment_plans : []
+      const tables = [...new Set(plans.map((plan) => priceTableOf(plan.priceTable)))]
+      const restricted = new Set((cart.restricted_supplier_ids || []).map(Number))
+      const visible = (grouped.get(Number(cart.customer_id)) || []).filter((item) => !restricted.has(Number(item.supplier_id)))
+      let subtotal = 0
+      let pricesAvailable = true
+      const cartItems = visible.map((item) => {
+        const unitPrice = lowestPlanPrice(item, tables)
+        if (unitPrice == null) pricesAvailable = false
+        else subtotal += unitPrice * Number(item.quantity)
+        return { code: Number(item.external_id), name: item.name, quantity: Number(item.quantity), unitPrice,
+          lineTotal: unitPrice == null ? null : money2(unitPrice * Number(item.quantity)), image: productImageUrl(item) }
+      })
+      return { customerId: Number(cart.customer_id), customerCode: cart.external_id == null ? null : Number(cart.external_id),
+        name: cart.trade_name || cart.legal_name, legalName: cart.legal_name, document: cart.document,
+        email: cart.email, phone: cart.phone, postalCode: cart.postal_code, addressLine: cart.address_line,
+        addressNumber: cart.address_number, addressComplement: cart.address_complement,
+        neighborhood: cart.neighborhood, city: cart.city, state: cart.state, updatedAt: cart.updated_at,
+        items: cartItems, subtotal: pricesAvailable ? money2(subtotal) : null }
+    }).filter((cart) => cart.items.length)
+    return response.json({ carts: output, minimumIdleMinutes: 30 })
+  } catch (error) { return next(error) }
+})
+
 app.put('/api/staff/orders/:id/winthor', requireCommercialAccess, async (request, response, next) => {
   try {
     const orderId = Number(request.params.id)
@@ -2970,7 +3043,12 @@ app.put('/api/staff/orders/:id/winthor', requireCommercialAccess, async (request
     const statuses = await fetchWinthorOrderStatuses([winthorOrderNumber])
     const winthorStatus = statuses.get(winthorOrderNumber)
     if (!winthorStatus) return response.status(404).json({ message: 'Número do pedido não encontrado no sistema comercial.' })
-    const result = await pool.query(
+    const linkClient = await pool.connect()
+    let result
+    try {
+      await linkClient.query('BEGIN')
+      const previous = await linkClient.query('SELECT status FROM orders WHERE id=$1 FOR UPDATE', [orderId])
+      result = await linkClient.query(
       `UPDATE orders SET winthor_order_number=$2, status=$3,
          winthor_status_code=$4, winthor_status_label=$5,
          winthor_status_checked_at=CURRENT_TIMESTAMP, winthor_delivery_date=$7::date,
@@ -2981,7 +3059,15 @@ app.put('/api/staff/orders/:id/winthor', requireCommercialAccess, async (request
        WHERE id=$1 AND status <> 'cancelled' RETURNING id`,
       [orderId, winthorOrderNumber, winthorStatus.status || 'analysis', winthorStatus.code, winthorStatus.label, request.staff.id,
         winthorStatus.deliveryDate, winthorStatus.releasedAt, winthorStatus.invoicedAt],
-    )
+      )
+      if (result.rows.length && isForwardStage(previous.rows[0]?.status, winthorStatus.status || 'analysis')) {
+        await queueOrderStage(linkClient, orderId, winthorStatus.status)
+      }
+      await linkClient.query('COMMIT')
+    } catch (error) {
+      await linkClient.query('ROLLBACK')
+      throw error
+    } finally { linkClient.release() }
     if (!result.rows.length) {
       const exists = await pool.query('SELECT 1 FROM orders WHERE id=$1', [orderId])
       return exists.rows.length
@@ -3330,7 +3416,7 @@ app.delete('/api/staff/coupons/:id', requireCommercialAccess, async (request, re
   } catch (error) { return next(error) }
 })
 
-app.get('/api/staff/campaigns', requireStaff, async (_request, response, next) => {
+app.get('/api/staff/campaigns', requireMarketingAccess, async (_request, response, next) => {
   try {
     const [result, audienceResult] = await Promise.all([
       pool.query(
@@ -3612,6 +3698,7 @@ app.post('/api/orders', async (request, response, next) => {
         [order.id, coupon.id, coupon.code, coupon.description, coupon.discountType, coupon.discountValue, coupon.eligibleSubtotal, coupon.discountAmount],
       )
     }
+    await queueOrderStage(client, order.id, 'analysis')
     await client.query('DELETE FROM customer_cart_items WHERE customer_id=$1', [request.customer.id])
     await client.query(
       `INSERT INTO customer_carts(customer_id,reminder_sent_at,updated_at) VALUES ($1,NULL,CURRENT_TIMESTAMP)
@@ -3663,7 +3750,31 @@ app.use((error, _request, response, _next) => {
 })
 
 initializeDatabase()
-  .then(() => app.listen(port, '0.0.0.0', () => console.info(`[api] disponível em http://localhost:${port}`)))
+  .then(() => {
+    app.listen(port, '0.0.0.0', () => console.info(`[api] disponível em http://localhost:${port}`))
+    startOrderEmailWorker()
+    if (omegaApiConfig()) {
+      let checking = false
+      const check = async () => {
+        if (checking) return
+        checking = true
+        try {
+          const result = await pool.query(
+            `SELECT id,status,winthor_order_number,winthor_status_checked_at,
+                    winthor_released_at,winthor_invoiced_at,cancelled_at,cancelled_by
+             FROM orders WHERE winthor_order_number IS NOT NULL
+               AND status IN ('analysis','released','sent')
+               AND (winthor_status_checked_at IS NULL OR winthor_status_checked_at < CURRENT_TIMESTAMP - ($1::integer * INTERVAL '1 millisecond'))
+             ORDER BY winthor_status_checked_at NULLS FIRST LIMIT 100`, [orderStatusCacheMs],
+          )
+          await refreshStaleOrderStatuses(result.rows)
+        } catch (error) { console.warn('[orders] atualização automática adiada:', error.message) }
+        finally { checking = false }
+      }
+      setInterval(check, 60000).unref()
+      check()
+    }
+  })
   .catch((error) => {
     console.error('[api] falha ao iniciar', error)
     process.exit(1)

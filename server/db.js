@@ -58,7 +58,20 @@ export async function initializeDatabase() {
   await pool.query('CREATE INDEX IF NOT EXISTS idx_customers_registration_status ON customers(registration_status, created_at DESC)')
   await pool.query('ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS supabase_user_id UUID')
   await pool.query('ALTER TABLE staff_users DROP CONSTRAINT IF EXISTS staff_users_role_check')
-  await pool.query("ALTER TABLE staff_users ADD CONSTRAINT staff_users_role_check CHECK (role IN ('ADMIN', 'COMERCIAL', 'MARKETING'))")
+  await pool.query("ALTER TABLE staff_users ADD CONSTRAINT staff_users_role_check CHECK (role IN ('ADMIN', 'COMERCIAL', 'MARKETING', 'TELEVENDAS'))")
+  await pool.query(`CREATE TABLE IF NOT EXISTS order_email_outbox (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    stage VARCHAR(20) NOT NULL CHECK (stage IN ('analysis','released','sent','delivered')),
+    recipient TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    sent_at TIMESTAMPTZ,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(order_id, stage)
+  )`)
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_order_email_pending ON order_email_outbox(next_attempt_at) WHERE sent_at IS NULL')
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_supabase_user ON customers(supabase_user_id)')
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_supabase_user ON staff_users(supabase_user_id)')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP')
