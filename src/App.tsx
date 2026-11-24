@@ -134,11 +134,19 @@ function StorePage({
     useState(initialSectionCodes);
   const [destinationProductCodes, setDestinationProductCodes] =
     useState(initialProductCodes);
+  const [campaignCode, setCampaignCode] = useState(initialCampaignCode);
+  const [loadedCampaignCode, setLoadedCampaignCode] = useState(initialCampaignCode);
+  const [activeBannerId, setActiveBannerId] = useState(initialBannerId);
+  const bannerOnlyRoute = initialBannerId > 0 && !initialSupplierIds.length &&
+    !initialSectionCodes.length && !initialProductCodes.length && !initialCampaignCode;
+  const [bannerRouteReady, setBannerRouteReady] = useState(!bannerOnlyRoute);
+  const [bannerRouteMissing, setBannerRouteMissing] = useState(false);
   const isBannerDestination =
+    activeBannerId > 0 ||
     destinationSupplierIds.length > 0 ||
     destinationSectionCodes.length > 0 ||
     destinationProductCodes.length > 0 ||
-    initialCampaignCode > 0;
+    campaignCode > 0;
   const [departmentFilter, setDepartmentFilter] = useState(initialDepartment);
   const [sectionFilter, setSectionFilter] = useState(initialSection);
   const [departments, setDepartments] = useState<CatalogDepartment[]>([]);
@@ -231,13 +239,14 @@ function StorePage({
     const controller = new AbortController();
     setLoadingProducts(true);
     authenticatedFetch(
-      `/api/products?limit=5000&sort=${catalogMode}${initialCampaignCode > 0 ? `&campaign=${initialCampaignCode}` : ""}`,
+      `/api/products?limit=5000&sort=${catalogMode}${campaignCode > 0 ? `&campaign=${campaignCode}` : ""}`,
       { signal: controller.signal },
     )
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.message);
         setProducts(data.products);
+        setLoadedCampaignCode(campaignCode);
         setProductsError("");
         setVisibleCount(25);
       })
@@ -247,7 +256,7 @@ function StorePage({
       })
       .finally(() => setLoadingProducts(false));
     return () => controller.abort();
-  }, [authReady, catalogMode, customer?.id, initialCampaignCode]);
+  }, [authReady, catalogMode, customer?.id, campaignCode]);
 
   useEffect(() => {
     if (authReady && !customer) setCart([]);
@@ -273,32 +282,51 @@ function StorePage({
   }, [authReady, customer?.id]);
   useEffect(() => {
     if (!authReady) return;
+    let selectedBannerFound = false;
+    let pendingRequests = 2;
+    const finishBannerRequest = () => {
+      pendingRequests -= 1;
+      if (bannerOnlyRoute && pendingRequests === 0 && !selectedBannerFound) {
+        setBannerRouteMissing(true);
+        setBannerRouteReady(true);
+      }
+    };
+    const applySelectedBanner = (banners: Banner[]) => {
+      const selected = banners.find((banner) => banner.id === initialBannerId);
+      if (!selected) return;
+      selectedBannerFound = true;
+      setBannerPageTitle(selected.altText);
+      if (bannerOnlyRoute) {
+        setDestinationSupplierIds(selected.destinationType === 'suppliers' ? selected.destinationValues : []);
+        setDestinationSectionCodes(selected.destinationType === 'sections' ? selected.destinationValues : []);
+        setDestinationProductCodes(selected.destinationType === 'products' ? selected.destinationValues : []);
+        setCampaignCode(selected.destinationType === 'campaigns' ? selected.destinationValues[0] || 0 : 0);
+        setSupplierFilter(selected.destinationType === 'suppliers' && selected.destinationValues.length === 1 ? String(selected.destinationValues[0]) : '');
+        setBannerRouteMissing(false);
+        setBannerRouteReady(true);
+      }
+    };
     setLoadingBanners(true);
     authenticatedFetch("/api/banners")
       .then((response) => response.json())
       .then((data) => {
         if (Array.isArray(data.banners)) {
           setSlides(data.banners);
-          const selected = data.banners.find(
-            (banner: Banner) => banner.id === initialBannerId,
-          );
-          if (selected) setBannerPageTitle(selected.altText);
+          applySelectedBanner(data.banners);
         }
       })
       .catch(() => setSlides([]))
-      .finally(() => setLoadingBanners(false));
+      .finally(() => { setLoadingBanners(false); finishBannerRequest(); });
     authenticatedFetch("/api/banners?placement=catalog")
       .then((response) => response.json())
       .then((data) => {
         if (Array.isArray(data.banners)) {
           setCatalogBanners(data.banners);
-          const selected = data.banners.find(
-            (banner: Banner) => banner.id === initialBannerId,
-          );
-          if (selected) setBannerPageTitle(selected.altText);
+          applySelectedBanner(data.banners);
         }
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(finishBannerRequest);
     setLoadingNavigation(true);
     authenticatedFetch("/api/catalog/navigation")
       .then((response) => response.json())
@@ -308,7 +336,7 @@ function StorePage({
       })
       .catch(() => undefined)
       .finally(() => setLoadingNavigation(false));
-  }, [authReady, customer?.id, initialBannerId]);
+  }, [authReady, customer?.id, initialBannerId, bannerOnlyRoute]);
   useEffect(() => {
     if (slides.length <= 1) return;
     const delay = Math.max(6500, slidePausedUntil - Date.now());
@@ -328,6 +356,8 @@ function StorePage({
   }, [toast]);
 
   const filteredProducts = useMemo(() => {
+    if (activeBannerId > 0 && bannerOnlyRoute &&
+      (!bannerRouteReady || bannerRouteMissing || (campaignCode > 0 && loadedCampaignCode !== campaignCode))) return [];
     const normalized = query.trim().toLocaleLowerCase("pt-BR");
     return products.filter((product) => {
       const matchesSupplier =
@@ -361,6 +391,12 @@ function StorePage({
       );
     });
   }, [
+    bannerOnlyRoute,
+    bannerRouteReady,
+    bannerRouteMissing,
+    activeBannerId,
+    campaignCode,
+    loadedCampaignCode,
     departmentFilter,
     destinationProductCodes,
     destinationSectionCodes,
@@ -404,12 +440,12 @@ function StorePage({
     if (!isBannerDestination) return departments;
     const allowedProducts = products.filter(
       (product) =>
-        (!initialSupplierIds.length ||
-          initialSupplierIds.includes(product.supplierId)) &&
-        (!initialSectionCodes.length ||
-          initialSectionCodes.includes(product.sectionCode)) &&
-        (!initialProductCodes.length ||
-          initialProductCodes.includes(product.code)),
+        (!destinationSupplierIds.length ||
+          destinationSupplierIds.includes(product.supplierId)) &&
+        (!destinationSectionCodes.length ||
+          destinationSectionCodes.includes(product.sectionCode)) &&
+        (!destinationProductCodes.length ||
+          destinationProductCodes.includes(product.code)),
     );
     const sectionCodes = new Set(
       allowedProducts.map((product) => product.sectionCode),
@@ -434,15 +470,15 @@ function StorePage({
     });
   }, [
     departments,
-    initialProductCodes,
-    initialSectionCodes,
-    initialSupplierIds,
+    destinationProductCodes,
+    destinationSectionCodes,
+    destinationSupplierIds,
     isBannerDestination,
     products,
   ]);
   const contextualSuppliers = useMemo(
-    () => supplierOptions.filter(([id]) => initialSupplierIds.includes(id)),
-    [initialSupplierIds, supplierOptions],
+    () => supplierOptions.filter(([id]) => destinationSupplierIds.includes(id)),
+    [destinationSupplierIds, supplierOptions],
   );
 
   const catalogRows = useMemo(() => {
@@ -664,6 +700,8 @@ function StorePage({
     setDestinationSupplierIds([]);
     setDestinationSectionCodes([]);
     setDestinationProductCodes([]);
+    setCampaignCode(0);
+    setActiveBannerId(0);
     setCatalogMode("featured");
     if (window.location.search) window.history.replaceState({}, "", "/");
   }
@@ -672,12 +710,14 @@ function StorePage({
     setDestinationSupplierIds([]);
     setDestinationSectionCodes([]);
     setDestinationProductCodes([]);
+    setCampaignCode(0);
+    setActiveBannerId(0);
   }
 
   function resetBannerRefinements() {
     setQuery("");
     setSupplierFilter(
-      initialSupplierIds.length === 1 ? String(initialSupplierIds[0]) : "",
+      destinationSupplierIds.length === 1 ? String(destinationSupplierIds[0]) : "",
     );
     setDepartmentFilter("");
     setSectionFilter("");
@@ -687,7 +727,7 @@ function StorePage({
   function refineBannerDepartment(name: string) {
     setQuery("");
     setSupplierFilter(
-      initialSupplierIds.length === 1 ? String(initialSupplierIds[0]) : "",
+      destinationSupplierIds.length === 1 ? String(destinationSupplierIds[0]) : "",
     );
     setDepartmentFilter(name);
     setSectionFilter("");
@@ -822,15 +862,8 @@ function StorePage({
   }
 
   function bannerTarget(banner: Banner) {
-    const codes = banner.destinationValues.join(",");
-    if (banner.destinationType === "sections")
-      return `/?secoes=${codes}&banner=${banner.id}#produtos`;
-    if (banner.destinationType === "products")
-      return `/?produtos=${codes}&banner=${banner.id}#produtos`;
-    if (banner.destinationType === "suppliers")
-      return `/?fornecedores=${codes}&banner=${banner.id}#produtos`;
-    if (banner.destinationType === "campaigns")
-      return `/?campanha=${banner.destinationValues[0]}&banner=${banner.id}#produtos`;
+    if (banner.destinationType !== "navigation")
+      return `/?banner=${banner.id}#produtos`;
     return banner.navigationPath || "/#produtos";
   }
 
@@ -1366,7 +1399,7 @@ function StorePage({
                   <span>
                     {isBannerDestination
                       ? "Refine os produtos"
-                      : initialSupplierIds.length > 1
+                      : destinationSupplierIds.length > 1
                         ? "Escolha um fornecedor"
                         : "Escolha uma seção"}
                   </span>
@@ -1375,9 +1408,9 @@ function StorePage({
               <button
                 className={
                   !departmentFilter &&
-                  (!initialSupplierIds.length ||
+                  (!destinationSupplierIds.length ||
                     !supplierFilter ||
-                    initialSupplierIds.length === 1)
+                    destinationSupplierIds.length === 1)
                     ? "active taxonomy-all"
                     : "taxonomy-all"
                 }
@@ -1389,7 +1422,7 @@ function StorePage({
                   ? "Todos os resultados"
                   : "Todos os produtos"}
               </button>
-              {isBannerDestination && initialSupplierIds.length > 1 && (
+              {isBannerDestination && destinationSupplierIds.length > 1 && (
                 <div className="taxonomy-suppliers">
                   {contextualSuppliers.map(([id, name]) => (
                     <button
@@ -1477,8 +1510,8 @@ function StorePage({
               <h1>
                 {isBannerDestination
                   ? bannerPageTitle ||
-                    (initialCampaignCode > 0
-                      ? `Produtos da campanha #${initialCampaignCode}`
+                    (campaignCode > 0
+                      ? `Produtos da campanha #${campaignCode}`
                       : selectedSection
                         ? formatCatalogName(selectedSection.name)
                         : selectedDepartment
@@ -1498,10 +1531,10 @@ function StorePage({
                             ? "Mais vendidos nos últimos 30 dias"
                             : "Todos os produtos"}
               </h1>
-              {initialCampaignCode > 0 && (
+              {campaignCode > 0 && (
                 <p className="taxonomy-breadcrumb">
                   <a href="/campanhas">Campanhas de desconto</a> → campanha #
-                  {initialCampaignCode}
+                  {campaignCode}
                 </p>
               )}
               {selectedDepartment && (

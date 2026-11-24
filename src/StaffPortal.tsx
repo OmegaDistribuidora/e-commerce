@@ -1822,10 +1822,8 @@ function BannerEditorModal({
   const selectedDestinationCodes = new Set(banner.destinationValues);
   const allFilteredDestinationsSelected = uniqueFilteredCodes.length > 0 &&
     uniqueFilteredCodes.every((code) => selectedDestinationCodes.has(code));
-  const bulkDestinationCount = new Set([...selectedDestinationCodes, ...uniqueFilteredCodes]).size;
-  const canSelectAllDestinations = allFilteredDestinationsSelected || bulkDestinationCount <= 100;
   const toggleFilteredDestinations = () => {
-    if (!uniqueFilteredCodes.length || !canSelectAllDestinations) return;
+    if (!uniqueFilteredCodes.length) return;
     const filtered = new Set(uniqueFilteredCodes);
     onChange({
       destinationValues: allFilteredDestinationsSelected
@@ -2013,10 +2011,9 @@ function BannerEditorModal({
               </label>
               {banner.destinationType !== "campaigns" && (
                 <div className="banner-picker-toolbar">
-                  <button type="button" className="picker-select-all" onClick={toggleFilteredDestinations} disabled={!uniqueFilteredCodes.length || !canSelectAllDestinations}>
+                  <button type="button" className="picker-select-all" onClick={toggleFilteredDestinations} disabled={!uniqueFilteredCodes.length}>
                     {allFilteredDestinationsSelected ? "Desmarcar resultados" : "Selecionar todos os resultados"} <small>({uniqueFilteredCodes.length})</small>
                   </button>
-                  {!canSelectAllDestinations && <small>Refine a busca para selecionar até 100 destinos por banner.</small>}
                 </div>
               )}
               <div>
@@ -2106,7 +2103,7 @@ function BannerEditorModal({
                 {banner.destinationValues.length} selecionado(s)
                 {banner.destinationType === "products" &&
                 filteredProducts.length > 250
-                  ? ` · exibindo 250 de ${filteredProducts.length} resultados; refine a busca`
+                  ? ` · exibindo 250 de ${filteredProducts.length} resultados; a seleção em lote inclui todos`
                   : ""}
               </small>
             </fieldset>

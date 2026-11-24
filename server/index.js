@@ -567,12 +567,8 @@ async function findMissingBannerDestination(database, banners) {
 }
 
 function bannerDestinationUrl(banner) {
-  const codes = banner.destinationValues.join(',')
-  if (banner.destinationType === 'sections') return `/?secoes=${codes}#produtos`
-  if (banner.destinationType === 'products') return `/?produtos=${codes}#produtos`
-  if (banner.destinationType === 'suppliers') return `/?fornecedores=${codes}#produtos`
-  if (banner.destinationType === 'campaigns') return `/?campanha=${banner.destinationValues[0]}#produtos`
-  return banner.navigationPath || '/#produtos'
+  if (banner.destinationType === 'navigation') return banner.navigationPath || '/#produtos'
+  return banner.id ? `/?banner=${banner.id}#produtos` : '/#produtos'
 }
 
 function postgresIntegerArray(values) {
@@ -3429,15 +3425,16 @@ app.put('/api/staff/banners', requireMarketingAccess, async (request, response, 
           await client.query('ROLLBACK')
           return response.status(400).json({ message: `Selecione as imagens para desktop e mobile do banner “${banner.title}”.` })
         }
-        await client.query(
+        const inserted = await client.query(
           `INSERT INTO banners (title, alt_text, image_data, image_mime, mobile_image_data, mobile_image_mime, target_url, section_code,
              destination_type, destination_values, navigation_path, position, active, placement, starts_at, ends_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
           [banner.title, banner.altText, image.data, image.mime, mobileImage.data, mobileImage.mime, bannerDestinationUrl(banner),
             banner.destinationType === 'sections' ? banner.destinationValues[0] : null,
             banner.destinationType, postgresIntegerArray(banner.destinationValues), banner.navigationPath,
             banner.position, banner.active, banner.placement, banner.startsAt || null, banner.endsAt || null],
         )
+        await client.query('UPDATE banners SET target_url=$2 WHERE id=$1', [inserted.rows[0].id, bannerDestinationUrl({ ...banner, id: inserted.rows[0].id })])
       }
     }
     await client.query('COMMIT')
@@ -3465,7 +3462,7 @@ app.put('/api/staff/banners/:id', requireMarketingAccess, async (request, respon
       return response.status(400).json({ message: `Imagem mobile: ${error.message}` })
     }
     const values = [
-      parsed.data.title, parsed.data.altText, bannerDestinationUrl(parsed.data),
+      parsed.data.title, parsed.data.altText, bannerDestinationUrl({ ...parsed.data, id: Number(request.params.id) }),
       parsed.data.destinationType === 'sections' ? parsed.data.destinationValues[0] : null,
       parsed.data.destinationType, postgresIntegerArray(parsed.data.destinationValues), parsed.data.navigationPath,
       parsed.data.position, parsed.data.active, parsed.data.placement,
@@ -3518,6 +3515,7 @@ app.post('/api/staff/banners', requireMarketingAccess, async (request, response,
         parsed.data.position, parsed.data.active, parsed.data.placement,
         parsed.data.startsAt || null, parsed.data.endsAt || null],
     )
+    await pool.query('UPDATE banners SET target_url=$2 WHERE id=$1', [result.rows[0].id, bannerDestinationUrl({ ...parsed.data, id: result.rows[0].id })])
     return response.status(201).json({ id: Number(result.rows[0].id), saved: true })
   } catch (error) {
     return next(error)

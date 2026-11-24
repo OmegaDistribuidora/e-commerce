@@ -213,7 +213,7 @@ export const bannerSchema = z.object({
   targetUrl: z.string().trim().max(500).default('#produtos'),
   sectionCode: z.coerce.number().int().positive().nullable().optional().default(null),
   destinationType: z.enum(['navigation', 'sections', 'products', 'suppliers', 'campaigns']).default('navigation'),
-  destinationValues: z.array(z.coerce.number().int().positive()).max(100).default([]),
+  destinationValues: z.array(z.coerce.number().int().positive()).default([]),
   navigationPath: z.enum(['/', '/#produtos', '/?modo=mais-vendidos#produtos', '/#parceiros', '/pedidos', '/conta']).default('/#produtos'),
   position: z.coerce.number().int().min(0).max(1000),
   active: z.boolean(),
