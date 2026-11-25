@@ -41,7 +41,7 @@ export type PricePlan = { code: string; label: string }
 
 export type OrderQuote = {
   paymentPlan: PricePlan
-  items: Array<{ productId: number; units: number; baseUnitPrice: number; unitPrice: number; lineTotal: number; discountPercent: number; campaignCode: number | null; campaignDescription: string | null }>
+  items: Array<{ productId: number; units: number; baseUnitPrice: number; unitPrice: number; lineTotal: number; discountPercent: number; campaignCode: number | null; campaignDescription: string | null; isGift?: boolean }>
   total: number
   subtotal: number
   coupon: null | { code: string; description: string; discountType: 'fixed' | 'percent'; discountValue: number; eligibleSubtotal: number; discountAmount: number }
@@ -84,6 +84,7 @@ export type DiscountCampaign = {
   scopeType?: 'products' | 'sections' | 'suppliers'
   targetValues?: number[]
   rewardProductCodes?: number[]
+  rewardItems?: Array<{ code: number; quantity: number }>
   discountValue?: number
   thresholdBasis?: 'units' | 'boxes'
   thresholdQuantity?: number
@@ -143,7 +144,7 @@ export type InstitutionalContent = {
   updatedAt?: string
 }
 
-export type CartItem = Product & { quantity: number }
+export type CartItem = Product & { quantity: number; isGift?: boolean; giftCampaignCode?: number; giftCampaignName?: string }
 
 export type Customer = {
   id: number
@@ -231,6 +232,7 @@ export type StaffCatalogProduct = {
   name: string
   package: string
   unitsPerBox: number
+  salesMultiple: number
   image: string | null
 }
 
@@ -252,6 +254,8 @@ export type OrderItem = {
   unitsPerBox: number
   unitPrice: number
   lineTotal: number
+  isGift?: boolean
+  campaignCode?: number | null
 }
 
 export type Order = {

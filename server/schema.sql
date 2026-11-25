@@ -113,7 +113,9 @@ CREATE TABLE IF NOT EXISTS order_items (
   units INTEGER NOT NULL CHECK (units > 0),
   units_per_box INTEGER NOT NULL,
   unit_price NUMERIC(14,2) NOT NULL,
-  line_total NUMERIC(14,2) NOT NULL
+  line_total NUMERIC(14,2) NOT NULL,
+  is_gift BOOLEAN NOT NULL DEFAULT FALSE,
+  campaign_code INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -283,6 +285,7 @@ CREATE TABLE IF NOT EXISTS discount_campaigns (
   scope_type VARCHAR(12) NOT NULL DEFAULT 'products',
   target_values INTEGER[] NOT NULL DEFAULT '{}',
   reward_product_codes INTEGER[] NOT NULL DEFAULT '{}',
+  reward_items JSONB NOT NULL DEFAULT '[]'::jsonb,
   discount_value NUMERIC(14,2) NOT NULL DEFAULT 0,
   threshold_basis VARCHAR(8) NOT NULL DEFAULT 'units',
   threshold_quantity INTEGER NOT NULL DEFAULT 1,

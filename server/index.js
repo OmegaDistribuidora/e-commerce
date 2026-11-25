@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
-import { campaignAllowed, campaignDiscounts, normalizedCity, refreshManagedCampaignProducts } from './managed-campaigns.js'
+import { campaignAllowed, campaignDiscounts, campaignGiftQuantities, normalizedCity, refreshManagedCampaignProducts } from './managed-campaigns.js'
 import { registerCampaignRoutes } from './campaign-routes.js'
 import { isForwardStage, queueOrderStage, startOrderEmailWorker } from './order-email.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
@@ -489,7 +489,7 @@ async function listOrders(whereClause = '', params = []) {
       `SELECT oi.id, oi.order_id, p.id AS product_id, p.external_id AS code, p.name,
               p.image_path, p.image_data IS NOT NULL AS image_uploaded, p.image_hidden, p.image_updated_at,
               oi.boxes, COALESCE(oi.units, oi.boxes * oi.units_per_box) AS units,
-              oi.units_per_box, oi.unit_price, oi.line_total
+              oi.units_per_box, oi.unit_price, oi.line_total, oi.is_gift, oi.campaign_code
        FROM order_items oi JOIN products p ON p.id = oi.product_id
        WHERE oi.order_id IN (${placeholders}) ORDER BY oi.id`,
       orderIds,
@@ -529,7 +529,7 @@ async function listOrders(whereClause = '', params = []) {
       id: Number(item.id), productId: Number(item.product_id), code: Number(item.code), name: item.name,
       image: productImageUrl({ ...item, id: item.product_id }),
       boxes: Number(item.boxes), units: Number(item.units), unitsPerBox: Number(item.units_per_box),
-      unitPrice: Number(item.unit_price), lineTotal: Number(item.line_total),
+      unitPrice: Number(item.unit_price), lineTotal: Number(item.line_total), isGift: Boolean(item.is_gift), campaignCode: item.campaign_code == null ? null : Number(item.campaign_code),
     })),
   }))
 }
@@ -662,8 +662,57 @@ function lowestPlanPrice(row, priceTables) {
   return prices.length ? Math.min(...prices) : null
 }
 
+async function eligibleCartGifts(database, pricing, paidLines, customerExternalId, customerCity) {
+  const ids = [...new Set(paidLines.map((line) => Number(line.product.id)))]
+  if (!ids.length) return []
+  const campaigns = await database.query(
+    `SELECT dc.external_id,dc.name,dc.rule_type,dc.buy_quantity,dc.threshold_basis,dc.reward_items,
+            dc.allowed_customer_ids,dc.allowed_cities,dcp.product_id
+     FROM discount_campaigns dc JOIN discount_campaign_products dcp ON dcp.campaign_id=dc.id
+     WHERE dc.origin='ecommerce' AND dc.active=TRUE AND dc.rule_type='buy_get'
+       AND dc.starts_on<=$1::date AND dc.ends_on>=$1::date AND dcp.product_id=ANY($2::integer[])`,
+    [currentBrasiliaDate(), ids],
+  )
+  const byCampaign = new Map()
+  for (const row of campaigns.rows) {
+    if (!campaignAllowed(row, customerExternalId, customerCity)) continue
+    const code = Number(row.external_id)
+    const campaign = byCampaign.get(code) || { ...row, productIds: new Set() }
+    campaign.productIds.add(Number(row.product_id))
+    byCampaign.set(code, campaign)
+  }
+  const proposed = campaignGiftQuantities([...byCampaign.values()], paidLines)
+  if (!proposed.length) return []
+  const products = await database.query(
+    `SELECT p.id,p.external_id,p.supplier_id,p.section_code,p.name,p.brand,p.package,p.master_package,
+            p.units_per_box,p.sales_multiple,p.min_boxes,p.department_code,p.department,p.section,
+            p.image_path,p.image_data IS NOT NULL AS image_uploaded,p.image_hidden,p.image_updated_at,
+            p.price_date,p.orders_last_30_days,p.ean,p.manufacturer_code,p.ncm_code
+     FROM products p WHERE p.active=TRUE AND p.external_id=ANY($1::integer[])`,
+    [[...new Set(proposed.map((gift) => gift.code))]],
+  )
+  const byCode = new Map(products.rows.map((product) => [Number(product.external_id), product]))
+  const restricted = new Set(pricing.restrictedSupplierIds || [])
+  const validByCampaign = new Map()
+  for (const gift of proposed) {
+    const product = byCode.get(gift.code)
+    const valid = Boolean(product) && !restricted.has(Number(product.supplier_id))
+      && gift.quantity % purchaseMultiple(pricing, product) === 0
+    validByCampaign.set(gift.campaignCode, (validByCampaign.get(gift.campaignCode) ?? true) && valid)
+  }
+  return proposed.filter((gift) => validByCampaign.get(gift.campaignCode))
+    .map((gift) => ({ ...gift, product: byCode.get(gift.code) }))
+}
+
 // Calcula as linhas do carrinho com o preço da região do cliente na tabela do plano escolhido.
 async function priceCartItems(database, pricing, plan, items, customerExternalId = null, customerCity = '') {
+  const quantities = new Map()
+  for (const item of items) {
+    const quantity = (quantities.get(Number(item.productId)) || 0) + Number(item.quantity)
+    if (!Number.isSafeInteger(quantity) || quantity > 100000) throw new RequestError('Quantidade inválida no carrinho.')
+    quantities.set(Number(item.productId), quantity)
+  }
+  items = [...quantities].map(([productId, quantity]) => ({ productId, quantity }))
   const productIds = [...new Set(items.map((item) => item.productId))]
   const placeholders = productIds.map((_, index) => `$${index + 2}`).join(',')
   const result = await database.query(
@@ -707,7 +756,7 @@ async function priceCartItems(database, pricing, plan, items, customerExternalId
   })
   const campaignResult = await database.query(
     `SELECT dc.external_id,dc.name,dc.rule_type,dc.discount_value,dc.threshold_basis,
-            dc.threshold_quantity,dc.buy_quantity,dc.free_quantity,dc.reward_product_codes,
+            dc.threshold_quantity,dc.buy_quantity,dc.free_quantity,dc.reward_product_codes,dc.reward_items,
             dc.allowed_customer_ids,dc.allowed_cities,dcp.product_id
      FROM discount_campaigns dc
      JOIN discount_campaign_products dcp ON dcp.campaign_id=dc.id
@@ -734,6 +783,14 @@ async function priceCartItems(database, pricing, plan, items, customerExternalId
     line.discountPercent = money2(discount / (line.units * line.baseUnitPrice) * 100)
     line.campaignCode = Number(selected.campaign.external_id)
     line.campaignDescription = selected.campaign.name
+  }
+  const gifts = await eligibleCartGifts(database, pricing, lines, customerExternalId, customerCity)
+  for (const gift of gifts) {
+    lines.push({ product: gift.product, units: gift.quantity,
+      boxes: Math.max(1, Math.ceil(gift.quantity / Number(gift.product.units_per_box || 1))),
+      baseUnitPrice: 0, unitPrice: 0, discountPercent: 100,
+      campaignCode: gift.campaignCode, campaignDescription: gift.campaignName,
+      isGift: true, lineTotal: 0 })
   }
   return { lines, total: money2(lines.reduce((sum, line) => sum + line.lineTotal, 0)) }
 }
@@ -781,7 +838,15 @@ async function validateOrderStock(database, stockBranch, lines) {
   if (![1, 3].includes(Number(stockBranch))) {
     throw new RequestError('A filial de atendimento deste cadastro ainda não foi sincronizada.', 503)
   }
-  const productIds = lines.map((line) => Number(line.product.id))
+  const totals = new Map()
+  for (const line of lines) {
+    const id = Number(line.product.id)
+    const entry = totals.get(id) || { product: line.product, units: 0 }
+    entry.units += Number(line.units)
+    totals.set(id, entry)
+  }
+  lines = [...totals.values()]
+  const productIds = [...totals.keys()]
   const placeholders = productIds.map((_, index) => `$${index + 2}`).join(',')
   const result = await database.query(
     `SELECT ps.product_id, ps.available_units, ss.source_updated_at, p.external_id, p.name,
@@ -1983,7 +2048,7 @@ app.post('/api/customer/quote', async (request, response, next) => {
       paymentPlan: { code: selected.plan.code, label: selected.plan.label },
       items: selected.lines.map((line) => ({
         productId: Number(line.product.id), units: line.units, baseUnitPrice: line.baseUnitPrice,
-        unitPrice: line.unitPrice, lineTotal: line.lineTotal, discountPercent: line.discountPercent,
+        unitPrice: line.unitPrice, lineTotal: line.lineTotal, discountPercent: line.discountPercent, isGift: Boolean(line.isGift),
         campaignCode: line.campaignCode, campaignDescription: line.campaignDescription,
       })),
       subtotal: selected.subtotal,
@@ -2060,9 +2125,11 @@ app.get('/api/customer/cart', async (request, response, next) => {
       request.customer.external_id,
       request.customer.city,
     )
+    const paidLines = result.rows.map((row) => ({ product: row, units: Number(row.quantity) }))
+    const gifts = await eligibleCartGifts(pool, pricing, paidLines, request.customer.external_id, request.customer.city)
     return response.json({
       updatedAt: result.rows[0]?.cart_updated_at || null,
-      items: result.rows.map((row) => {
+      items: [...result.rows.map((row) => {
         const customerPrice = lowestPlanPrice(row, priceTables)
         return {
           id: Number(row.id), code: Number(row.external_id), supplierId: Number(row.supplier_id || 0),
@@ -2076,7 +2143,16 @@ app.get('/api/customer/cart', async (request, response, next) => {
           ean: row.ean || '', manufacturerCode: row.manufacturer_code || '', ncm: row.ncm_code || '',
           campaignOffers: campaignOffers.get(Number(row.id)) || [], quantity: Number(row.quantity),
         }
-      }),
+      }), ...gifts.map((gift) => ({
+        id: Number(gift.product.id), code: Number(gift.product.external_id), supplierId: Number(gift.product.supplier_id || 0),
+        brand: gift.product.brand, name: gift.product.name, package: gift.product.package || '', masterPackage: gift.product.master_package || '',
+        unitsPerBox: Number(gift.product.units_per_box), salesMultiple: purchaseMultiple(pricing, gift.product), minBoxes: Number(gift.product.min_boxes),
+        unitPrice: 0, listUnitPrice: 0, category: gift.product.section || 'Sem seção', categories: gift.product.section ? [gift.product.section] : [],
+        departmentCode: Number(gift.product.department_code || 0), department: gift.product.department || '', sectionCode: Number(gift.product.section_code || 0), section: gift.product.section || '',
+        image: productImageUrl(gift.product), priceDate: gift.product.price_date, ordersLast30Days: Number(gift.product.orders_last_30_days || 0),
+        ean: gift.product.ean || '', manufacturerCode: gift.product.manufacturer_code || '', ncm: gift.product.ncm_code || '',
+        quantity: gift.quantity, isGift: true, giftCampaignCode: gift.campaignCode, giftCampaignName: gift.campaignName,
+      }))],
     })
   } catch (error) {
     return next(error)
@@ -2169,7 +2245,7 @@ app.get('/api/campaigns', async (request, response, next) => {
     const restrictedSupplierIds = pricing?.restrictedSupplierIds || []
     const customerExternalId = Number(request.customer?.external_id) || null
     const result = await pool.query(
-      `SELECT dc.external_id,dc.name AS campaign_name,dc.description,dc.starts_on,dc.ends_on,dc.rule_type,dc.reward_product_codes,
+      `SELECT dc.external_id,dc.name AS campaign_name,dc.description,dc.starts_on,dc.ends_on,dc.rule_type,dc.reward_product_codes,dc.reward_items,
               dc.discount_value,dc.threshold_basis,dc.threshold_quantity,dc.buy_quantity,dc.free_quantity,
               p.id AS product_id,p.external_id AS product_code,p.name,p.brand,p.supplier_id,
               p.image_path,p.image_data IS NOT NULL AS image_uploaded,p.image_hidden,p.image_updated_at,
@@ -2192,7 +2268,7 @@ app.get('/api/campaigns', async (request, response, next) => {
         ruleType: row.rule_type, discountValue: Number(row.discount_value),
         thresholdBasis: row.threshold_basis, thresholdQuantity: Number(row.threshold_quantity),
         buyQuantity: Number(row.buy_quantity), freeQuantity: Number(row.free_quantity),
-        rewardProductCodes: (row.reward_product_codes || []).map(Number), products: [], rewards: [],
+        rewardProductCodes: (row.reward_product_codes || []).map(Number), rewardItems: row.reward_items || [], products: [], rewards: [],
       }
       let product = campaign.products.find((item) => item.id === Number(row.product_id))
       if (!product) {
@@ -2209,14 +2285,16 @@ app.get('/api/campaigns', async (request, response, next) => {
       campaigns.set(code, campaign)
     }
     const rewardCodes = [...new Set([...campaigns.values()].flatMap((campaign) => campaign.rewardProductCodes))]
+    let byCodeForCampaigns = new Map()
     if (rewardCodes.length) {
       const rewards = await pool.query(
-        `SELECT id,external_id AS code,name,brand,supplier_id,image_path,image_data IS NOT NULL AS image_uploaded,image_hidden,image_updated_at
+        `SELECT id,external_id AS code,name,brand,supplier_id,units_per_box,sales_multiple,image_path,image_data IS NOT NULL AS image_uploaded,image_hidden,image_updated_at
          FROM products WHERE active=TRUE AND external_id=ANY($1::integer[])
            AND ($2::integer[]='{}'::integer[] OR NOT (supplier_id=ANY($2::integer[])))`,
         [rewardCodes, postgresIntegerArray(restrictedSupplierIds)],
       )
       const byCode = new Map(rewards.rows.map((product) => [Number(product.code), product]))
+      byCodeForCampaigns = byCode
       for (const campaign of campaigns.values()) {
         campaign.rewards = campaign.rewardProductCodes.flatMap((code) => {
           const product = byCode.get(code)
@@ -2225,7 +2303,13 @@ app.get('/api/campaigns', async (request, response, next) => {
         })
       }
     }
-    return response.json({ campaigns: [...campaigns.values()].filter((campaign) => campaign.ruleType !== 'buy_get' || campaign.rewards.length) })
+    return response.json({ campaigns: [...campaigns.values()].filter((campaign) => campaign.ruleType !== 'buy_get' || (
+      campaign.rewardItems.length > 0 && campaign.rewards.length === campaign.rewardItems.length &&
+      campaign.rewardItems.every((item) => {
+        const reward = byCodeForCampaigns.get(Number(item.code))
+        return reward && Number(item.quantity) % purchaseMultiple(pricing, reward) === 0
+      })
+    )) })
   } catch (error) {
     return next(error)
   }
@@ -3179,7 +3263,7 @@ app.get('/api/staff/catalog-products', requireMarketingAccess, async (request, r
       }
     }
     const result = await pool.query(
-      `SELECT p.id,p.external_id,p.supplier_id,p.brand,p.name,p.package,p.units_per_box,p.image_path,
+      `SELECT p.id,p.external_id,p.supplier_id,p.brand,p.name,p.package,p.units_per_box,p.sales_multiple,p.image_path,
               p.image_data IS NOT NULL AS image_uploaded,p.image_hidden,p.image_updated_at
        FROM products p WHERE ${conditions.join(' AND ')}
        ORDER BY (p.image_hidden=FALSE AND (p.image_data IS NOT NULL OR p.image_path IS NOT NULL)) DESC,p.brand,p.name LIMIT 20000`,
@@ -3195,7 +3279,7 @@ app.get('/api/staff/catalog-products', requireMarketingAccess, async (request, r
       products: result.rows.map((product) => ({
         id: Number(product.id), code: Number(product.external_id), supplierId: Number(product.supplier_id),
         brand: product.brand, name: product.name, package: product.package,
-        unitsPerBox: Number(product.units_per_box), image: productImageUrl(product),
+        unitsPerBox: Number(product.units_per_box), salesMultiple: Number(product.sales_multiple), image: productImageUrl(product),
       })),
       suppliers: suppliersResult.rows.map((supplier) => ({
         id: Number(supplier.supplier_id), name: supplier.name, productCount: Number(supplier.product_count),
@@ -3585,9 +3669,9 @@ app.post('/api/orders', async (request, response, next) => {
     const order = orderResult.rows[0]
     for (const line of lines) {
       await client.query(
-        `INSERT INTO order_items (order_id, product_id, boxes, units, units_per_box, unit_price, line_total)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [order.id, line.product.id, line.boxes, line.units, line.product.units_per_box, line.unitPrice, line.lineTotal.toFixed(2)],
+        `INSERT INTO order_items (order_id, product_id, boxes, units, units_per_box, unit_price, line_total, is_gift, campaign_code)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [order.id, line.product.id, line.boxes, line.units, line.product.units_per_box, line.unitPrice, line.lineTotal.toFixed(2), Boolean(line.isGift), line.campaignCode],
       )
     }
     if (coupon) {

@@ -1640,7 +1640,7 @@ function StaffOrderCard({
                 )}
               </span>
               <span>
-                {item.code} · {item.name}
+                {item.code} · {item.name}{item.isGift ? ' · Brinde' : ''}
               </span>
             </span>
             <span>

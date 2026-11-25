@@ -354,7 +354,7 @@ export default function OrdersPage() {
                                     )}
                                   </span>
                                   <span>
-                                    {item.name}
+                                    {item.name}{item.isGift ? ' · Brinde' : ''}
                                     <small>
                                       Cód. {item.code} · {item.units}{" "}
                                       {item.units === 1

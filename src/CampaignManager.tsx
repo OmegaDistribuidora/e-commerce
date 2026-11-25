@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, BadgePercent, Check, LoaderCircle, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import { authenticatedFetch } from './api'
 import { formatCatalogName } from './catalog'
@@ -21,13 +21,13 @@ function brasiliaDate(offset = 0) {
 function emptyCampaign(): DiscountCampaign {
   return {
     id: 0, code: 0, name: '', description: '', startsOn: brasiliaDate(), endsOn: brasiliaDate(30),
-    ruleType: 'percent', scopeType: 'products', targetValues: [], rewardProductCodes: [],
+    ruleType: 'percent', scopeType: 'products', targetValues: [], rewardProductCodes: [], rewardItems: [],
     discountValue: 0, thresholdBasis: 'units', thresholdQuantity: 1, buyQuantity: 1,
     freeQuantity: 1, allowedCustomerIds: [], allowedCities: [], active: true, products: [],
   }
 }
 const labelForRule = (item: DiscountCampaign) => item.ruleType === 'buy_get'
-  ? `Compre ${item.buyQuantity} e leve ${item.freeQuantity}`
+  ? `Compre ${item.buyQuantity} e ganhe ${(item.rewardItems || []).reduce((sum, reward) => sum + reward.quantity, 0)} unidade(s)`
   : item.ruleType === 'fixed' ? `R$ ${Number(item.discountValue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de desconto`
     : `${Number(item.discountValue || 0).toLocaleString('pt-BR')}% de desconto`
 
@@ -42,6 +42,7 @@ export default function CampaignManager({ campaigns, onChange, products, supplie
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const optionsRef = useRef<HTMLDivElement>(null)
 
   const stages = useMemo<Stage[]>(() => {
     if (!editing) return []
@@ -50,7 +51,7 @@ export default function CampaignManager({ campaigns, onChange, products, supplie
   }, [editing?.ruleType, restrictClients, restrictCities])
   const stage = stages[stageIndex] || 'details'
   const values = stage === 'scope' ? editing?.targetValues || [] : stage === 'rewards'
-    ? editing?.rewardProductCodes || [] : stage === 'clients' ? editing?.allowedCustomerIds || [] : editing?.allowedCities || []
+    ? (editing?.rewardItems || []).map((item) => item.code) : stage === 'clients' ? editing?.allowedCustomerIds || [] : editing?.allowedCities || []
   const selected = new Set(values.map(String))
   const localOptions = useMemo<Option[]>(() => {
     if (!editing) return []
@@ -65,6 +66,8 @@ export default function CampaignManager({ campaigns, onChange, products, supplie
     return source.filter((option) => !term || `${option.value} ${option.label} ${option.detail || ''}`.toLocaleLowerCase('pt-BR').includes(term))
       .sort((a, b) => Number(selected.has(b.value)) - Number(selected.has(a.value)) || a.label.localeCompare(b.label, 'pt-BR'))
   }, [stage, search, remoteOptions, localOptions, values.join(',')])
+
+  useEffect(() => { if (optionsRef.current) optionsRef.current.scrollTop = 0 }, [stage, search])
 
   useEffect(() => {
     if (stage !== 'clients' && stage !== 'cities') return
@@ -85,14 +88,14 @@ export default function CampaignManager({ campaigns, onChange, products, supplie
   }, [stage, search])
 
   function open(item: DiscountCampaign) {
-    setEditing({ ...item, targetValues: [...(item.targetValues || [])], rewardProductCodes: [...(item.rewardProductCodes || [])], allowedCustomerIds: [...(item.allowedCustomerIds || [])], allowedCities: [...(item.allowedCities || [])] })
+    setEditing({ ...item, targetValues: [...(item.targetValues || [])], rewardItems: [...(item.rewardItems || [])], rewardProductCodes: [...(item.rewardProductCodes || [])], allowedCustomerIds: [...(item.allowedCustomerIds || [])], allowedCities: [...(item.allowedCities || [])] })
     setRestrictClients(Boolean(item.allowedCustomerIds?.length)); setRestrictCities(Boolean(item.allowedCities?.length))
     setStageIndex(0); setSearch(''); setError(''); setNotice(''); setSelectedNames({})
   }
   function update(values: Partial<DiscountCampaign>) { setEditing((current) => current ? { ...current, ...values } : current) }
   function setSelection(next: Set<string>) {
     if (stage === 'scope') update({ targetValues: [...next].map(Number) })
-    else if (stage === 'rewards') update({ rewardProductCodes: [...next].map(Number) })
+    else if (stage === 'rewards') update({ rewardItems: [...next].map((code) => editing?.rewardItems?.find((item) => item.code === Number(code)) || { code: Number(code), quantity: Math.max(1, products.find((product) => product.code === Number(code))?.salesMultiple || 1) }) })
     else if (stage === 'clients') update({ allowedCustomerIds: [...next].map(Number) })
     else update({ allowedCities: [...next] })
   }
@@ -114,8 +117,14 @@ export default function CampaignManager({ campaigns, onChange, products, supplie
     if (stage === 'details' && (!editing.name?.trim() || !editing.description.trim() || !editing.startsOn || !editing.endsOn || editing.endsOn < editing.startsOn || (editing.ruleType !== 'buy_get' && (!editing.discountValue || editing.discountValue > (editing.ruleType === 'percent' ? 100 : 99999999))))) {
       setError('Preencha nome, descrição, período e desconto válidos.'); return
     }
+    if (stage === 'details' && editing.ruleType === 'buy_get' && (!Number.isSafeInteger(editing.buyQuantity) || Number(editing.buyQuantity) < 1)) {
+      setError('Informe a quantidade mínima para ativar os brindes.'); return
+    }
     if ((stage === 'scope' || stage === 'rewards' || stage === 'clients' || stage === 'cities') && !values.length) {
       setError('Selecione pelo menos uma opção para avançar.'); return
+    }
+    if (stage === 'rewards' && editing.rewardItems?.some((item) => !Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 100000)) {
+      setError('Informe uma quantidade válida para cada produto gratuito.'); return
     }
     setError(''); setSearch(''); setStageIndex((index) => Math.min(stages.length - 1, index + 1))
   }
@@ -160,13 +169,13 @@ export default function CampaignManager({ campaigns, onChange, products, supplie
           <div className="form-row"><label>Nome da campanha<input value={editing.name || ''} onChange={(event) => update({ name: event.target.value })} maxLength={160} /></label><label>Tipo de campanha<select value={editing.ruleType} onChange={(event) => update({ ruleType: event.target.value as DiscountCampaign['ruleType'] })}><option value="percent">Percentual</option><option value="fixed">Valor fixo</option><option value="buy_get">Compre X, leve Y</option></select></label></div>
           <label>Descrição<textarea value={editing.description} onChange={(event) => update({ description: event.target.value })} rows={3} maxLength={1000} /></label>
           <div className="form-row"><label>Produtos participantes<select value={editing.scopeType} onChange={(event) => update({ scopeType: event.target.value as DiscountCampaign['scopeType'], targetValues: [] })}><option value="products">Produtos específicos</option><option value="sections">Seções</option><option value="suppliers">Fornecedores</option></select></label><label>Contar a partir de<select value={editing.thresholdBasis} onChange={(event) => update({ thresholdBasis: event.target.value as DiscountCampaign['thresholdBasis'] })}><option value="units">Unidades somadas</option><option value="boxes">Caixas completas somadas</option></select></label></div>
-          {editing.ruleType === 'buy_get' ? <div className="form-row"><label>Compre X<input type="number" min="1" value={editing.buyQuantity} onChange={(event) => update({ buyQuantity: Number(event.target.value) })} /></label><label>Leve Y grátis<input type="number" min="1" value={editing.freeQuantity} onChange={(event) => update({ freeQuantity: Number(event.target.value) })} /></label></div> : <div className="form-row"><label>{editing.ruleType === 'percent' ? 'Desconto (%)' : 'Desconto (R$)'}<input type="number" min="0.01" max={editing.ruleType === 'percent' ? 100 : undefined} step="0.01" value={editing.discountValue || ''} onChange={(event) => update({ discountValue: Number(event.target.value) })} /></label><label>A partir de quantas {editing.thresholdBasis === 'boxes' ? 'caixas' : 'unidades'}?<input type="number" min="1" value={editing.thresholdQuantity} onChange={(event) => update({ thresholdQuantity: Number(event.target.value) })} /></label></div>}
-          {editing.ruleType === 'buy_get' && <label>A partir de quantas {editing.thresholdBasis === 'boxes' ? 'caixas' : 'unidades'}?<input type="number" min="1" value={editing.thresholdQuantity} onChange={(event) => update({ thresholdQuantity: Number(event.target.value) })} /></label>}
+          {editing.ruleType === 'buy_get' ? <label>Compre X {editing.thresholdBasis === 'boxes' ? 'caixas' : 'unidades'} dos produtos participantes<input type="number" min="1" value={editing.buyQuantity} onChange={(event) => update({ buyQuantity: Number(event.target.value) })} /></label> : <div className="form-row"><label>{editing.ruleType === 'percent' ? 'Desconto (%)' : 'Desconto (R$)'}<input type="number" min="0.01" max={editing.ruleType === 'percent' ? 100 : undefined} step="0.01" value={editing.discountValue || ''} onChange={(event) => update({ discountValue: Number(event.target.value) })} /></label><label>A partir de quantas {editing.thresholdBasis === 'boxes' ? 'caixas' : 'unidades'}?<input type="number" min="1" value={editing.thresholdQuantity} onChange={(event) => update({ thresholdQuantity: Number(event.target.value) })} /></label></div>}
           <div className="form-row"><label>Início<input type="date" value={String(editing.startsOn).slice(0, 10)} onChange={(event) => update({ startsOn: event.target.value })} /></label><label>Fim<input type="date" value={String(editing.endsOn).slice(0, 10)} onChange={(event) => update({ endsOn: event.target.value })} /></label></div>
           <div className="campaign-audience-toggles"><label><input type="checkbox" checked={restrictClients} onChange={(event) => { setRestrictClients(event.target.checked); update({ allowedCustomerIds: [] }) }} /> Restringir por cliente</label><label><input type="checkbox" checked={restrictCities} onChange={(event) => { setRestrictCities(event.target.checked); update({ allowedCities: [] }) }} /> Restringir por cidade</label><label><input type="checkbox" checked={editing.active} onChange={(event) => update({ active: event.target.checked })} /> Campanha ativa</label></div>
         </>}
-        {['scope', 'rewards', 'clients', 'cities'].includes(stage) && <><h3>{stage === 'scope' ? `Selecione ${editing.scopeType === 'products' ? 'os produtos' : editing.scopeType === 'sections' ? 'as seções' : 'os fornecedores'}` : stage === 'rewards' ? 'Selecione os produtos gratuitos' : stage === 'clients' ? 'Selecione os clientes' : 'Selecione as cidades'}</h3><p className="campaign-picker-intro">{stage === 'clients' ? 'Pesquise pelo código ou nome. A busca inclui clientes sem acesso à loja.' : 'Você pode buscar e selecionar todos os resultados de uma vez.'}</p><label className="coupon-search"><Search /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={stage === 'clients' ? 'Buscar cliente por código ou nome' : 'Buscar por nome ou código'} /></label><button className="picker-select-all" onClick={selectFiltered} disabled={!options.length}>{options.length && options.every((option) => selected.has(option.value)) ? 'Desmarcar resultados' : 'Selecionar todos os resultados'} <small>({options.length})</small></button><div className="campaign-selected">{[...selected].map((value) => <button key={value} onClick={() => toggle({ value, label: selectedNames[value] || value })}>{selectedNames[value] || value} <X size={13} /></button>)}</div><div className="campaign-options">{options.map((option) => <label key={option.value}><input type="checkbox" checked={selected.has(option.value)} onChange={() => toggle(option)} /><span><b>{option.label}</b><small>{option.detail}</small></span>{selected.has(option.value) && <Check size={16} />}</label>)}</div></>}
-        {stage === 'review' && <div className="campaign-review"><h3>Confira a campanha</h3><dl><div><dt>Campanha</dt><dd>{editing.name}</dd></div><div><dt>Regra</dt><dd>{labelForRule(editing)}</dd></div><div><dt>Participantes</dt><dd>{editing.targetValues?.length} {editing.scopeType === 'products' ? 'produtos' : editing.scopeType === 'sections' ? 'seções' : 'fornecedores'}</dd></div><div><dt>Mínimo</dt><dd>{editing.thresholdQuantity} {editing.thresholdBasis === 'boxes' ? 'caixas completas' : 'unidades somadas'}</dd></div><div><dt>Clientes</dt><dd>{restrictClients ? editing.allowedCustomerIds?.length : 'Todos'}</dd></div><div><dt>Cidades</dt><dd>{restrictCities ? editing.allowedCities?.length : 'Todas'}</dd></div><div><dt>Período</dt><dd>{editing.startsOn} a {editing.endsOn}</dd></div></dl></div>}
+        {['scope', 'rewards', 'clients', 'cities'].includes(stage) && <><h3>{stage === 'scope' ? `Selecione ${editing.scopeType === 'products' ? 'os produtos' : editing.scopeType === 'sections' ? 'as seções' : 'os fornecedores'}` : stage === 'rewards' ? 'Selecione os produtos gratuitos' : stage === 'clients' ? 'Selecione os clientes' : 'Selecione as cidades'}</h3><p className="campaign-picker-intro">{stage === 'clients' ? 'Pesquise pelo código ou nome. A busca inclui clientes sem acesso à loja.' : 'Você pode buscar e selecionar todos os resultados de uma vez.'}</p><div className="campaign-picker-toolbar"><label className="coupon-search"><Search /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={stage === 'clients' ? 'Buscar cliente por código ou nome' : 'Buscar por nome ou código'} /></label><button className="picker-select-all" onClick={selectFiltered} disabled={!options.length}>{options.length && options.every((option) => selected.has(option.value)) ? 'Desmarcar resultados' : 'Selecionar todos os resultados'} <small>({options.length})</small></button></div><div className="campaign-selected">{[...selected].map((value) => <button key={value} onClick={() => toggle({ value, label: selectedNames[value] || value })}>{selectedNames[value] || value} <X size={13} /></button>)}</div><div className="campaign-options" ref={optionsRef}>{options.map((option) => <label key={option.value}><input type="checkbox" checked={selected.has(option.value)} onChange={() => toggle(option)} /><span><b>{option.label}</b><small>{option.detail}</small></span>{selected.has(option.value) && <Check size={16} />}</label>)}</div></>}
+        {stage === 'rewards' && Boolean(editing.rewardItems?.length) && <div className="campaign-reward-quantities"><h4>Quantidade gratuita de cada produto</h4>{editing.rewardItems?.map((reward) => <label key={reward.code}><span>{selectedNames[String(reward.code)] || products.find((item) => item.code === reward.code)?.name || `Produto ${reward.code}`}</span><input type="number" min="1" max="100000" step="1" value={reward.quantity} onChange={(event) => update({ rewardItems: editing.rewardItems?.map((item) => item.code === reward.code ? { ...item, quantity: Number(event.target.value) } : item) })} /><small>unidades · múltiplo {products.find((item) => item.code === reward.code)?.salesMultiple || 1}</small></label>)}</div>}
+        {stage === 'review' && <div className="campaign-review"><h3>Confira a campanha</h3><dl><div><dt>Campanha</dt><dd>{editing.name}</dd></div><div><dt>Regra</dt><dd>{labelForRule(editing)}</dd></div><div><dt>Participantes</dt><dd>{editing.targetValues?.length} {editing.scopeType === 'products' ? 'produtos' : editing.scopeType === 'sections' ? 'seções' : 'fornecedores'}</dd></div><div><dt>Mínimo</dt><dd>{editing.ruleType === 'buy_get' ? editing.buyQuantity : editing.thresholdQuantity} {editing.thresholdBasis === 'boxes' ? 'caixas completas' : 'unidades somadas'}</dd></div>{editing.ruleType === 'buy_get' && <div><dt>Brindes</dt><dd>{editing.rewardItems?.map((item) => `${item.quantity} un. do produto ${item.code}`).join(', ')}</dd></div>}<div><dt>Clientes</dt><dd>{restrictClients ? editing.allowedCustomerIds?.length : 'Todos'}</dd></div><div><dt>Cidades</dt><dd>{restrictCities ? editing.allowedCities?.length : 'Todas'}</dd></div><div><dt>Período</dt><dd>{editing.startsOn} a {editing.endsOn}</dd></div></dl></div>}
         {error && <div className="staff-alert error">{error}</div>}
       </div><footer className="banner-modal-actions">{editing.id ? <button className="banner-delete-button" onClick={deactivate} disabled={loading}><Trash2 /> Desativar</button> : <span />}{stageIndex > 0 && <button className="secondary-button" onClick={() => { setError(''); setSearch(''); setStageIndex(stageIndex - 1) }}><ArrowLeft /> Voltar</button>}{stage === 'review' ? <button className="primary-button" onClick={save} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <Check />} Salvar campanha</button> : <button className="primary-button" onClick={nextStage}>Avançar <ArrowRight /></button>}</footer>
     </div></div>}

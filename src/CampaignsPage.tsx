@@ -67,7 +67,7 @@ export default function CampaignsPage() {
     <main className="container campaigns-main"><header><h1>Campanhas de desconto</h1><p>Confira as campanhas disponíveis hoje. Os descontos são aplicados automaticamente quando a quantidade atende às regras.</p></header>
       {loading ? <div className="catalog-loading"><span>Carregando campanhas...</span></div> : error ? <div className="empty-results"><h2>Campanhas indisponíveis</h2><p>{error}</p></div> : campaigns.length === 0 ? <div className="empty-results"><Percent /><h2>Nenhuma campanha disponível hoje</h2><p>Volte em breve para conferir novas condições.</p></div> : <div className="campaign-grid">{campaigns.map((campaign) => {
         const rule = campaign.ruleType === 'buy_get'
-          ? `Compre ${campaign.buyQuantity} e leve ${campaign.freeQuantity}`
+          ? `Compre ${campaign.buyQuantity} e ganhe ${(campaign.rewardItems || []).reduce((sum, reward) => sum + reward.quantity, 0)} unidade(s)`
           : campaign.ruleType === 'fixed'
             ? `R$ ${Number(campaign.discountValue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de desconto`
             : `${Number(campaign.discountValue || 0).toLocaleString('pt-BR')}% de desconto`
@@ -81,7 +81,7 @@ export default function CampaignsPage() {
           <div className="campaign-rule-preview"><span>{campaign.ruleType === 'buy_get'
             ? `${rule} ${campaign.thresholdBasis === 'boxes' ? 'caixas completas' : 'unidades'} dos produtos participantes.`
             : `${rule} a partir de ${campaign.thresholdQuantity} ${campaign.thresholdBasis === 'boxes' ? 'caixas completas' : 'unidades somadas'} dos produtos participantes.`}</span></div>
-          {campaign.ruleType === 'buy_get' && Boolean(campaign.rewards?.length) && <p className="campaign-rewards"><strong>Produtos grátis:</strong> {campaign.rewards?.map((product) => product.name).join(', ')}</p>}
+          {campaign.ruleType === 'buy_get' && Boolean(campaign.rewards?.length) && <p className="campaign-rewards"><strong>Produtos grátis:</strong> {campaign.rewards?.map((product) => `${campaign.rewardItems?.find((item) => item.code === product.code)?.quantity || 0} un. ${product.name}`).join(', ')}</p>}
           <a className="campaign-open" href={`/?campanha=${campaign.code}#produtos`}>Ver produtos da campanha <ArrowRight /></a>
         </article>      })}</div>}
     </main>

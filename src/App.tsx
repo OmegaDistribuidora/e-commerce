@@ -601,6 +601,8 @@ function StorePage({
         throw new Error(
           data?.message || "Não foi possível validar o estoque agora.",
         );
+      const cartResponse = await authenticatedFetch('/api/customer/cart');
+      if (cartResponse.ok) setCart((await cartResponse.json()).items || []);
       return true;
     } catch (error) {
       setToast(
@@ -632,16 +634,9 @@ function StorePage({
       );
       return;
     }
-    const existing = cart.find((item) => item.id === product.id);
+    const existing = cart.find((item) => item.id === product.id && !item.isGift);
     const nextQuantity = (existing?.quantity || 0) + product.salesMultiple;
     if (!(await validateCartQuantity(product.id, nextQuantity))) return;
-    setCart((current) =>
-      existing
-        ? current.map((item) =>
-            item.id === product.id ? { ...item, quantity: nextQuantity } : item,
-          )
-        : [...current, { ...product, quantity: nextQuantity }],
-    );
     setToast(`${product.name} adicionado ao carrinho`);
   }
 
@@ -868,33 +863,21 @@ function StorePage({
   }
 
   async function changeQuantity(id: number, delta: number) {
-    const item = cart.find((candidate) => candidate.id === id);
+    const item = cart.find((candidate) => candidate.id === id && !candidate.isGift);
     if (!item) return false;
     const nextQuantity = item.quantity + delta;
     if (nextQuantity <= 0) {
       return removeFromCart(id);
     }
     if (!(await validateCartQuantity(id, nextQuantity))) return false;
-    setCart((current) =>
-      current.map((candidate) =>
-        candidate.id === id
-          ? { ...candidate, quantity: nextQuantity }
-          : candidate,
-      ),
-    );
     return true;
   }
 
   async function setQuantity(id: number, quantity: number) {
-    const item = cart.find((candidate) => candidate.id === id);
+    const item = cart.find((candidate) => candidate.id === id && !candidate.isGift);
     if (!item) return false;
     if (quantity === item.quantity) return true;
     if (!(await validateCartQuantity(id, quantity))) return false;
-    setCart((current) =>
-      current.map((candidate) =>
-        candidate.id === id ? { ...candidate, quantity } : candidate,
-      ),
-    );
     return true;
   }
 
@@ -908,7 +891,8 @@ function StorePage({
         const data = await response.json().catch(() => null);
         throw new Error(data?.message || "Não foi possível remover o item.");
       }
-      setCart((current) => current.filter((item) => item.id !== id));
+      const cartResponse = await authenticatedFetch('/api/customer/cart');
+      if (cartResponse.ok) setCart((await cartResponse.json()).items || []);
       return true;
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Não foi possível remover o item.");
@@ -951,7 +935,7 @@ function StorePage({
         body: JSON.stringify({
           paymentPlan,
           couponCode,
-          items: cart.map((item) => ({
+          items: cart.filter((item) => !item.isGift).map((item) => ({
             productId: item.id,
             quantity: item.quantity,
           })),
@@ -1028,7 +1012,7 @@ function StorePage({
           paymentPlan: form.get("paymentPlan"),
           couponCode: appliedCouponCode,
           notes: form.get("notes"),
-          items: cart.map((item) => ({
+          items: cart.filter((item) => !item.isGift).map((item) => ({
             productId: item.id,
             quantity: item.quantity,
           })),
@@ -1665,7 +1649,7 @@ function StorePage({
                           toggleFavorite={toggleFavorite}
                           favorite={favoriteIds.has(product.id)}
                           quantity={
-                            cart.find((item) => item.id === product.id)
+                            cart.find((item) => item.id === product.id && !item.isGift)
                               ?.quantity ?? 0
                           }
                           authenticated={Boolean(customer)}
@@ -1984,7 +1968,7 @@ function StorePage({
                       campaignQuantities,
                     );
                     return (
-                      <div className="cart-item" key={item.id}>
+                      <div className="cart-item" key={item.isGift ? `gift-${item.giftCampaignCode}-${item.id}` : item.id}>
                         <div className="cart-product-image">
                           {item.image ? (
                             <img src={item.image} alt="" />
@@ -1994,17 +1978,14 @@ function StorePage({
                         </div>
                         <div className="cart-product-info">
                           <strong>{item.name}</strong>
-                          <small>
-                            Vendido em múltiplos de {item.salesMultiple}{" "}
-                            unidades
-                          </small>
+                          <small>{item.isGift ? `Brinde da campanha ${item.giftCampaignName || item.giftCampaignCode}` : `Vendido em múltiplos de ${item.salesMultiple} unidades`}</small>
                           <span>
                             {unitMoney.format(price.unitPrice ?? 0)} / unidade
-                            {price.discountPercent > 0
+                            {!item.isGift && price.discountPercent > 0
                               ? ` · ${price.discountPercent}% de desconto`
                               : ""}
                           </span>
-                          <div className="quantity-control">
+                          {!item.isGift && <div className="quantity-control">
                             <button
                               disabled={stockCheckingIds.has(item.id)}
                               onClick={() =>
@@ -2036,7 +2017,7 @@ function StorePage({
                             >
                               <Trash2 size={16} />
                             </button>
-                          </div>
+                          </div>}
                         </div>
                       </div>
                     );

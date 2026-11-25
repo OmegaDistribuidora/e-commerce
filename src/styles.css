@@ -1368,7 +1368,17 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .campaign-form .coupon-search input{padding-left:48px}
 .campaign-selected{display:flex;gap:7px;flex-wrap:wrap;max-height:100px;overflow:auto}
 .campaign-selected button{display:flex;align-items:center;gap:6px;border:0;border-radius:100px;padding:6px 10px;background:#eaf2fc;color:#0755af;font-weight:700;cursor:pointer}
-.campaign-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:330px;overflow:auto}
+.campaign-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:min(52vh,520px);min-height:310px;overflow:auto;align-content:start}
+.campaign-picker-toolbar{display:flex;gap:10px;align-items:center}
+.campaign-picker-toolbar .coupon-search{flex:1;min-width:0}
+.campaign-picker-toolbar .picker-select-all{flex:none;min-height:42px;padding:4px 12px;white-space:nowrap}
+.campaign-selected{max-height:62px}
+.campaign-reward-quantities{display:grid;gap:10px}
+.campaign-reward-quantities h4{margin:0;color:#092b64}
+.campaign-reward-quantities label{display:flex!important;align-items:center;gap:12px;min-width:0}
+.campaign-reward-quantities label span{flex:1;min-width:0}
+.campaign-reward-quantities input{width:100px!important;min-height:40px!important}
+.campaign-reward-quantities small{color:#637a98}
 .campaign-options label{display:flex;align-items:center;gap:11px;background:#f4f7fb;border-radius:10px;padding:11px 13px;cursor:pointer;min-width:0}
 .campaign-options label span{display:grid;min-width:0;gap:2px}
 .campaign-options label b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1379,3 +1389,4 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .campaign-review dt{font-size:12px;color:#647794}
 .campaign-review dd{margin:4px 0 0;font-weight:700;color:#092b64}
 @media(max-width:640px){.campaign-form{padding:18px}.campaign-form .form-row,.campaign-options,.campaign-review dl{grid-template-columns:1fr}.campaign-modal{max-height:94dvh}.campaign-manager-grid{grid-template-columns:1fr}}
+@media(max-width:640px){.campaign-picker-toolbar{align-items:stretch;flex-direction:column}.campaign-picker-toolbar .picker-select-all{align-self:flex-start;min-height:32px}}

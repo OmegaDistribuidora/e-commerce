@@ -28,6 +28,7 @@ export function formatBrasiliaDateTime(value: string) {
 export function campaignQuantitiesForCart(items: Array<Product & { quantity: number }>) {
   const totals = new Map<number, number>()
   for (const item of items) {
+    if ('isGift' in item && item.isGift) continue
     const campaigns = new Set((item.campaignOffers || []).map((offer) => offer.campaignCode))
     for (const campaignCode of campaigns) {
       totals.set(campaignCode, (totals.get(campaignCode) || 0) + item.quantity)
@@ -42,6 +43,7 @@ export function productPriceForQuantity(
   campaignQuantities?: ReadonlyMap<number, number>,
 ) {
   const basePrice = product.unitPrice
+  if ('isGift' in product && product.isGift) return { unitPrice: 0, discountPercent: 100, campaignCode: Number('giftCampaignCode' in product ? product.giftCampaignCode : 0) || null }
   if (basePrice == null) return { unitPrice: null, discountPercent: 0, campaignCode: null as number | null }
   const offer = [...(product.campaignOffers || [])]
     .filter((item) => {

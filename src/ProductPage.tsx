@@ -50,7 +50,7 @@ export default function ProductPage({ code }: { code: number }) {
         if (cartResponse.ok && Array.isArray(cartData.items)) onlineCart = cartData.items
       }
       setCart(onlineCart)
-      const storedQuantity = onlineCart.find((item) => item.id === loadedProduct.id)?.quantity || 0
+      const storedQuantity = onlineCart.find((item) => item.id === loadedProduct.id && !item.isGift)?.quantity || 0
       setQuantity(storedQuantity)
       setQuantityDraft(String(storedQuantity))
     }).catch((requestError) => setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar o produto.'))
@@ -81,11 +81,8 @@ export default function ProductPage({ code }: { code: number }) {
       } : { method: 'DELETE' })
       const data = response.status === 204 ? null : await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.message || 'Não foi possível atualizar o carrinho agora.')
-      setCart((current) => {
-        const next = current.filter((item) => item.id !== product.id)
-        if (nextQuantity > 0) next.push({ ...product, quantity: nextQuantity })
-        return next
-      })
+      const cartResponse = await authenticatedFetch('/api/customer/cart')
+      if (cartResponse.ok) setCart((await cartResponse.json()).items || [])
       setQuantity(nextQuantity)
       setQuantityDraft(String(nextQuantity))
       return true

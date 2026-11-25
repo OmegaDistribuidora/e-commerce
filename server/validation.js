@@ -149,6 +149,7 @@ export const managedCampaignSchema = z.object({
   scopeType: z.enum(['products', 'sections', 'suppliers']),
   targetValues: z.array(z.coerce.number().int().positive()).min(1).max(5000),
   rewardProductCodes: z.array(z.coerce.number().int().positive()).max(5000).default([]),
+  rewardItems: z.array(z.object({ code: z.coerce.number().int().positive(), quantity: z.coerce.number().int().positive().max(100000) })).max(5000).default([]),
   discountValue: z.coerce.number().nonnegative().max(99999999),
   thresholdBasis: z.enum(['units', 'boxes']).default('units'),
   thresholdQuantity: z.coerce.number().int().positive().max(1000000).default(1),
@@ -163,7 +164,8 @@ export const managedCampaignSchema = z.object({
   if (value.endsOn < value.startsOn) context.addIssue({ code: 'custom', path: ['endsOn'], message: 'O fim deve ser posterior ao início.' })
   if (value.ruleType === 'percent' && (value.discountValue <= 0 || value.discountValue > 100)) context.addIssue({ code: 'custom', path: ['discountValue'], message: 'Informe um percentual entre 0,01 e 100.' })
   if (value.ruleType === 'fixed' && value.discountValue <= 0) context.addIssue({ code: 'custom', path: ['discountValue'], message: 'Informe um valor de desconto.' })
-  if (value.ruleType === 'buy_get' && !value.rewardProductCodes.length) context.addIssue({ code: 'custom', path: ['rewardProductCodes'], message: 'Selecione os produtos gratuitos.' })
+  if (value.ruleType === 'buy_get' && !value.rewardItems.length) context.addIssue({ code: 'custom', path: ['rewardItems'], message: 'Selecione os produtos gratuitos e informe a quantidade de cada um.' })
+  if (new Set(value.rewardItems.map((item) => item.code)).size !== value.rewardItems.length) context.addIssue({ code: 'custom', path: ['rewardItems'], message: 'Um produto gratuito foi selecionado mais de uma vez.' })
 })
 
 const priceValue = z.coerce.number().nonnegative().max(99999999).nullable()

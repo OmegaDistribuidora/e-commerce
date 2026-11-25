@@ -67,6 +67,7 @@ export async function refreshManagedCampaignProducts(database, campaignId = null
 export function campaignDiscounts(campaigns, lines) {
   const candidates = new Map()
   for (const campaign of campaigns) {
+    if (campaign.rule_type === 'buy_get') continue
     const eligible = lines.filter((line) => campaign.productIds.has(Number(line.product.id)))
     if (!eligible.length) continue
     const quantity = eligible.reduce((sum, line) => sum + (campaign.threshold_basis === 'boxes'
@@ -86,34 +87,6 @@ export function campaignDiscounts(campaigns, lines) {
         amounts.set(Number(line.product.id), amount)
         remaining -= amount
       }
-    } else if (campaign.rule_type === 'buy_get') {
-      const buy = Number(campaign.buy_quantity)
-      const free = Number(campaign.free_quantity)
-      const basis = campaign.threshold_basis
-      const rewards = lines.filter((line) => campaign.reward_product_codes?.includes(Number(line.product.external_id)))
-        .sort((a, b) => Number(campaign.productIds.has(Number(a.product.id))) - Number(campaign.productIds.has(Number(b.product.id))) || a.baseUnitPrice - b.baseUnitPrice)
-      const separateRewards = rewards.filter((line) => !campaign.productIds.has(Number(line.product.id)))
-      const separateCapacity = separateRewards.reduce((sum, line) => sum + Math.floor(line.units / (basis === 'boxes' ? Number(line.product.units_per_box || 1) : 1)), 0)
-      const rewardCapacity = rewards.reduce((sum, line) => sum + Math.floor(line.units / (basis === 'boxes' ? Number(line.product.units_per_box || 1) : 1)), 0)
-      let freeRemaining = 0
-      // The same item may qualify and be free, but a free unit cannot count
-      // toward the paid minimum. Try fewer groups when the largest group count
-      // leaves no units available for the reward (for example, buy 3/get 1 on 6).
-      const maxGroups = Math.floor(quantity / buy)
-      const crossover = Math.max(1, Math.min(maxGroups, Math.floor((quantity + separateCapacity) / (buy + free))))
-      for (const groups of new Set([crossover, Math.min(maxGroups, crossover + 1), maxGroups])) {
-        if (groups < 1) continue
-        const available = Math.min(groups * free, rewardCapacity, separateCapacity + Math.max(0, quantity - buy * groups))
-        if (available > freeRemaining) freeRemaining = available
-      }
-      for (const line of rewards) {
-        const factor = basis === 'boxes' ? Number(line.product.units_per_box || 1) : 1
-        const maxReward = Math.floor(line.units / factor)
-        const count = Math.min(freeRemaining, maxReward)
-        if (count > 0) amounts.set(Number(line.product.id), count * factor * Math.round(line.baseUnitPrice * 100))
-        freeRemaining -= count
-        if (!freeRemaining) break
-      }
     }
     for (const [productId, cents] of amounts) {
       const existing = candidates.get(productId)
@@ -121,4 +94,27 @@ export function campaignDiscounts(campaigns, lines) {
     }
   }
   return candidates
+}
+
+// Gifts are derived from paid lines, never from gifts already in the cart.
+export function campaignGiftQuantities(campaigns, paidLines) {
+  const gifts = []
+  for (const campaign of campaigns) {
+    if (campaign.rule_type !== 'buy_get') continue
+    const buy = Number(campaign.buy_quantity)
+    if (!Number.isSafeInteger(buy) || buy < 1) continue
+    const qualified = paidLines.filter((line) => campaign.productIds.has(Number(line.product.id)))
+    const count = qualified.reduce((sum, line) => sum + (campaign.threshold_basis === 'boxes'
+      ? Math.floor(Number(line.units) / Math.max(1, Number(line.product.units_per_box))) : Number(line.units)), 0)
+    const groups = Math.floor(count / buy)
+    if (!groups) continue
+    for (const reward of campaign.reward_items || []) {
+      const code = Number(reward.code)
+      const quantity = groups * Number(reward.quantity)
+      if (Number.isSafeInteger(code) && Number.isSafeInteger(quantity) && quantity > 0 && quantity <= 100000) {
+        gifts.push({ code, quantity, campaignCode: Number(campaign.external_id), campaignName: campaign.name })
+      }
+    }
+  }
+  return gifts
 }

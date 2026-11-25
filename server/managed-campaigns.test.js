@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { campaignAllowed, campaignDiscounts } from './managed-campaigns.js'
+import { campaignAllowed, campaignDiscounts, campaignGiftQuantities } from './managed-campaigns.js'
 
 const line = (id, units, price = 10, box = 6) => ({
   product: { id, external_id: id, units_per_box: box }, units, baseUnitPrice: price,
@@ -32,20 +32,20 @@ test('caixas completas são somadas sem contar caixas parciais', () => {
   assert.equal(campaignDiscounts([campaign({ threshold_basis: 'boxes', threshold_quantity: 3 })], [line(1, 8), line(2, 6)]).size, 0)
 })
 
-test('compre X leve Y preserva unidades pagas quando o prêmio também qualifica', () => {
-  const offer = campaign({ rule_type: 'buy_get', buy_quantity: 3, free_quantity: 1, reward_product_codes: [1], productIds: new Set([1]) })
-  assert.equal(campaignDiscounts([offer], [line(1, 3)]).size, 0)
-  assert.equal(campaignDiscounts([offer], [line(1, 4)]).get(1).cents, 1000)
-  assert.equal(campaignDiscounts([offer], [line(1, 6)]).get(1).cents, 1000)
-  assert.equal(campaignDiscounts([offer], [line(1, 8)]).get(1).cents, 2000)
+test('buy-get totals qualifying products and creates each gift', () => {
+  const offer = campaign({ rule_type: 'buy_get', buy_quantity: 100,
+    reward_items: [{ code: 30, quantity: 1 }, { code: 31, quantity: 1 }] })
+  assert.deepEqual(campaignGiftQuantities([offer], [line(1, 60), line(2, 40)]).map(({ code, quantity }) => [code, quantity]), [[30, 1], [31, 1]])
+  assert.equal(campaignGiftQuantities([offer], [line(1, 60), line(2, 39)]).length, 0)
+  assert.deepEqual(campaignGiftQuantities([offer], [line(1, 100), line(2, 100)]).map(({ quantity }) => quantity), [2, 2])
+  assert.equal(campaignDiscounts([offer], [line(1, 100)]).size, 0)
 })
 
-test('compre X leve Y permite produto de prêmio separado', () => {
-  const offer = campaign({ rule_type: 'buy_get', buy_quantity: 3, free_quantity: 1, reward_product_codes: [3] })
-  assert.equal(campaignDiscounts([offer], [line(1, 2), line(2, 1), line(3, 1, 7)]).get(3).cents, 700)
-  const boxes = campaign({ rule_type: 'buy_get', threshold_basis: 'boxes', buy_quantity: 2,
-    free_quantity: 1, reward_product_codes: [3] })
-  assert.equal(campaignDiscounts([boxes], [line(1, 6), line(2, 6), line(3, 6, 7)]).get(3).cents, 4200)
+test('box buy-get counts only complete boxes per qualifying product', () => {
+  const offer = campaign({ rule_type: 'buy_get', threshold_basis: 'boxes', buy_quantity: 2,
+    reward_items: [{ code: 30, quantity: 6 }] })
+  assert.equal(campaignGiftQuantities([offer], [line(1, 6), line(2, 6)])[0].quantity, 6)
+  assert.equal(campaignGiftQuantities([offer], [line(1, 8), line(2, 5)]).length, 0)
 })
 
 test('público exige cliente e cidade quando ambos estão definidos', () => {
