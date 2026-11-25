@@ -93,7 +93,7 @@ def sync_products() -> None:
 
 with DAG(
     dag_id="ecommerce_produtos_precos",
-    description="Sincroniza produtos, campanhas, preços e condições comerciais do WinThor com o e-commerce.",
+    description="Sincroniza produtos, preços e condições comerciais com o e-commerce.",
     default_args={
         "owner": "omega",
         "depends_on_past": False,
@@ -108,7 +108,7 @@ with DAG(
     max_active_runs=1,
     dagrun_timeout=timedelta(minutes=20),
     is_paused_upon_creation=True,
-    tags=["omega", "ecommerce", "winthor", "produtos", "campanhas", "precos"],
+    tags=["omega", "ecommerce", "winthor", "produtos", "precos"],
 ) as dag:
     PythonOperator(
         task_id="sincronizar_catalogo_e_condicoes_comerciais",

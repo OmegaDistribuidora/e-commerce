@@ -1,6 +1,7 @@
 import PhotoManager from "./PhotoManager";
 import InstitutionalEditor from "./InstitutionalEditor";
 import CouponManager from "./CouponManager";
+import CampaignManager from "./CampaignManager";
 import { ImageOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -1321,115 +1322,7 @@ export default function StaffPortal() {
             </div>
           </section>
         )}
-        {tab === "campaigns" && (
-          <section className="staff-campaigns">
-            <div className="staff-section-heading">
-              <div>
-                <h2>Campanhas sincronizadas</h2>
-                <span>
-                  Consulte as campanhas disponíveis, seus períodos, produtos
-                  participantes e regras de desconto.
-                </span>
-              </div>
-              <strong>{campaigns.length} campanhas</strong>
-            </div>
-            {campaigns.length === 0 ? (
-              <div className="staff-empty">
-                Nenhuma campanha foi sincronizada ainda.
-              </div>
-            ) : (
-              <div className="staff-campaign-list">
-                {campaigns.map((campaign) => {
-                  const today = new Date().toISOString().slice(0, 10);
-                  const starts = String(campaign.startsOn).slice(0, 10);
-                  const ends = String(campaign.endsOn).slice(0, 10);
-                  const status = !campaign.active
-                    ? "Removida"
-                    : today < starts
-                      ? "Futura"
-                      : today > ends
-                        ? "Encerrada"
-                        : "Vigente";
-                  return (
-                    <details key={campaign.code}>
-                      <summary>
-                        <span>
-                          <Tag />
-                          <span>
-                            <strong>{campaign.description}</strong>
-                            <small>
-                              Campanha #{campaign.code} ·{" "}
-                              {campaign.products.length} produtos
-                            </small>
-                          </span>
-                        </span>
-                        <span>
-                          <b
-                            className={`campaign-admin-status ${status.toLowerCase()}`}
-                          >
-                            {status}
-                          </b>
-                          <small>
-                            {new Date(`${starts}T12:00:00`).toLocaleDateString(
-                              "pt-BR",
-                            )}{" "}
-                            a{" "}
-                            {new Date(`${ends}T12:00:00`).toLocaleDateString(
-                              "pt-BR",
-                            )}
-                          </small>
-                        </span>
-                      </summary>
-                      <div>
-                        <p>
-                          {campaign.usesProductFamily
-                            ? "Considera a família de produtos."
-                            : "Considera somente os produtos cadastrados."}
-                          {campaign.allowedCustomerIds?.length
-                            ? ` Exclusiva para os clientes: ${campaign.allowedCustomerIds.join(", ")}.`
-                            : " Disponível para todos os clientes elegíveis."}
-                          {campaign.sourceUpdatedAt &&
-                            ` Sincronizada em ${new Date(campaign.sourceUpdatedAt).toLocaleString("pt-BR")}.`}
-                        </p>
-                        <div className="staff-campaign-products">
-                          {campaign.products.map((product, index) => (
-                            <div key={`${product.code}-${index}`}>
-                              <span>
-                                <strong>
-                                  {product.code} · {product.name}
-                                </strong>
-                                <small>
-                                  {product.brand}
-                                  {product.origin
-                                    ? ` · ${product.origin === "FAMILIA" ? "produto da família" : "produto cadastrado"}`
-                                    : ""}
-                                </small>
-                              </span>
-                              <span>
-                                <b>
-                                  {Number(
-                                    product.discountPercent || 0,
-                                  ).toLocaleString("pt-BR")}
-                                  %
-                                </b>
-                                <small>
-                                  mín. {product.minQuantity}
-                                  {product.maxQuantity
-                                    ? ` · máx. ${product.maxQuantity}`
-                                    : ""}
-                                </small>
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </details>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        )}
+        {tab === "campaigns" && <CampaignManager campaigns={campaigns} onChange={setCampaigns} products={catalogProducts} suppliers={suppliers} departments={catalogDepartments} />}
         {tab === "coupons" && user.role !== "MARKETING" && (
           <CouponManager products={catalogProducts} suppliers={suppliers} departments={catalogDepartments} />
         )}

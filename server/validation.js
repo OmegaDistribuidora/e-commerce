@@ -142,31 +142,28 @@ export const couponSchema = z.object({
   if (value.startsAt && value.endsAt && new Date(value.endsAt) <= new Date(value.startsAt)) context.addIssue({ code: 'custom', path: ['endsAt'], message: 'O encerramento deve ser posterior ao início.' })
 })
 
-const campaignProductSyncSchema = z.object({
-  externalId: z.coerce.number().int().positive(),
-  sequence: z.coerce.number().int().nonnegative().max(1000000).default(0),
-  registeredProductCode: z.coerce.number().int().positive(),
-  origin: z.enum(['CADASTRADO', 'FAMILIA']).default('CADASTRADO'),
-  minQuantity: z.coerce.number().int().positive().max(1000000),
-  maxQuantity: z.coerce.number().int().positive().max(1000000).nullable().optional(),
-  discountPercent: z.coerce.number().min(0).max(100),
-  discountType: z.string().trim().max(80).optional().default(''),
-})
-
-export const campaignSyncSchema = z.object({
-  sourceUpdatedAt: z.string().datetime({ offset: true }),
-  campaigns: z.array(z.object({
-    externalId: z.coerce.number().int().positive(),
-    description: z.string().trim().min(1).max(500),
-    startsOn: z.string().date(),
-    endsOn: z.string().date(),
-    branchCode: z.string().trim().max(80).optional().default(''),
-    usesProductFamily: z.boolean().default(false),
-    // Opcional durante a transição para que um sincronizador antigo não
-    // apague restrições já gravadas. A versão atual sempre envia o snapshot.
-    allowedCustomerIds: z.array(z.coerce.number().int().positive()).max(100000).optional(),
-    products: z.array(campaignProductSyncSchema).max(100000),
-  })).max(10000),
+export const managedCampaignSchema = z.object({
+  name: z.string().trim().min(3).max(160),
+  description: z.string().trim().min(3).max(1000),
+  ruleType: z.enum(['percent', 'fixed', 'buy_get']),
+  scopeType: z.enum(['products', 'sections', 'suppliers']),
+  targetValues: z.array(z.coerce.number().int().positive()).min(1).max(5000),
+  rewardProductCodes: z.array(z.coerce.number().int().positive()).max(5000).default([]),
+  discountValue: z.coerce.number().nonnegative().max(99999999),
+  thresholdBasis: z.enum(['units', 'boxes']).default('units'),
+  thresholdQuantity: z.coerce.number().int().positive().max(1000000).default(1),
+  buyQuantity: z.coerce.number().int().positive().max(1000000).default(1),
+  freeQuantity: z.coerce.number().int().positive().max(1000000).default(1),
+  allowedCustomerIds: z.array(z.coerce.number().int().positive()).max(100000).default([]),
+  allowedCities: z.array(z.string().trim().min(2).max(120)).max(10000).default([]),
+  startsOn: z.string().date(),
+  endsOn: z.string().date(),
+  active: z.boolean().default(true),
+}).superRefine((value, context) => {
+  if (value.endsOn < value.startsOn) context.addIssue({ code: 'custom', path: ['endsOn'], message: 'O fim deve ser posterior ao início.' })
+  if (value.ruleType === 'percent' && (value.discountValue <= 0 || value.discountValue > 100)) context.addIssue({ code: 'custom', path: ['discountValue'], message: 'Informe um percentual entre 0,01 e 100.' })
+  if (value.ruleType === 'fixed' && value.discountValue <= 0) context.addIssue({ code: 'custom', path: ['discountValue'], message: 'Informe um valor de desconto.' })
+  if (value.ruleType === 'buy_get' && !value.rewardProductCodes.length) context.addIssue({ code: 'custom', path: ['rewardProductCodes'], message: 'Selecione os produtos gratuitos.' })
 })
 
 const priceValue = z.coerce.number().nonnegative().max(99999999).nullable()

@@ -73,11 +73,23 @@ export type CampaignOffer = {
 }
 
 export type DiscountCampaign = {
+  id?: number
   code: number
+  name?: string
   description: string
   startsOn: string
   endsOn: string
-  usesProductFamily: boolean
+  usesProductFamily?: boolean
+  ruleType?: 'percent' | 'fixed' | 'buy_get'
+  scopeType?: 'products' | 'sections' | 'suppliers'
+  targetValues?: number[]
+  rewardProductCodes?: number[]
+  discountValue?: number
+  thresholdBasis?: 'units' | 'boxes'
+  thresholdQuantity?: number
+  buyQuantity?: number
+  freeQuantity?: number
+  allowedCities?: string[]
   branchCode?: string
   active?: boolean
   sourceUpdatedAt?: string | null
@@ -96,6 +108,7 @@ export type DiscountCampaign = {
     discountType?: string
     origin?: string
   }>
+  rewards?: Array<{ id: number; code: number; name: string; brand: string; supplierId: number; image?: string | null }>
 }
 
 export type CatalogSection = {

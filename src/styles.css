@@ -1342,3 +1342,40 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
   .order-progress-step:not(:first-child)::before { top: auto; bottom: calc(100% + 2px); left: calc(var(--progress-node) / 2 - 1.5px); right: auto; width: 3px; height: 12px; }
   .order-progress-step.cancelled::before { background: linear-gradient(180deg, var(--progress-done), var(--progress-cancel)); }
 }
+.campaign-manager-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:24px}
+.campaign-manager-grid article{display:flex;align-items:flex-start;gap:14px;background:#fff;border:1px solid #d9e3f0;border-radius:16px;padding:20px;color:#0a2c65}
+.campaign-manager-grid article>svg{color:#fc6800;flex:none}
+.campaign-manager-grid article>div{display:grid;gap:5px;min-width:0;flex:1}
+.campaign-manager-grid article strong{font-size:17px}
+.campaign-manager-grid article span{color:#506989;line-height:1.35}
+.campaign-manager-grid article small{font-size:12px;color:#6b7d97}
+.campaign-manager-grid article.inactive{opacity:.58}
+.campaign-modal{width:min(960px,calc(100vw - 28px));max-height:min(90vh,900px);display:flex;flex-direction:column;overflow:hidden}
+.campaign-modal .banner-modal-header,.campaign-modal .banner-modal-actions{flex:none}
+.campaign-modal .banner-modal-actions{position:static;bottom:auto;margin:0;padding:14px 20px}
+.campaign-form{padding:26px 30px;overflow-y:auto;display:grid;gap:18px;min-height:0}
+.campaign-form h3{font-size:22px;margin:0;color:#092b64}
+.campaign-rewards{overflow-wrap:anywhere}
+.campaign-form label:not(.coupon-search):not(.campaign-options label){display:grid;gap:7px;font-weight:700;color:#173965}
+.campaign-form input:not([type=checkbox]),.campaign-form select,.campaign-form textarea{width:100%;min-height:48px;border:1px solid #cbd9e9;border-radius:10px;padding:11px 13px;background:#fff;color:#0a2d67;font:inherit}
+.campaign-form textarea{resize:vertical}
+.campaign-form .form-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.campaign-audience-toggles{display:flex;gap:22px;flex-wrap:wrap;border:1px solid #d9e3f0;border-radius:12px;padding:16px}
+.campaign-audience-toggles label{display:flex!important;align-items:center;gap:8px!important}
+.campaign-picker-intro{margin:-8px 0 0;color:#647794}
+.campaign-form .coupon-search{position:relative;display:flex;align-items:center}
+.campaign-form .coupon-search svg{position:absolute;left:14px;color:#0755af}
+.campaign-form .coupon-search input{padding-left:48px}
+.campaign-selected{display:flex;gap:7px;flex-wrap:wrap;max-height:100px;overflow:auto}
+.campaign-selected button{display:flex;align-items:center;gap:6px;border:0;border-radius:100px;padding:6px 10px;background:#eaf2fc;color:#0755af;font-weight:700;cursor:pointer}
+.campaign-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:330px;overflow:auto}
+.campaign-options label{display:flex;align-items:center;gap:11px;background:#f4f7fb;border-radius:10px;padding:11px 13px;cursor:pointer;min-width:0}
+.campaign-options label span{display:grid;min-width:0;gap:2px}
+.campaign-options label b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.campaign-options label small{font-size:11px;color:#6b7d97}
+.campaign-options label svg{margin-left:auto;color:#078158;flex:none}
+.campaign-review dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.campaign-review dl div{padding:14px;border:1px solid #d9e3f0;border-radius:10px}
+.campaign-review dt{font-size:12px;color:#647794}
+.campaign-review dd{margin:4px 0 0;font-weight:700;color:#092b64}
+@media(max-width:640px){.campaign-form{padding:18px}.campaign-form .form-row,.campaign-options,.campaign-review dl{grid-template-columns:1fr}.campaign-modal{max-height:94dvh}.campaign-manager-grid{grid-template-columns:1fr}}

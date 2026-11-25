@@ -127,6 +127,20 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS allow_sales_multiple BOOLEAN NOT NULL DEFAULT TRUE')
   await pool.query("ALTER TABLE customer_commercial_conditions ADD COLUMN IF NOT EXISTS restricted_supplier_ids INTEGER[] NOT NULL DEFAULT '{}'")
   await pool.query('ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS customer_restricted BOOLEAN NOT NULL DEFAULT FALSE')
+  await pool.query("ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS origin VARCHAR(12) NOT NULL DEFAULT 'winthor'")
+  await pool.query('ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS name VARCHAR(160)')
+  await pool.query("ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS rule_type VARCHAR(12) NOT NULL DEFAULT 'percent'")
+  await pool.query("ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS scope_type VARCHAR(12) NOT NULL DEFAULT 'products'")
+  await pool.query("ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS target_values INTEGER[] NOT NULL DEFAULT '{}'")
+  await pool.query("ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS reward_product_codes INTEGER[] NOT NULL DEFAULT '{}'")
+  await pool.query('ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS discount_value NUMERIC(14,2) NOT NULL DEFAULT 0')
+  await pool.query("ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS threshold_basis VARCHAR(8) NOT NULL DEFAULT 'units'")
+  await pool.query('ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS threshold_quantity INTEGER NOT NULL DEFAULT 1')
+  await pool.query('ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS buy_quantity INTEGER NOT NULL DEFAULT 1')
+  await pool.query('ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS free_quantity INTEGER NOT NULL DEFAULT 1')
+  await pool.query("ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS allowed_customer_ids INTEGER[] NOT NULL DEFAULT '{}'")
+  await pool.query("ALTER TABLE discount_campaigns ADD COLUMN IF NOT EXISTS allowed_cities TEXT[] NOT NULL DEFAULT '{}'")
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_discount_campaigns_origin_period ON discount_campaigns(origin,active,starts_on,ends_on)')
   if (process.env.DATABASE_URL) {
     await pool.query(`CREATE TABLE IF NOT EXISTS discount_campaign_customers (
       campaign_id BIGINT NOT NULL REFERENCES discount_campaigns(id) ON DELETE CASCADE,

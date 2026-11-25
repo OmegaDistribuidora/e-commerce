@@ -66,10 +66,24 @@ export default function CampaignsPage() {
     </header>
     <main className="container campaigns-main"><header><h1>Campanhas de desconto</h1><p>Confira as campanhas disponíveis hoje. Os descontos são aplicados automaticamente quando a quantidade atende às regras.</p></header>
       {loading ? <div className="catalog-loading"><span>Carregando campanhas...</span></div> : error ? <div className="empty-results"><h2>Campanhas indisponíveis</h2><p>{error}</p></div> : campaigns.length === 0 ? <div className="empty-results"><Percent /><h2>Nenhuma campanha disponível hoje</h2><p>Volte em breve para conferir novas condições.</p></div> : <div className="campaign-grid">{campaigns.map((campaign) => {
-        const discounts = campaign.products.flatMap((product) => product.offers || []).map((offer) => offer.discountPercent)
-        const maxDiscount = discounts.length ? Math.max(...discounts) : 0
-        return <article className="campaign-card" key={campaign.code}><header><span><Percent /> até {maxDiscount.toLocaleString('pt-BR')}% de desconto</span><small>Campanha #{campaign.code}</small></header><h2>{campaign.description}</h2><p className="campaign-period"><CalendarDays /> {formatDate(campaign.startsOn)} até {formatDate(campaign.endsOn)}</p><div className="campaign-products-preview">{campaign.products.slice(0, 5).map((product) => <span key={product.code} title={product.name}>{product.image ? <img src={product.image} alt="" /> : <b>{product.name.slice(0, 1)}</b>}</span>)}</div><p><strong>{campaign.products.length} {campaign.products.length === 1 ? 'produto participante' : 'produtos participantes'}</strong>{campaign.usesProductFamily && <small>Inclui produtos da mesma família comercial.</small>}</p><div className="campaign-rule-preview">{campaign.products.slice(0, 3).map((product) => { const offer = product.offers?.[0]; return offer ? <span key={`${product.code}-${offer.minQuantity}`}><b>{offer.discountPercent.toLocaleString('pt-BR')}%</b> a partir de {offer.minQuantity} un. · {product.name}</span> : null })}</div><a className="campaign-open" href={`/?campanha=${campaign.code}#produtos`}>Ver produtos da campanha <ArrowRight /></a></article>
-      })}</div>}
+        const rule = campaign.ruleType === 'buy_get'
+          ? `Compre ${campaign.buyQuantity} e leve ${campaign.freeQuantity}`
+          : campaign.ruleType === 'fixed'
+            ? `R$ ${Number(campaign.discountValue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de desconto`
+            : `${Number(campaign.discountValue || 0).toLocaleString('pt-BR')}% de desconto`
+        return <article className="campaign-card" key={campaign.code}>
+          <header><span><Percent /> {rule}</span><small>Campanha #{campaign.code}</small></header>
+          <h2>{campaign.name || campaign.description}</h2>
+          <p>{campaign.description}</p>
+          <p className="campaign-period"><CalendarDays /> {formatDate(campaign.startsOn)} até {formatDate(campaign.endsOn)}</p>
+          <div className="campaign-products-preview">{campaign.products.slice(0, 5).map((product) => <span key={product.code} title={product.name}>{product.image ? <img src={product.image} alt="" /> : <b>{product.name.slice(0, 1)}</b>}</span>)}</div>
+          <p><strong>{campaign.products.length} {campaign.products.length === 1 ? 'produto participante' : 'produtos participantes'}</strong></p>
+          <div className="campaign-rule-preview"><span>{campaign.ruleType === 'buy_get'
+            ? `${rule} ${campaign.thresholdBasis === 'boxes' ? 'caixas completas' : 'unidades'} dos produtos participantes.`
+            : `${rule} a partir de ${campaign.thresholdQuantity} ${campaign.thresholdBasis === 'boxes' ? 'caixas completas' : 'unidades somadas'} dos produtos participantes.`}</span></div>
+          {campaign.ruleType === 'buy_get' && Boolean(campaign.rewards?.length) && <p className="campaign-rewards"><strong>Produtos grátis:</strong> {campaign.rewards?.map((product) => product.name).join(', ')}</p>}
+          <a className="campaign-open" href={`/?campanha=${campaign.code}#produtos`}>Ver produtos da campanha <ArrowRight /></a>
+        </article>      })}</div>}
     </main>
   </div>
 }
