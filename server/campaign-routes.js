@@ -98,18 +98,10 @@ export function registerCampaignRoutes(app, pool, requireMarketingAccess) {
         return response.status(400).json({ message: 'Um ou mais produtos, seções ou fornecedores não estão disponíveis no catálogo ativo.' })
       }
       if (rewards.length) {
-        const available = await client.query('SELECT external_id,sales_multiple FROM products WHERE active=TRUE AND external_id=ANY($1::integer[])', [rewards])
+        const available = await client.query('SELECT external_id FROM products WHERE active=TRUE AND external_id=ANY($1::integer[])', [rewards])
         if (available.rows.length !== rewards.length) {
           await client.query('ROLLBACK')
           return response.status(400).json({ message: 'Um ou mais produtos gratuitos não estão disponíveis.' })
-        }
-        const rewardByCode = new Map(available.rows.map((product) => [Number(product.external_id), product]))
-        for (const reward of rewardItems) {
-          const multiple = Math.max(1, Number(rewardByCode.get(reward.code)?.sales_multiple || 1))
-          if (reward.quantity % multiple !== 0) {
-            await client.query('ROLLBACK')
-            return response.status(400).json({ message: `O brinde ${reward.code} deve ser informado em múltiplos de ${multiple} unidades.` })
-          }
         }
       }
       if (customerIds.length) {

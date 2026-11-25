@@ -697,7 +697,6 @@ async function eligibleCartGifts(database, pricing, paidLines, customerExternalI
   for (const gift of proposed) {
     const product = byCode.get(gift.code)
     const valid = Boolean(product) && !restricted.has(Number(product.supplier_id))
-      && gift.quantity % purchaseMultiple(pricing, product) === 0
     validByCampaign.set(gift.campaignCode, (validByCampaign.get(gift.campaignCode) ?? true) && valid)
   }
   return proposed.filter((gift) => validByCampaign.get(gift.campaignCode))
@@ -2307,7 +2306,7 @@ app.get('/api/campaigns', async (request, response, next) => {
       campaign.rewardItems.length > 0 && campaign.rewards.length === campaign.rewardItems.length &&
       campaign.rewardItems.every((item) => {
         const reward = byCodeForCampaigns.get(Number(item.code))
-        return reward && Number(item.quantity) % purchaseMultiple(pricing, reward) === 0
+        return Boolean(reward) && Number.isSafeInteger(Number(item.quantity)) && Number(item.quantity) > 0
       })
     )) })
   } catch (error) {
