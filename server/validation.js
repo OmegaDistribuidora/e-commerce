@@ -150,6 +150,7 @@ export const managedCampaignSchema = z.object({
   targetValues: z.array(z.coerce.number().int().positive()).min(1).max(5000),
   rewardProductCodes: z.array(z.coerce.number().int().positive()).max(5000).default([]),
   rewardItems: z.array(z.object({ code: z.coerce.number().int().positive(), quantity: z.coerce.number().int().positive().max(100000) })).max(5000).default([]),
+  allowRepeat: z.boolean().default(false),
   discountValue: z.coerce.number().nonnegative().max(99999999),
   thresholdBasis: z.enum(['units', 'boxes']).default('units'),
   thresholdQuantity: z.coerce.number().int().positive().max(1000000).default(1),

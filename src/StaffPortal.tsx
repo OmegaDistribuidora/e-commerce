@@ -936,7 +936,7 @@ export default function StaffPortal() {
             className={tab === "campaigns" ? "active" : ""}
             onClick={() => changeTab("campaigns")}
           >
-            <Tag /> Campanhas
+            <Tag /> Clube de Ofertas
           </button>
           <button
             className={tab === "photos" ? "active" : ""}
@@ -987,7 +987,7 @@ export default function StaffPortal() {
                     orders: "Pedidos do e-Commerce",
                     abandoned: "Carrinhos abandonados",
                     customers: "Clientes pendentes",
-                    campaigns: "Campanhas de desconto",
+                    campaigns: "Clube de Ofertas",
                     coupons: "Cupons de desconto",
                     categories: "Categorias de produtos",
                     photos: "Fotos",

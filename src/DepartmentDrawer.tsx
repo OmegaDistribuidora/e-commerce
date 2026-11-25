@@ -45,7 +45,7 @@ export default function DepartmentDrawer({ departments, onClose }: { departments
           </div>}
         </div>
       })}</div>
-      <a className="drawer-partners drawer-campaigns" href="/campanhas">Campanhas<ChevronRight size={18} /></a>
+      <a className="drawer-partners drawer-campaigns" href="/campanhas">Clube de Ofertas<ChevronRight size={18} /></a>
       <a className="drawer-partners" href="/parceiros">Parceiros<ChevronRight size={18} /></a>
       <a className="drawer-partners drawer-login" href="/conta">Entrar ou acessar minha conta<ChevronRight size={18} /></a>
     </aside>

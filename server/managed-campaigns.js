@@ -106,7 +106,7 @@ export function campaignGiftQuantities(campaigns, paidLines) {
     const qualified = paidLines.filter((line) => campaign.productIds.has(Number(line.product.id)))
     const count = qualified.reduce((sum, line) => sum + (campaign.threshold_basis === 'boxes'
       ? Math.floor(Number(line.units) / Math.max(1, Number(line.product.units_per_box))) : Number(line.units)), 0)
-    const groups = Math.floor(count / buy)
+    const groups = campaign.allow_repeat ? Math.floor(count / buy) : Number(count >= buy)
     if (!groups) continue
     for (const reward of campaign.reward_items || []) {
       const code = Number(reward.code)

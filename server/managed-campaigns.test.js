@@ -7,7 +7,7 @@ const line = (id, units, price = 10, box = 6) => ({
 })
 const campaign = (overrides = {}) => ({
   external_id: 1, rule_type: 'percent', discount_value: 10, threshold_basis: 'units',
-  threshold_quantity: 1, buy_quantity: 3, free_quantity: 1,
+  threshold_quantity: 1, buy_quantity: 3, free_quantity: 1, allow_repeat: false,
   reward_product_codes: [], productIds: new Set([1, 2]), ...overrides,
 })
 
@@ -32,12 +32,13 @@ test('caixas completas são somadas sem contar caixas parciais', () => {
   assert.equal(campaignDiscounts([campaign({ threshold_basis: 'boxes', threshold_quantity: 3 })], [line(1, 8), line(2, 6)]).size, 0)
 })
 
-test('buy-get totals qualifying products and creates each gift', () => {
+test('buy-get totals qualifying products and grants each configured gift once by default', () => {
   const offer = campaign({ rule_type: 'buy_get', buy_quantity: 100,
-    reward_items: [{ code: 30, quantity: 1 }, { code: 31, quantity: 1 }] })
-  assert.deepEqual(campaignGiftQuantities([offer], [line(1, 60), line(2, 40)]).map(({ code, quantity }) => [code, quantity]), [[30, 1], [31, 1]])
+    reward_items: [{ code: 30, quantity: 2 }, { code: 31, quantity: 3 }] })
+  assert.deepEqual(campaignGiftQuantities([offer], [line(1, 60), line(2, 40)]).map(({ code, quantity }) => [code, quantity]), [[30, 2], [31, 3]])
   assert.equal(campaignGiftQuantities([offer], [line(1, 60), line(2, 39)]).length, 0)
-  assert.deepEqual(campaignGiftQuantities([offer], [line(1, 100), line(2, 100)]).map(({ quantity }) => quantity), [2, 2])
+  assert.deepEqual(campaignGiftQuantities([offer], [line(1, 100), line(2, 100)]).map(({ quantity }) => quantity), [2, 3])
+  assert.deepEqual(campaignGiftQuantities([{ ...offer, allow_repeat: true }], [line(1, 100), line(2, 100)]).map(({ quantity }) => quantity), [4, 6])
   assert.equal(campaignDiscounts([offer], [line(1, 100)]).size, 0)
 })
 

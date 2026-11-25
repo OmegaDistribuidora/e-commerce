@@ -286,6 +286,7 @@ CREATE TABLE IF NOT EXISTS discount_campaigns (
   target_values INTEGER[] NOT NULL DEFAULT '{}',
   reward_product_codes INTEGER[] NOT NULL DEFAULT '{}',
   reward_items JSONB NOT NULL DEFAULT '[]'::jsonb,
+  allow_repeat BOOLEAN NOT NULL DEFAULT FALSE,
   discount_value NUMERIC(14,2) NOT NULL DEFAULT 0,
   threshold_basis VARCHAR(8) NOT NULL DEFAULT 'units',
   threshold_quantity INTEGER NOT NULL DEFAULT 1,

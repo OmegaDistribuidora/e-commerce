@@ -1226,7 +1226,7 @@ function StorePage({
               ))
             )}
             <a className="nav-campaigns" href="/campanhas">
-              Campanhas
+              Clube de Ofertas
             </a>
             <div
               className={`partners-nav-item${partnersMenuClosed ? " closed" : ""}`}
@@ -1517,7 +1517,7 @@ function StorePage({
               </h1>
               {campaignCode > 0 && (
                 <p className="taxonomy-breadcrumb">
-                  <a href="/campanhas">Campanhas de desconto</a> → campanha #
+                  <a href="/campanhas">Clube de Ofertas</a> → campanha #
                   {campaignCode}
                 </p>
               )}
@@ -1891,7 +1891,7 @@ function StorePage({
               href="/campanhas"
               onClick={() => setMenuOpen(false)}
             >
-              Campanhas
+              Clube de Ofertas
               <ChevronRight size={18} />
             </a>
             <a

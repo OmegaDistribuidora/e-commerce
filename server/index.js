@@ -666,7 +666,7 @@ async function eligibleCartGifts(database, pricing, paidLines, customerExternalI
   const ids = [...new Set(paidLines.map((line) => Number(line.product.id)))]
   if (!ids.length) return []
   const campaigns = await database.query(
-    `SELECT dc.external_id,dc.name,dc.rule_type,dc.buy_quantity,dc.threshold_basis,dc.reward_items,
+    `SELECT dc.external_id,dc.name,dc.rule_type,dc.buy_quantity,dc.threshold_basis,dc.reward_items,dc.allow_repeat,
             dc.allowed_customer_ids,dc.allowed_cities,dcp.product_id
      FROM discount_campaigns dc JOIN discount_campaign_products dcp ON dcp.campaign_id=dc.id
      WHERE dc.origin='ecommerce' AND dc.active=TRUE AND dc.rule_type='buy_get'
@@ -2244,7 +2244,7 @@ app.get('/api/campaigns', async (request, response, next) => {
     const restrictedSupplierIds = pricing?.restrictedSupplierIds || []
     const customerExternalId = Number(request.customer?.external_id) || null
     const result = await pool.query(
-      `SELECT dc.external_id,dc.name AS campaign_name,dc.description,dc.starts_on,dc.ends_on,dc.rule_type,dc.reward_product_codes,dc.reward_items,
+      `SELECT dc.external_id,dc.name AS campaign_name,dc.description,dc.starts_on,dc.ends_on,dc.rule_type,dc.reward_product_codes,dc.reward_items,dc.allow_repeat,
               dc.discount_value,dc.threshold_basis,dc.threshold_quantity,dc.buy_quantity,dc.free_quantity,
               p.id AS product_id,p.external_id AS product_code,p.name,p.brand,p.supplier_id,
               p.image_path,p.image_data IS NOT NULL AS image_uploaded,p.image_hidden,p.image_updated_at,
@@ -2267,7 +2267,7 @@ app.get('/api/campaigns', async (request, response, next) => {
         ruleType: row.rule_type, discountValue: Number(row.discount_value),
         thresholdBasis: row.threshold_basis, thresholdQuantity: Number(row.threshold_quantity),
         buyQuantity: Number(row.buy_quantity), freeQuantity: Number(row.free_quantity),
-        rewardProductCodes: (row.reward_product_codes || []).map(Number), rewardItems: row.reward_items || [], products: [], rewards: [],
+        rewardProductCodes: (row.reward_product_codes || []).map(Number), rewardItems: row.reward_items || [], allowRepeat: Boolean(row.allow_repeat), products: [], rewards: [],
       }
       let product = campaign.products.find((item) => item.id === Number(row.product_id))
       if (!product) {
@@ -2344,7 +2344,7 @@ app.get('/api/products', async (request, response, next) => {
     }
     if (Number.isSafeInteger(campaign) && campaign > 0) {
       const selectedCampaign = await pool.query(
-        `SELECT dcf.id,dcf.reward_product_codes,dcpf.product_id
+        `SELECT dcf.id,dcpf.product_id
          FROM discount_campaigns dcf
          LEFT JOIN discount_campaign_products dcpf ON dcpf.campaign_id=dcf.id
          WHERE dcf.external_id=$1 AND dcf.origin='ecommerce' AND dcf.active=TRUE
@@ -2353,15 +2353,7 @@ app.get('/api/products', async (request, response, next) => {
            AND (dcf.allowed_cities='{}'::text[] OR $4::text=ANY(dcf.allowed_cities))`,
         [campaign, currentBrasiliaDate(), customerExternalId, normalizedCity(request.customer?.city)],
       )
-      const productIds = selectedCampaign.rows.map((row) => Number(row.product_id)).filter(Boolean)
-      if (selectedCampaign.rows.length && selectedCampaign.rows[0].reward_product_codes?.length) {
-        const rewardProducts = await pool.query(
-          'SELECT id FROM products WHERE active=TRUE AND external_id=ANY($1::integer[])',
-          [selectedCampaign.rows[0].reward_product_codes],
-        )
-        productIds.push(...rewardProducts.rows.map((row) => Number(row.id)))
-      }
-      const selected = [...new Set(productIds)]
+      const selected = [...new Set(selectedCampaign.rows.map((row) => Number(row.product_id)).filter(Boolean))]
       if (selected.length) {
         const first = params.length
         params.push(...selected)

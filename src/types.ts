@@ -85,6 +85,7 @@ export type DiscountCampaign = {
   targetValues?: number[]
   rewardProductCodes?: number[]
   rewardItems?: Array<{ code: number; quantity: number }>
+  allowRepeat?: boolean
   discountValue?: number
   thresholdBasis?: 'units' | 'boxes'
   thresholdQuantity?: number
