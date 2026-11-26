@@ -141,6 +141,10 @@ export default function AccountPage() {
   );
   const [notice, setNotice] = useState("");
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showRegistrationPassword, setShowRegistrationPassword] = useState(false);
+  const [showRegistrationConfirmation, setShowRegistrationConfirmation] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [showResetConfirmation, setShowResetConfirmation] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(0);
   const documentType = useMemo(() => personType, [personType]);
 
@@ -841,23 +845,21 @@ export default function AccountPage() {
                 <div className="form-row">
                   <label>
                     Senha
-                    <input
-                      name="password"
-                      type="password"
-                      autoComplete="new-password"
-                      minLength={8}
-                      required
-                    />
+                    <div className="account-password-field">
+                      <input name="password" type={showRegistrationPassword ? "text" : "password"} autoComplete="new-password" minLength={8} required />
+                      <button type="button" className="password-visibility" onClick={() => setShowRegistrationPassword((value) => !value)} aria-label={showRegistrationPassword ? "Ocultar senha" : "Mostrar senha"}>
+                        {showRegistrationPassword ? <EyeOff /> : <Eye />}
+                      </button>
+                    </div>
                   </label>
                   <label>
                     Confirmar senha
-                    <input
-                      name="confirmPassword"
-                      type="password"
-                      autoComplete="new-password"
-                      minLength={8}
-                      required
-                    />
+                    <div className="account-password-field">
+                      <input name="confirmPassword" type={showRegistrationConfirmation ? "text" : "password"} autoComplete="new-password" minLength={8} required />
+                      <button type="button" className="password-visibility" onClick={() => setShowRegistrationConfirmation((value) => !value)} aria-label={showRegistrationConfirmation ? "Ocultar confirmação de senha" : "Mostrar confirmação de senha"}>
+                        {showRegistrationConfirmation ? <EyeOff /> : <Eye />}
+                      </button>
+                    </div>
                   </label>
                 </div>
                 <small className="password-help">
@@ -1073,23 +1075,21 @@ export default function AccountPage() {
               <form onSubmit={resetPassword}>
                 <label>
                   Nova senha
-                  <input
-                    name="password"
-                    type="password"
-                    autoComplete="new-password"
-                    minLength={8}
-                    required
-                  />
+                  <div className="account-password-field">
+                    <input name="password" type={showResetPassword ? "text" : "password"} autoComplete="new-password" minLength={8} required />
+                    <button type="button" className="password-visibility" onClick={() => setShowResetPassword((value) => !value)} aria-label={showResetPassword ? "Ocultar senha" : "Mostrar senha"}>
+                      {showResetPassword ? <EyeOff /> : <Eye />}
+                    </button>
+                  </div>
                 </label>
                 <label>
                   Confirmar nova senha
-                  <input
-                    name="confirmPassword"
-                    type="password"
-                    autoComplete="new-password"
-                    minLength={8}
-                    required
-                  />
+                  <div className="account-password-field">
+                    <input name="confirmPassword" type={showResetConfirmation ? "text" : "password"} autoComplete="new-password" minLength={8} required />
+                    <button type="button" className="password-visibility" onClick={() => setShowResetConfirmation((value) => !value)} aria-label={showResetConfirmation ? "Ocultar confirmação de senha" : "Mostrar confirmação de senha"}>
+                      {showResetConfirmation ? <EyeOff /> : <Eye />}
+                    </button>
+                  </div>
                 </label>
                 {error && <span className="field-error">{error}</span>}
                 <button className="checkout-button" disabled={loading}>

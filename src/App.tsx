@@ -46,6 +46,7 @@ import type {
   CatalogDepartment,
   CommercialConditions,
   Customer,
+  DiscountCampaign,
   OrderQuote,
   Partner,
   Product,
@@ -64,6 +65,10 @@ function queryCodes(value: string | null) {
         .filter((code) => Number.isSafeInteger(code) && code > 0),
     ),
   ];
+}
+
+function normalizeSearch(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
 }
 
 function App() {
@@ -135,6 +140,7 @@ function StorePage({
   const [destinationProductCodes, setDestinationProductCodes] =
     useState(initialProductCodes);
   const [campaignCode, setCampaignCode] = useState(initialCampaignCode);
+  const [activeCampaign, setActiveCampaign] = useState<DiscountCampaign | null>(null);
   const [loadedCampaignCode, setLoadedCampaignCode] = useState(initialCampaignCode);
   const [activeBannerId, setActiveBannerId] = useState(initialBannerId);
   const bannerOnlyRoute = initialBannerId > 0 && !initialSupplierIds.length &&
@@ -259,6 +265,28 @@ function StorePage({
   }, [authReady, catalogMode, customer?.id, campaignCode]);
 
   useEffect(() => {
+    if (!authReady || campaignCode <= 0) {
+      setActiveCampaign(null);
+      return;
+    }
+    const controller = new AbortController();
+    authenticatedFetch("/api/campaigns", { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Não foi possível carregar a campanha.");
+        return response.json();
+      })
+      .then((data) => {
+        setActiveCampaign(
+          (data.campaigns || []).find((campaign: DiscountCampaign) => campaign.code === campaignCode) || null,
+        );
+      })
+      .catch((error) => {
+        if (error.name !== "AbortError") setActiveCampaign(null);
+      });
+    return () => controller.abort();
+  }, [authReady, campaignCode, customer?.id]);
+
+  useEffect(() => {
     if (authReady && !customer) setCart([]);
   }, [authReady, customer]);
   useEffect(() => {
@@ -358,7 +386,7 @@ function StorePage({
   const filteredProducts = useMemo(() => {
     if (activeBannerId > 0 && bannerOnlyRoute &&
       (!bannerRouteReady || bannerRouteMissing || (campaignCode > 0 && loadedCampaignCode !== campaignCode))) return [];
-    const normalized = query.trim().toLocaleLowerCase("pt-BR");
+    const normalized = normalizeSearch(query.trim());
     return products.filter((product) => {
       const matchesSupplier =
         !supplierFilter || String(product.supplierId) === supplierFilter;
@@ -377,8 +405,7 @@ function StorePage({
         destinationProductCodes.includes(product.code);
       const matchesQuery =
         !normalized ||
-        `${product.name} ${product.brand} ${product.category} ${product.code}`
-          .toLocaleLowerCase("pt-BR")
+        normalizeSearch(`${product.name} ${product.brand} ${product.category} ${product.code}`)
           .includes(normalized);
       return (
         matchesSupplier &&
@@ -1492,11 +1519,10 @@ function StorePage({
           <div className="section-heading">
             <div>
               <h1>
-                {isBannerDestination
-                  ? bannerPageTitle ||
-                    (campaignCode > 0
-                      ? `Produtos da campanha #${campaignCode}`
-                      : selectedSection
+                {campaignCode > 0
+                  ? activeCampaign?.code === campaignCode ? activeCampaign.name || "Campanha" : "Campanha"
+                  : isBannerDestination
+                    ? bannerPageTitle || (selectedSection
                         ? formatCatalogName(selectedSection.name)
                         : selectedDepartment
                           ? formatCatalogName(selectedDepartment.name)
@@ -1515,10 +1541,12 @@ function StorePage({
                             ? "Mais vendidos nos últimos 30 dias"
                             : "Todos os produtos"}
               </h1>
+              {campaignCode > 0 && activeCampaign?.code === campaignCode && activeCampaign.description && (
+                <p className="campaign-page-description">{activeCampaign.description}</p>
+              )}
               {campaignCode > 0 && (
                 <p className="taxonomy-breadcrumb">
-                  <a href="/campanhas">Clube de Ofertas</a> → campanha #
-                  {campaignCode}
+                  <a href="/campanhas">Clube de Ofertas</a> → {activeCampaign?.code === campaignCode ? activeCampaign.name || "Campanha" : "Campanha"}
                 </p>
               )}
               {selectedDepartment && (
@@ -1978,7 +2006,7 @@ function StorePage({
                         </div>
                         <div className="cart-product-info">
                           <strong>{item.name}</strong>
-                          <small>{item.isGift ? `Brinde da campanha ${item.giftCampaignName || item.giftCampaignCode}` : `Vendido em múltiplos de ${item.salesMultiple} unidades`}</small>
+                          <small>{item.isGift ? `Brinde da campanha ${item.giftCampaignName || item.giftCampaignCode}` : `Múltiplo de ${item.salesMultiple} unidades`}</small>
                           <span>
                             {unitMoney.format(price.unitPrice ?? 0)} / unidade
                             {!item.isGift && price.discountPercent > 0
@@ -2041,8 +2069,7 @@ function StorePage({
                     </i>
                   </div>
                   <p>
-                    Pedido para {customer?.tradeName || customer?.legalName}. Os
-                    preços mostrados são do seu melhor plano de pagamento; o
+                    Os preços mostrados são do seu melhor plano de pagamento; o
                     total final depende do plano escolhido ao finalizar. O frete
                     é confirmado pela nossa equipe.
                   </p>

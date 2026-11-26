@@ -374,6 +374,9 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .login-field { height: 46px; padding: 0 12px; display: flex; align-items: center; gap: 9px; border: 1px solid #cad6e5; border-radius: 8px; color: var(--blue); }
 .login-field:focus-within { border-color: var(--bright-blue); box-shadow: 0 0 0 3px rgba(8,116,231,.08); }
 .login-field input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; box-shadow: none !important; }
+.account-password-field { position: relative; min-width: 0; width: 100%; }
+.account-password-field input { padding-right: 48px; }
+.account-password-field .password-visibility { position: absolute; top: 50%; right: 5px; transform: translateY(-50%); }
 .password-visibility { flex: 0 0 36px; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 7px; color: #66788d; background: transparent; display: grid; place-items: center; cursor: pointer; }
 .password-visibility:hover { color: var(--blue); background: #eef5fd; }
 .password-visibility svg { width: 18px; height: 18px; }
@@ -960,6 +963,7 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .coupon-form .coupon-value-input input:not([type="checkbox"]) { min-width: 0; border: 0; box-shadow: none; }
 .coupon-form .coupon-value-input input:not([type="checkbox"]):focus { border: 0; box-shadow: none; }
 .coupon-modal .coupon-modal-actions { flex: none; position: static; margin: 0; padding: 14px 28px; display: flex; justify-content: flex-end; gap: 10px; }
+.campaign-page-description { max-width: 720px; margin: 7px 0 0; color: #627794; line-height: 1.5; }
 .coupon-modal-actions .banner-delete-button { margin-right: auto; }
 .coupon-modal-actions .primary-button, .coupon-modal-actions .secondary-button { width: auto; min-width: 135px; }
 .coupon-form .checkbox-line { color: #284363; font-size: 13px; font-weight: 700; cursor: pointer; }
