@@ -82,7 +82,7 @@ A conta inicial é criada apenas quando ainda não existe. Depois, o Administrad
 
 ### Sincronização WinThor
 
-A DAG versionada em `airflow/dags/dag_ecommerce_produtos.py` executa a cada 30 minutos. Ela sincroniza somente produtos ativos e habilitados para a força de vendas, hierarquia Departamento → Seção, preços por região e plano, condições comerciais, bloqueio de compra do `PCCLIENT`, compromissos de crédito e restrições de fornecedor da `PCRESTRICAOVENDA` por praça/cliente. Os dados são enviados à API HTTPS protegida por `PRODUCT_SYNC_TOKEN`; o PostgreSQL permanece privado no Railway. Consulte `airflow/README.md` para implantação, Connections e validação operacional.
+A DAG versionada em `airflow/dags/dag_ecommerce_produtos.py` executa a cada minuto e sincroniza produtos com `PCPRODUT.ENVIAECOMMERCE = 'S'`, hierarquia Departamento → Seção, preços por região e plano, condições comerciais, bloqueio de compra do `PCCLIENT`, compromissos de crédito e restrições de fornecedor da `PCRESTRICAOVENDA` por praça/cliente. As execuções rápidas enviam somente produtos e preços alterados; a cada seis minutos ocorre uma reconciliação completa que também remove os registros ausentes. Os dados são enviados à API HTTPS protegida por `PRODUCT_SYNC_TOKEN`; o PostgreSQL permanece privado no Railway. Consulte `airflow/README.md` para implantação, Connections e validação operacional.
 
 As campanhas de desconto são criadas na área de gestão pelos perfis Administrador, Comercial e Marketing. Podem incluir produtos, seções ou fornecedores, desconto percentual, valor fixo ou “compre X, leve Y”, mínimos em unidades somadas ou caixas completas e público por cliente/cidade. O backend valida novamente período, público, itens e valores ao cotar e fechar o pedido. As campanhas antigas sincronizadas permanecem guardadas, mas não aparecem nem aplicam descontos. O sincronizador de produtos atualiza os vínculos das campanhas quando o catálogo muda.
 
@@ -139,4 +139,4 @@ Enquanto o pedido está **Em análise** e ainda não tem `NUMPED`, ele pode ser 
 - `scripts/export-reference-data.py`: exportação segura do DW
 - `.railway/railway.ts`: infraestrutura do serviço no Railway
 
-O ranking “Mais vendidos” é calculado pela tabela `sales`, usando somente os últimos sete dias. A sincronização operacional de produtos, preços e condições comerciais é executada pela DAG do Airflow a cada 30 minutos.
+O ranking “Mais vendidos” é calculado pela tabela `sales`, usando somente os últimos sete dias. A sincronização rápida de produtos, preços e condições comerciais é agendada a cada minuto; a conferência completa ocorre a cada seis minutos.

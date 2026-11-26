@@ -13,13 +13,13 @@ Não é necessário habilitar acesso público ao PostgreSQL. A DAG envia os dado
 
 Neste ambiente, a task usa o Python do Windows e o Oracle Client já instalado para manter compatibilidade com o verificador de senha legado do WinThor. As credenciais das Connections são encaminhadas somente no ambiente do processo e não são gravadas em arquivos ou logs.
 
-A DAG `ecommerce_produtos_precos` está configurada para executar a cada 30 minutos e:
+A DAG `ecommerce_produtos_precos` executa a cada minuto. Ela compara um retrato local e envia apenas produtos e preços alterados; a cada seis minutos faz uma reconciliação completa, que também inativa produtos e remove preços ausentes. Se a reconciliação falhar, ela é repetida na próxima execução. O estado local fica em `.sync-state/` e é atualizado somente após resposta bem-sucedida da API.
 
-1. lê somente produtos ativos da `PCPRODUT`, excluindo os itens fora de linha (`OBS2 = 'FL'`) e mantendo apenas `ENVIARFORCAVENDAS = 'S'`;
+1. lê somente produtos da `PCPRODUT` com `ENVIAECOMMERCE = 'S'`; este é o único critério de entrada no catálogo;
 2. lê os preços `PTABELA1` a `PTABELA7` da `PCTABPR` para as regiões em uso (1, 12 e a região de cada cliente aprovado);
 3. insere produtos novos;
 4. a API atualiza somente colunas cujo valor mudou (`IS DISTINCT FROM`);
-5. inativa no e-commerce produtos que deixaram de estar ativos no WinThor;
+5. na reconciliação completa, inativa no e-commerce produtos que deixaram de ter `ENVIAECOMMERCE = 'S'`;
 6. preserva as fotos já cadastradas no e-commerce;
 7. registra os totais em `product_sync_runs`;
 8. atualiza código do fabricante, NCM, EAN, embalagem master e múltiplos de venda do cadastro geral e das filiais 1 e 3 (`PCPRODFILIAL.MULTIPLO`); o e-commerce aplica o múltiplo da filial de estoque do cliente, preservando a exigência de caixa fechada quando seu cadastro não permite múltiplos;
@@ -42,7 +42,7 @@ Copie tambem `dags/dag_ecommerce_estoque.py` para a pasta de DAGs do Airflow. El
 A carga de estoque e separada da carga completa para ser leve e frequente. Ela:
 
 1. consulta apenas `PCPRODUT` e `PCEST` para as filiais 1 e 3;
-2. mantem somente produtos ativos, fora de `OBS2 = 'FL'` e com `ENVIARFORCAVENDAS = 'S'`;
+2. mantem somente produtos com `ENVIAECOMMERCE = 'S'`;
 3. calcula o saldo disponivel como `QTESTGER - QTRESERV - QTBLOQUEADA`, limitado a zero;
 4. envia uma carga compacta por HTTPS para uma rota autenticada;
 5. atualiza no PostgreSQL somente os produtos cujo saldo mudou e renova separadamente o horario do snapshot;

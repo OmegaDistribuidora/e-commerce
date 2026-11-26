@@ -10,4 +10,5 @@ supabase/.temp/
 .DS_Store
 Thumbs.db
 __pycache__/
+.sync-state/
 *.py[cod]

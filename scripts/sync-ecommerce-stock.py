@@ -24,8 +24,7 @@ FROM pcprodut p
 JOIN pcest e ON e.codprod = p.codprod
 WHERE e.codfilial IN (1, 3)
   AND p.codprod > 0
-  AND NVL(UPPER(TRIM(p.obs2)), 'ATIVO') <> 'FL'
-  AND NVL(UPPER(TRIM(p.enviarforcavendas)), 'N') = 'S'
+  AND NVL(UPPER(TRIM(p.enviaecommerce)), 'N') = 'S'
 ORDER BY e.codfilial, p.codprod
 """
 

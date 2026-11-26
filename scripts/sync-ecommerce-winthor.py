@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+import argparse
 import glob
+import hashlib
+import json
 import os
+from pathlib import Path
 import re
 
 import oracledb
@@ -53,10 +57,7 @@ LEFT JOIN pctabpr r
       AND r.numregiao = :network_region
       AND NVL(r.excluido, 'N') <> 'S'
 WHERE p.codprod > 0
-  -- Nesta versao do WinThor, STATUSPROD e derivado de PCPRODUT.OBS2.
-  AND NVL(UPPER(TRIM(p.obs2)), 'ATIVO') <> 'FL'
-  -- O catalogo deve conter somente itens liberados para o Forca de Vendas.
-  AND NVL(UPPER(TRIM(p.enviarforcavendas)), 'N') = 'S'
+  AND NVL(UPPER(TRIM(p.enviaecommerce)), 'N') = 'S'
 ORDER BY p.codprod
 """
 
@@ -95,9 +96,30 @@ JOIN pcprodut p ON p.codprod = t.codprod
 WHERE t.numregiao IN ({regions})
   AND NVL(t.excluido, 'N') <> 'S'
   AND p.codprod > 0
-  AND NVL(UPPER(TRIM(p.obs2)), 'ATIVO') <> 'FL'
-  AND NVL(UPPER(TRIM(p.enviarforcavendas)), 'N') = 'S'
+  AND NVL(UPPER(TRIM(p.enviaecommerce)), 'N') = 'S'
 """
+
+STATE_DIR = Path(os.getenv('ECOMMERCE_SYNC_STATE_DIR', str(Path(__file__).resolve().parent.parent / '.sync-state')))
+
+
+def row_hash(value: object) -> str:
+    payload = json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+def read_state(name: str) -> dict[str, str]:
+    try:
+        return json.loads((STATE_DIR / f'{name}.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+
+
+def write_state(name: str, values: dict[str, str]) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    target = STATE_DIR / f'{name}.json'
+    temporary = STATE_DIR / f'{name}.{os.getpid()}.tmp'
+    temporary.write_text(json.dumps(values, separators=(',', ':')), encoding='utf-8')
+    os.replace(temporary, target)
 
 def required(name: str) -> str:
     value = os.getenv(name, "").strip()
@@ -162,7 +184,8 @@ def iso_date(value) -> str | None:
     return str(value).strip() or None if value is not None else None
 
 
-def main() -> None:
+def main(mode: str = 'full') -> None:
+    full = mode == 'full'
     initialize_oracle_client()
     dsn = oracledb.makedsn(
         required("ORACLE_FILIAL_HOST"),
@@ -177,8 +200,10 @@ def main() -> None:
         with connection.cursor() as cursor:
             cursor.execute(PRODUCT_QUERY, {"retail_region": 1, "network_region": 12})
             rows = cursor.fetchall()
-            cursor.execute(ORDERS_LAST_30_DAYS_QUERY)
-            orders_last_30_days = {int(code): int(total) for code, total in cursor.fetchall()}
+            orders_last_30_days = {}
+            if full:
+                cursor.execute(ORDERS_LAST_30_DAYS_QUERY)
+                orders_last_30_days = {int(code): int(total) for code, total in cursor.fetchall()}
 
     minimum = max(1, int(os.getenv("PRODUCT_SYNC_MIN_COUNT", "100")))
     if len(rows) < minimum:
@@ -221,25 +246,35 @@ def main() -> None:
             "ordersLast30Days": orders_last_30_days.get(int(code), 0),
         })
 
-    endpoint = f"{required('ECOMMERCE_API_URL').rstrip('/')}/api/integrations/products/sync"
-    response = requests.post(
-        endpoint,
-        json={"source": "WinThor", "products": products},
-        headers={"Authorization": f"Bearer {required('ECOMMERCE_PRODUCT_SYNC_TOKEN')}"},
-        timeout=(15, 180),
-    )
-    if not response.ok:
-        raise RuntimeError(f"API respondeu HTTP {response.status_code}: {response.text[:500]}")
-    result = response.json()
-    print(
-        "Sincronização concluída: "
-        f"fonte={result.get('sourceCount')}, inseridos={result.get('insertedCount')}, "
-        f"alterados={result.get('updatedCount')}, inativados={result.get('deactivatedCount')}"
-    )
+    # As tabelas auxiliares podem devolver mais de uma linha por codigo.
+    # A API ja usava a ultima; repetir a regra aqui evita falsos deltas.
+    products = list({p['externalId']: p for p in products}.values())
+    product_state = {str(p['externalId']): row_hash({k: v for k, v in p.items() if k != 'ordersLast30Days'}) for p in products}
+    previous = read_state('products')
+    changed_products = products if full else [p for p in products if previous.get(str(p['externalId'])) != product_state[str(p['externalId'])]]
+    if changed_products:
+        endpoint = f"{required('ECOMMERCE_API_URL').rstrip('/')}/api/integrations/products/sync"
+        response = requests.post(
+            endpoint,
+            json={"source": "WinThor", "mode": mode, "products": changed_products},
+            headers={"Authorization": f"Bearer {required('ECOMMERCE_PRODUCT_SYNC_TOKEN')}"},
+            timeout=(15, 180),
+        )
+        if not response.ok:
+            raise RuntimeError(f"API respondeu HTTP {response.status_code}: {response.text[:500]}")
+        result = response.json()
+        print(f"Produtos ({mode}): fonte={len(products)}, enviados={len(changed_products)}, "
+              f"inseridos={result.get('insertedCount')}, alterados={result.get('updatedCount')}, "
+              f"inativados={result.get('deactivatedCount')}")
+        write_state('products', product_state)
+    else:
+        print(f"Produtos ({mode}): {len(products)} conferidos, nenhuma alteracao enviada.")
 
     token = required("ECOMMERCE_PRODUCT_SYNC_TOKEN")
     customer_regions = sync_customer_conditions(dsn, token)
-    sync_region_prices(dsn, token, set(DEFAULT_PRICE_REGIONS) | customer_regions)
+    sync_region_prices(dsn, token, set(DEFAULT_PRICE_REGIONS) | customer_regions, mode=mode)
+    if full:
+        write_state('schedule', {'lastFull': datetime.now().astimezone().isoformat()})
 
 
 def price_value(value):
@@ -249,7 +284,7 @@ def price_value(value):
     return price if price > 0 else None
 
 
-def sync_region_prices(dsn, token: str, regions: set[int]) -> None:
+def sync_region_prices(dsn, token: str, regions: set[int], mode: str = 'full') -> None:
     region_list = sorted(region for region in regions if region is not None)
     binds = ",".join(f":r{index}" for index in range(len(region_list)))
     with oracledb.connect(
@@ -267,10 +302,24 @@ def sync_region_prices(dsn, token: str, regions: set[int]) -> None:
                 [int(region), int(code), *(price_value(value) for value in prices)]
                 for region, code, *prices in cursor.fetchall()
             ]
+    rows = list({(row[0], row[1]): row for row in rows}.values())
+
+    minimum = max(1, int(os.getenv('PRODUCT_SYNC_MIN_COUNT', '100')))
+    counts = {region: 0 for region in region_list}
+    for row in rows:
+        counts[row[0]] += 1
+    if len(rows) < minimum or any(count == 0 for count in counts.values()):
+        raise RuntimeError(f'Carga de precos incompleta: contagens por regiao {counts}')
+    price_state = {f'{row[0]}:{row[1]}': row_hash(row) for row in rows}
+    previous = read_state('prices')
+    changed_rows = rows if mode == 'full' else [row for row in rows if previous.get(f'{row[0]}:{row[1]}') != price_state[f'{row[0]}:{row[1]}']]
+    if not changed_rows:
+        print(f'Precos ({mode}): {len(rows)} conferidos, nenhuma alteracao enviada.')
+        return
 
     response = requests.post(
         f"{required('ECOMMERCE_API_URL').rstrip('/')}/api/integrations/prices/sync",
-        json={"regions": region_list, "prices": rows},
+        json={"mode": mode, "regions": region_list, "prices": changed_rows},
         headers={"Authorization": f"Bearer {token}"},
         timeout=(15, 180),
     )
@@ -280,9 +329,9 @@ def sync_region_prices(dsn, token: str, regions: set[int]) -> None:
     if not response.ok:
         raise RuntimeError(f"Preços por região: API respondeu HTTP {response.status_code}: {response.text[:500]}")
     result = response.json()
+    write_state('prices', price_state)
     print(
-        "Preços por região concluídos: "
-        f"regiões={result.get('regions')}, fonte={result.get('sourceCount')}, "
+        f"Precos ({mode}): regioes={result.get('regions')}, fonte={len(rows)}, enviados={len(changed_rows)}, "
         f"alterados={result.get('changedCount')}, removidos={result.get('removedCount')}"
     )
 
@@ -482,4 +531,14 @@ def sync_customer_conditions(dsn, token: str) -> set[int]:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', choices=('full', 'delta', 'auto'), default='full')
+    selected = parser.parse_args().mode
+    if selected == 'auto':
+        last_full = read_state('schedule').get('lastFull')
+        try:
+            age_seconds = (datetime.now().astimezone() - datetime.fromisoformat(last_full)).total_seconds()
+        except (TypeError, ValueError):
+            age_seconds = float('inf')
+        selected = 'full' if age_seconds >= 6 * 60 or age_seconds < 0 else 'delta'
+    main(selected)

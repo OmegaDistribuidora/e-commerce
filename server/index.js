@@ -1573,16 +1573,17 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
   const parsed = productSyncSchema.safeParse(request.body)
   if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
 
+  const fullSync = parsed.data.mode === 'full'
   const uniqueProducts = [...new Map(parsed.data.products.map((product) => [product.externalId, product])).values()]
   const minimumProducts = Math.max(1, Number(process.env.PRODUCT_SYNC_MIN_COUNT) || 100)
-  if (uniqueProducts.length < minimumProducts) {
+  if (fullSync && uniqueProducts.length < minimumProducts) {
     return response.status(409).json({
       message: `Sincronização cancelada: foram recebidos ${uniqueProducts.length} produtos, abaixo do mínimo de segurança (${minimumProducts}).`,
     })
   }
   const currentCountResult = await pool.query("SELECT COUNT(*)::int AS count FROM products WHERE company='Filial' AND active=TRUE")
   const currentActiveCount = Number(currentCountResult.rows[0].count)
-  if (currentActiveCount >= minimumProducts && uniqueProducts.length < Math.floor(currentActiveCount * 0.5)) {
+  if (fullSync && currentActiveCount >= minimumProducts && uniqueProducts.length < Math.floor(currentActiveCount * 0.5)) {
     return response.status(409).json({
       message: `Sincronização cancelada: a carga reduziria o catálogo de ${currentActiveCount} para ${uniqueProducts.length} produtos ativos.`,
     })
@@ -1654,11 +1655,11 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
           OR COALESCE(p.ncm_code,'')<>COALESCE(s.ncm_code,'') OR p.active<>s.active
           OR COALESCE(p.price_date,DATE '1900-01-01')<>COALESCE(s.price_date,DATE '1900-01-01')`,
     )
-    const deactivatedResult = await client.query(
+    const deactivatedResult = fullSync ? await client.query(
       `SELECT COUNT(*)::int AS count FROM products p
        WHERE p.company='Filial' AND p.active=TRUE
          AND p.external_id NOT IN (SELECT s.external_id FROM ecommerce_product_stage s WHERE s.company='Filial')`,
-    )
+    ) : { rows: [{ count: 0 }] }
 
     await client.query(
       `INSERT INTO products (
@@ -1702,13 +1703,13 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
     )
     // Pedidos dos últimos 30 dias: ordenação do catálogo. Atualizado à parte para não
     // contar como alteração cadastral do produto.
-    await client.query(
+    if (fullSync) await client.query(
       `UPDATE products p SET orders_last_30_days=s.orders_last_30_days
        FROM ecommerce_product_stage s
        WHERE p.company=s.company AND p.external_id=s.external_id
          AND p.orders_last_30_days IS DISTINCT FROM s.orders_last_30_days`,
     )
-    await client.query(
+    if (fullSync) await client.query(
       `UPDATE products SET active=FALSE, updated_at=CURRENT_TIMESTAMP
        WHERE company='Filial' AND active=TRUE
          AND external_id NOT IN (SELECT s.external_id FROM ecommerce_product_stage s WHERE s.company='Filial')`,
@@ -1720,13 +1721,15 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
       updatedCount: Number(updatedResult.rows[0].count),
       deactivatedCount: Number(deactivatedResult.rows[0].count),
     }
-    await client.query(
+    if (fullSync) await client.query(
       `INSERT INTO product_sync_runs
        (finished_at,source_count,inserted_count,updated_count,deactivated_count,status,details)
        VALUES (CURRENT_TIMESTAMP,$1,$2,$3,$4,'success','Sistema comercial via API HTTPS')`,
       [stats.sourceCount, stats.insertedCount, stats.updatedCount, stats.deactivatedCount],
     )
-    await refreshManagedCampaignProducts(client)
+    if (fullSync || Number(insertedResult.rows[0].count) || Number(updatedResult.rows[0].count)) {
+      await refreshManagedCampaignProducts(client)
+    }
     await client.query('DROP TABLE ecommerce_product_stage')
     await client.query('COMMIT')
     return response.json({ synchronized: true, ...stats })
@@ -1776,8 +1779,17 @@ app.post('/api/integrations/customers/conditions', async (request, response, nex
   const authEmailChanges = []
   try {
     await client.query('BEGIN')
+    if (process.env.DATABASE_URL) {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('omega_ecommerce_customer_conditions_sync'))")
+    }
     let updatedCount = 0
     for (const condition of parsed.data.customers) {
+      const newerSnapshot = await client.query(
+        `SELECT 1 FROM customers c JOIN customer_commercial_conditions cc ON cc.customer_id=c.id
+         WHERE c.external_id=$1 AND cc.source_updated_at > $2::timestamptz LIMIT 1`,
+        [condition.externalId, condition.sourceUpdatedAt],
+      )
+      if (newerSnapshot.rows.length) continue
       const currentCustomer = await client.query(
         'SELECT id, document, email, supabase_user_id FROM customers WHERE external_id=$1 AND active=TRUE LIMIT 1',
         [condition.externalId],
@@ -1853,6 +1865,7 @@ app.post('/api/integrations/prices/sync', async (request, response, next) => {
   if (!validIntegrationToken(request)) return response.status(401).json({ message: 'Credencial de integração inválida.' })
   const parsed = regionPricesSyncSchema.safeParse(request.body)
   if (!parsed.success) return response.status(400).json({ message: parsed.error.issues[0].message })
+  const fullSync = parsed.data.mode === 'full'
   const regions = [...new Set(parsed.data.regions)]
   const regionSet = new Set(regions)
   const rowMap = new Map()
@@ -1861,7 +1874,7 @@ app.post('/api/integrations/prices/sync', async (request, response, next) => {
   }
   const rows = [...rowMap.values()]
   const minimum = Math.max(1, Number(process.env.PRODUCT_SYNC_MIN_COUNT) || 100)
-  if (rows.length < minimum) {
+  if (fullSync && rows.length < minimum) {
     return response.status(409).json({ message: `Sincronização de preços cancelada: ${rows.length} preços recebidos, abaixo do mínimo de segurança (${minimum}).` })
   }
   const client = await pool.connect()
@@ -1896,6 +1909,8 @@ app.post('/api/integrations/prices/sync', async (request, response, next) => {
        WHERE ${columns.map((column) => `COALESCE(region_prices.${column},-1)<>COALESCE(EXCLUDED.${column},-1)`).join(' OR ')}`,
     )
     // Remove regiões que nenhum cliente usa mais e preços excluídos no WinThor.
+    let removedCount = 0
+    if (fullSync) {
     const productIds = new Map((await client.query(
       "SELECT id, external_id FROM products WHERE company='Filial'",
     )).rows.map((product) => [Number(product.external_id), Number(product.id)]))
@@ -1907,7 +1922,6 @@ app.post('/api/integrations/prices/sync', async (request, response, next) => {
       if (incoming.has(`${region}:${productId}`)) continue
       staleByRegion.set(region, [...(staleByRegion.get(region) || []), productId])
     }
-    let removedCount = 0
     for (const [region, staleIds] of staleByRegion) {
       for (let offset = 0; offset < staleIds.length; offset += 1000) {
         const removed = await client.query(
@@ -1916,6 +1930,7 @@ app.post('/api/integrations/prices/sync', async (request, response, next) => {
         )
         removedCount += removed.rowCount
       }
+    }
     }
     await client.query('DROP TABLE ecommerce_price_stage')
     await client.query('COMMIT')
@@ -3615,6 +3630,12 @@ app.post('/api/orders', async (request, response, next) => {
     if (!conditions) {
       await client.query('ROLLBACK')
       return response.status(503).json({ message: 'As condições comerciais deste cadastro ainda estão sendo atualizadas.' })
+    }
+    const commercialMaxAgeMinutes = Math.max(5, Number(process.env.CUSTOMER_CONDITIONS_MAX_AGE_MINUTES) || 45)
+    const commercialUpdatedAt = new Date(conditions.updatedAt).getTime()
+    if (!Number.isFinite(commercialUpdatedAt) || Date.now() - commercialUpdatedAt > commercialMaxAgeMinutes * 60 * 1000) {
+      await client.query('ROLLBACK')
+      return response.status(503).json({ message: 'Estamos atualizando as condições do seu cadastro. Tente finalizar o pedido novamente em alguns instantes.' })
     }
     if (conditions.isBlocked) {
       await client.query('ROLLBACK')

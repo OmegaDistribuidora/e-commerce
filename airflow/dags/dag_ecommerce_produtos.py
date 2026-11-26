@@ -75,12 +75,12 @@ def sync_products() -> None:
 
     script_win = rf"{APP_WIN}\scripts\sync-ecommerce-winthor.py"
     result = subprocess.run(
-        [PYTHON_WIN, script_win],
+        [PYTHON_WIN, script_win, '--mode', 'auto'],
         cwd=APP_LINUX,
         env=env,
         capture_output=True,
         check=False,
-        timeout=18 * 60,
+        timeout=8 * 60,
     )
     stdout, stderr = _decode(result.stdout), _decode(result.stderr)
     if stdout.strip():
@@ -99,19 +99,19 @@ with DAG(
         "depends_on_past": False,
         "email_on_failure": False,
         "email_on_retry": False,
-        "retries": 2,
-        "retry_delay": timedelta(minutes=5),
+        "retries": 1,
+        "retry_delay": timedelta(minutes=1),
     },
     start_date=pendulum.datetime(2026, 1, 1, 0, 0, tz=LOCAL_TZ),
-    schedule="*/30 * * * *",
+    schedule="* * * * *",
     catchup=False,
     max_active_runs=1,
-    dagrun_timeout=timedelta(minutes=20),
+    dagrun_timeout=timedelta(minutes=10),
     is_paused_upon_creation=True,
     tags=["omega", "ecommerce", "winthor", "produtos", "precos"],
 ) as dag:
     PythonOperator(
         task_id="sincronizar_catalogo_e_condicoes_comerciais",
         python_callable=sync_products,
-        execution_timeout=timedelta(minutes=18),
+        execution_timeout=timedelta(minutes=8),
     )

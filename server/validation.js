@@ -173,6 +173,7 @@ const priceValue = z.coerce.number().nonnegative().max(99999999).nullable()
 
 // Linhas compactas: [região, CODPROD, PTABELA1..PTABELA7].
 export const regionPricesSyncSchema = z.object({
+  mode: z.enum(['full', 'delta']).optional().default('full'),
   regions: z.array(z.coerce.number().int().nonnegative()).min(1).max(500),
   prices: z.array(z.tuple([
     z.coerce.number().int().nonnegative(), z.coerce.number().int().positive(),
@@ -275,6 +276,7 @@ const syncProductSchema = z.object({
 
 export const productSyncSchema = z.object({
   source: z.literal('WinThor'),
+  mode: z.enum(['full', 'delta']).optional().default('full'),
   products: z.array(syncProductSchema).min(1).max(20000),
 })
 
