@@ -257,6 +257,8 @@ const syncProductSchema = z.object({
   masterPackage: z.string().trim().max(100).default(''),
   unitsPerBox: z.coerce.number().int().positive().max(100000).default(1),
   salesMultiple: z.coerce.number().int().positive().max(100000).default(1),
+  salesMultipleBranch1: z.coerce.number().int().min(0).max(100000).nullable().optional().default(null),
+  salesMultipleBranch3: z.coerce.number().int().min(0).max(100000).nullable().optional().default(null),
   minBoxes: z.coerce.number().int().positive().max(10000).default(1),
   retailUnitPrice: z.coerce.number().nonnegative().max(999999999),
   networkUnitPrice: z.coerce.number().nonnegative().max(999999999),

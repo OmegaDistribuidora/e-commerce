@@ -8,6 +8,7 @@ import { dirname, resolve } from 'node:path'
 import { initializeDatabase, pool, sourcePool } from './db.js'
 import { campaignAllowed, campaignDiscounts, campaignGiftQuantities, normalizedCity, refreshManagedCampaignProducts } from './managed-campaigns.js'
 import { registerCampaignRoutes } from './campaign-routes.js'
+import { purchaseMultiple } from './purchase-multiple.js'
 import { isForwardStage, queueOrderStage, startOrderEmailWorker } from './order-email.js'
 import { clearSessionCookie, clearStaffSessionCookie, createSession, getCookie, hashPassword, hashSessionToken, sessionCookie, staffSessionCookie, verifyPassword } from './auth.js'
 import { findCustomerInvitesByDocument, findSupabaseUserByEmail, inviteSupabaseUser, removeSupabaseUser, updateSupabaseUser, verifySupabaseAccessToken, supabaseAuthConfigured } from './supabase-auth.js'
@@ -652,10 +653,6 @@ async function customerPricing(database, customer) {
   return { region, stockBranch, isBlocked: Boolean(row?.is_blocked), allowSalesMultiple: row?.allow_sales_multiple !== false, plans, priceTables: [...new Set(plans.map((plan) => plan.priceTable))], restrictedSupplierIds }
 }
 
-function purchaseMultiple(pricing, product) {
-  return Math.max(1, Number(pricing?.allowSalesMultiple === false ? product.units_per_box : product.sales_multiple))
-}
-
 // Menor preço positivo entre as tabelas dos planos liberados para o cliente.
 function lowestPlanPrice(row, priceTables) {
   const prices = priceTables.map((table) => Number(row?.[priceColumn(table)])).filter((price) => price > 0)
@@ -685,7 +682,7 @@ async function eligibleCartGifts(database, pricing, paidLines, customerExternalI
   if (!proposed.length) return []
   const products = await database.query(
     `SELECT p.id,p.external_id,p.supplier_id,p.section_code,p.name,p.brand,p.package,p.master_package,
-            p.units_per_box,p.sales_multiple,p.min_boxes,p.department_code,p.department,p.section,
+            p.units_per_box,p.sales_multiple,p.sales_multiple_branch_1,p.sales_multiple_branch_3,p.min_boxes,p.department_code,p.department,p.section,
             p.image_path,p.image_data IS NOT NULL AS image_uploaded,p.image_hidden,p.image_updated_at,
             p.price_date,p.orders_last_30_days,p.ean,p.manufacturer_code,p.ncm_code
      FROM products p WHERE p.active=TRUE AND p.external_id=ANY($1::integer[])`,
@@ -715,7 +712,7 @@ async function priceCartItems(database, pricing, plan, items, customerExternalId
   const productIds = [...new Set(items.map((item) => item.productId))]
   const placeholders = productIds.map((_, index) => `$${index + 2}`).join(',')
   const result = await database.query(
-    `SELECT p.id, p.external_id, p.supplier_id, p.section_code, p.name, p.units_per_box, p.sales_multiple, CASE WHEN rp.${priceColumn(plan.priceTable)} > 0 THEN rp.${priceColumn(plan.priceTable)} END AS price
+    `SELECT p.id, p.external_id, p.supplier_id, p.section_code, p.name, p.units_per_box, p.sales_multiple, p.sales_multiple_branch_1, p.sales_multiple_branch_3, CASE WHEN rp.${priceColumn(plan.priceTable)} > 0 THEN rp.${priceColumn(plan.priceTable)} END AS price
      FROM products p
      LEFT JOIN region_prices rp ON rp.product_id = p.id AND rp.region = $1
      WHERE p.active = TRUE AND p.id IN (${placeholders})`,
@@ -1600,7 +1597,7 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
     await client.query(
       `CREATE TABLE ecommerce_product_stage (
         company VARCHAR(40), external_id INTEGER, supplier_id INTEGER, brand TEXT, name TEXT,
-        package TEXT, master_package TEXT, units_per_box INTEGER, sales_multiple INTEGER, min_boxes INTEGER,
+        package TEXT, master_package TEXT, units_per_box INTEGER, sales_multiple INTEGER, sales_multiple_branch_1 INTEGER, sales_multiple_branch_3 INTEGER, min_boxes INTEGER,
         unit_price NUMERIC(14,2), list_unit_price NUMERIC(14,2),
         retail_unit_price NUMERIC(14,2), network_unit_price NUMERIC(14,2),
         department_code INTEGER, department TEXT, section_code INTEGER, section TEXT,
@@ -1611,7 +1608,7 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
 
     const rows = uniqueProducts.map((product) => [
       'Filial', product.externalId, product.supplierId, product.brand, product.name,
-      product.package, product.masterPackage, product.unitsPerBox, product.salesMultiple, product.minBoxes,
+      product.package, product.masterPackage, product.unitsPerBox, product.salesMultiple, product.salesMultipleBranch1, product.salesMultipleBranch3, product.minBoxes,
       product.retailUnitPrice, product.retailUnitPrice, product.retailUnitPrice,
       product.networkUnitPrice || product.retailUnitPrice, product.departmentCode, product.department,
       product.sectionCode, product.section, product.ean, product.manufacturerCode, product.ncm, true, product.priceDate || null,
@@ -1643,6 +1640,8 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
           OR COALESCE(p.brand,'')<>COALESCE(s.brand,'') OR COALESCE(p.name,'')<>COALESCE(s.name,'')
           OR COALESCE(p.package,'')<>COALESCE(s.package,'') OR COALESCE(p.master_package,'')<>COALESCE(s.master_package,'')
           OR p.units_per_box<>s.units_per_box OR p.sales_multiple<>s.sales_multiple OR p.min_boxes<>s.min_boxes
+          OR (s.sales_multiple_branch_1 IS NOT NULL AND p.sales_multiple_branch_1 IS DISTINCT FROM s.sales_multiple_branch_1)
+          OR (s.sales_multiple_branch_3 IS NOT NULL AND p.sales_multiple_branch_3 IS DISTINCT FROM s.sales_multiple_branch_3)
           OR p.unit_price<>s.unit_price OR COALESCE(p.list_unit_price,-1)<>COALESCE(s.list_unit_price,-1)
           OR COALESCE(p.retail_unit_price,-1)<>COALESCE(s.retail_unit_price,-1)
           OR COALESCE(p.network_unit_price,-1)<>COALESCE(s.network_unit_price,-1)
@@ -1664,17 +1663,19 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
     await client.query(
       `INSERT INTO products (
          company,external_id,supplier_id,brand,name,package,master_package,units_per_box,
-         sales_multiple,min_boxes,unit_price,list_unit_price,retail_unit_price,network_unit_price,
+         sales_multiple,sales_multiple_branch_1,sales_multiple_branch_3,min_boxes,unit_price,list_unit_price,retail_unit_price,network_unit_price,
          department_code,department,section_code,section,ean,manufacturer_code,ncm_code,active,price_date,source_category,category
        )
        SELECT company,external_id,supplier_id,brand,name,package,master_package,units_per_box,
-              sales_multiple,min_boxes,unit_price,list_unit_price,retail_unit_price,network_unit_price,
+              sales_multiple,sales_multiple_branch_1,sales_multiple_branch_3,min_boxes,unit_price,list_unit_price,retail_unit_price,network_unit_price,
               department_code,department,section_code,section,ean,manufacturer_code,ncm_code,active,price_date,'','Sem categoria'
        FROM ecommerce_product_stage
        ON CONFLICT (company,external_id) DO UPDATE SET
          supplier_id=EXCLUDED.supplier_id, brand=EXCLUDED.brand, name=EXCLUDED.name,
          package=EXCLUDED.package, master_package=EXCLUDED.master_package,
-         units_per_box=EXCLUDED.units_per_box, sales_multiple=EXCLUDED.sales_multiple, min_boxes=EXCLUDED.min_boxes,
+         units_per_box=EXCLUDED.units_per_box, sales_multiple=EXCLUDED.sales_multiple,
+         sales_multiple_branch_1=COALESCE(EXCLUDED.sales_multiple_branch_1,products.sales_multiple_branch_1),
+         sales_multiple_branch_3=COALESCE(EXCLUDED.sales_multiple_branch_3,products.sales_multiple_branch_3), min_boxes=EXCLUDED.min_boxes,
          unit_price=EXCLUDED.unit_price, list_unit_price=EXCLUDED.list_unit_price,
          retail_unit_price=EXCLUDED.retail_unit_price, network_unit_price=EXCLUDED.network_unit_price,
          department_code=EXCLUDED.department_code, department=EXCLUDED.department,
@@ -1685,6 +1686,8 @@ app.post('/api/integrations/products/sync', async (request, response, next) => {
           OR COALESCE(products.brand,'')<>COALESCE(EXCLUDED.brand,'') OR COALESCE(products.name,'')<>COALESCE(EXCLUDED.name,'')
           OR COALESCE(products.package,'')<>COALESCE(EXCLUDED.package,'') OR COALESCE(products.master_package,'')<>COALESCE(EXCLUDED.master_package,'')
           OR products.units_per_box<>EXCLUDED.units_per_box OR products.sales_multiple<>EXCLUDED.sales_multiple OR products.min_boxes<>EXCLUDED.min_boxes
+          OR (EXCLUDED.sales_multiple_branch_1 IS NOT NULL AND products.sales_multiple_branch_1 IS DISTINCT FROM EXCLUDED.sales_multiple_branch_1)
+          OR (EXCLUDED.sales_multiple_branch_3 IS NOT NULL AND products.sales_multiple_branch_3 IS DISTINCT FROM EXCLUDED.sales_multiple_branch_3)
           OR products.unit_price<>EXCLUDED.unit_price OR COALESCE(products.list_unit_price,-1)<>COALESCE(EXCLUDED.list_unit_price,-1)
           OR COALESCE(products.retail_unit_price,-1)<>COALESCE(EXCLUDED.retail_unit_price,-1)
           OR COALESCE(products.network_unit_price,-1)<>COALESCE(EXCLUDED.network_unit_price,-1)
@@ -2076,7 +2079,7 @@ app.post('/api/customer/stock-check', async (request, response, next) => {
       return response.status(403).json({ message: 'Seu cadastro está bloqueado para compras. Fale com a equipe Ômega.' })
     }
     const productResult = await pool.query(
-      `SELECT id, external_id, supplier_id, name, units_per_box, sales_multiple
+      `SELECT id, external_id, supplier_id, name, units_per_box, sales_multiple, sales_multiple_branch_1, sales_multiple_branch_3
        FROM products WHERE id=$1 AND active=TRUE LIMIT 1`,
       [parsed.data.productId],
     )
@@ -2105,7 +2108,7 @@ app.get('/api/customer/cart', async (request, response, next) => {
     const restrictedSupplierIds = pricing?.restrictedSupplierIds || []
     const result = await pool.query(
       `SELECT p.id,p.external_id,p.supplier_id,p.brand,p.name,p.package,p.master_package,
-              p.units_per_box,p.sales_multiple,p.min_boxes,p.department_code,p.department,
+              p.units_per_box,p.sales_multiple,p.sales_multiple_branch_1,p.sales_multiple_branch_3,p.min_boxes,p.department_code,p.department,
               p.section_code,p.section,p.image_path,p.image_data IS NOT NULL AS image_uploaded,
               p.image_hidden,p.image_updated_at,p.ean,p.manufacturer_code,p.ncm_code,
               p.price_date,p.orders_last_30_days,cci.quantity,cc.updated_at AS cart_updated_at${priceColumns}
@@ -2173,7 +2176,7 @@ app.put('/api/customer/cart/:productId', async (request, response, next) => {
     const pricing = await customerPricing(client, request.customer)
     if (!pricing || pricing.isBlocked) throw new RequestError('Seu cadastro está bloqueado para compras. Fale com a equipe Ômega.', 403)
     const productResult = await client.query(
-      'SELECT id,external_id,supplier_id,name,units_per_box,sales_multiple FROM products WHERE id=$1 AND active=TRUE LIMIT 1',
+      'SELECT id,external_id,supplier_id,name,units_per_box,sales_multiple,sales_multiple_branch_1,sales_multiple_branch_3 FROM products WHERE id=$1 AND active=TRUE LIMIT 1',
       [productId],
     )
     const product = productResult.rows[0]
@@ -2377,7 +2380,7 @@ app.get('/api/products', async (request, response, next) => {
 
     const result = await pool.query(
       `SELECT p.id, p.external_id, p.supplier_id, p.brand, p.name, p.package, p.master_package,
-              p.units_per_box, p.sales_multiple, p.min_boxes, p.unit_price, p.list_unit_price,
+              p.units_per_box, p.sales_multiple, p.sales_multiple_branch_1, p.sales_multiple_branch_3, p.min_boxes, p.unit_price, p.list_unit_price,
               p.retail_unit_price, p.network_unit_price,
               p.category, p.department_code, p.department, p.section_code, p.section, p.image_path,
               p.image_data IS NOT NULL AS image_uploaded, p.image_hidden, p.image_updated_at, p.ean,
@@ -2563,7 +2566,7 @@ app.get('/api/products/:code', async (request, response, next) => {
     if (!Number.isSafeInteger(code) || code < 1) return response.status(400).json({ message: 'Código de produto inválido.' })
     const result = await pool.query(
       `SELECT id, external_id, supplier_id, brand, name, package, master_package, units_per_box,
-              sales_multiple, min_boxes, unit_price, list_unit_price, retail_unit_price,
+              sales_multiple, sales_multiple_branch_1, sales_multiple_branch_3, min_boxes, unit_price, list_unit_price, retail_unit_price,
               network_unit_price, category, department_code, department, section_code, section, image_path,
               image_data IS NOT NULL AS image_uploaded, image_hidden, image_updated_at,
               ean, manufacturer_code, ncm_code, price_date
@@ -2638,7 +2641,7 @@ app.get('/api/customer/favorites', async (request, response, next) => {
     const restrictedSupplierIds = pricing?.restrictedSupplierIds || []
     const result = await pool.query(
       `SELECT p.id, p.external_id, p.supplier_id, p.brand, p.name, p.package, p.master_package,
-              p.units_per_box, p.sales_multiple, p.min_boxes, p.department_code, p.department,
+              p.units_per_box, p.sales_multiple, p.sales_multiple_branch_1, p.sales_multiple_branch_3, p.min_boxes, p.department_code, p.department,
               p.section_code, p.section, p.image_path, p.image_data IS NOT NULL AS image_uploaded,
               p.image_hidden, p.image_updated_at, p.ean, p.manufacturer_code, p.ncm_code,
               p.price_date, cf.created_at AS favorited_at${priceColumns}

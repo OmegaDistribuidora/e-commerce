@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS products (
   master_package TEXT,
   units_per_box INTEGER NOT NULL DEFAULT 1 CHECK (units_per_box > 0),
   sales_multiple INTEGER NOT NULL DEFAULT 1 CHECK (sales_multiple > 0),
+  sales_multiple_branch_1 INTEGER CHECK (sales_multiple_branch_1 >= 0),
+  sales_multiple_branch_3 INTEGER CHECK (sales_multiple_branch_3 >= 0),
   min_boxes INTEGER NOT NULL DEFAULT 1 CHECK (min_boxes > 0),
   unit_price NUMERIC(14,2) NOT NULL CHECK (unit_price >= 0),
   list_unit_price NUMERIC(14,2),

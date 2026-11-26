@@ -22,7 +22,7 @@ A DAG `ecommerce_produtos_precos` está configurada para executar a cada 30 minu
 5. inativa no e-commerce produtos que deixaram de estar ativos no WinThor;
 6. preserva as fotos já cadastradas no e-commerce;
 7. registra os totais em `product_sync_runs`;
-8. atualiza código do fabricante, NCM, EAN, múltiplo e embalagem master;
+8. atualiza código do fabricante, NCM, EAN, embalagem master e múltiplos de venda do cadastro geral e das filiais 1 e 3 (`PCPRODFILIAL.MULTIPLO`); o e-commerce aplica o múltiplo da filial de estoque do cliente, preservando a exigência de caixa fechada quando seu cadastro não permite múltiplos;
 9. atualiza os planos de pagamento liberados, o `LIMCRED`, os títulos em aberto (`PCPREST` sem `DTPAG`, sem cancelamento/estorno e sem cobranças que não são dívida) e os pedidos não faturados (`PCPEDC` nas posições L, M, B e P, exceto bonificação e transferência) dos clientes aprovados;
 10. sincroniza as restrições de fornecedor da `PCRESTRICAOVENDA` por praça e por cliente. O catálogo, a página do produto, o orçamento e o envio do pedido aplicam a mesma restrição no backend;
 11. conta, por produto, os pedidos distintos dos últimos 30 dias (`PCPEDI` × `PCPEDC`, todas as filiais, sem cancelados, bonificação e transferência). Todas as listagens da loja — catálogo, mais vendidos, departamentos, busca, banners e campanhas — ordenam os produtos por esse número.

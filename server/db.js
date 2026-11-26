@@ -42,6 +42,8 @@ export async function initializeDatabase() {
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS department_code INTEGER')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS section_code INTEGER')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS sales_multiple INTEGER NOT NULL DEFAULT 1')
+  await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS sales_multiple_branch_1 INTEGER')
+  await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS sales_multiple_branch_3 INTEGER')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS manufacturer_code TEXT')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS ncm_code TEXT')
   await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_data BYTEA')

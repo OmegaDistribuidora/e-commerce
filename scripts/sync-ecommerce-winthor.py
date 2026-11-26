@@ -23,6 +23,8 @@ SELECT
     p.qtunit,
     p.qtunitcx,
     NVL(p.multiplo, 1) AS multiplo,
+    pf1.multiplo AS multiplo_filial_1,
+    pf3.multiplo AS multiplo_filial_3,
     NVL(p.codepto, 0) AS codigo_departamento,
     NVL(d.descricao, '') AS departamento,
     NVL(p.codsec, 0) AS codigo_secao,
@@ -37,6 +39,8 @@ SELECT
         NVL(r.dtultaltpvenda, DATE '1900-01-01')
     ) AS data_preco
 FROM pcprodut p
+LEFT JOIN pcprodfilial pf1 ON pf1.codprod = p.codprod AND pf1.codfilial = '1'
+LEFT JOIN pcprodfilial pf3 ON pf3.codprod = p.codprod AND pf3.codfilial = '3'
 LEFT JOIN pcfornec f ON f.codfornec = p.codfornec
 LEFT JOIN pcdepto d ON d.codepto = p.codepto
 LEFT JOIN pcsecao s ON s.codsec = p.codsec
@@ -184,7 +188,7 @@ def main() -> None:
     for row in rows:
         (
             code, supplier_id, supplier, name, package, master_package,
-            unit_quantity, units_per_box, sales_multiple,
+            unit_quantity, units_per_box, sales_multiple, sales_multiple_branch_1, sales_multiple_branch_3,
             department_code, department, section_code, section, ean,
             manufacturer_code, ncm,
             retail_price, network_price, price_date,
@@ -200,6 +204,9 @@ def main() -> None:
             "masterPackage": text(master_package),
             "unitsPerBox": max(1, int(number(units_per_box) or number(unit_quantity) or 1)),
             "salesMultiple": max(1, int(number(sales_multiple) or 1)),
+            # Zero indica que a filial não tem múltiplo próprio; a API usa o cadastro geral.
+            "salesMultipleBranch1": max(1, int(number(sales_multiple_branch_1))) if sales_multiple_branch_1 is not None else 0,
+            "salesMultipleBranch3": max(1, int(number(sales_multiple_branch_3))) if sales_multiple_branch_3 is not None else 0,
             "minBoxes": 1,
             "retailUnitPrice": retail,
             "networkUnitPrice": network,
