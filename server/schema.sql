@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS products (
   UNIQUE (company, external_id)
 );
 
+CREATE TABLE IF NOT EXISTS site_featured_products (
+  position SMALLINT PRIMARY KEY CHECK (position BETWEEN 1 AND 5),
+  product_id INTEGER NOT NULL UNIQUE REFERENCES products(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS sales (
   id BIGSERIAL PRIMARY KEY,
   product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,

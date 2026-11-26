@@ -127,6 +127,7 @@ function StorePage({
   initialBannerId: number;
 }) {
   const [products, setProducts] = useState<Product[]>([]);
+  const [featuredProducts, setFeaturedProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [productsError, setProductsError] = useState("");
   const [query, setQuery] = useState(initialQuery);
@@ -263,6 +264,19 @@ function StorePage({
       .finally(() => setLoadingProducts(false));
     return () => controller.abort();
   }, [authReady, catalogMode, customer?.id, campaignCode]);
+
+  useEffect(() => {
+    if (!authReady) return;
+    const controller = new AbortController();
+    authenticatedFetch('/api/products?featured=1&limit=5', { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Destaques indisponíveis');
+        return response.json();
+      })
+      .then((data) => setFeaturedProducts(Array.isArray(data.products) ? data.products : []))
+      .catch(() => setFeaturedProducts([]));
+    return () => controller.abort();
+  }, [authReady, customer?.id]);
 
   useEffect(() => {
     if (!authReady || campaignCode <= 0) {
@@ -1176,11 +1190,7 @@ function StorePage({
             </span>
             <span>
               <small>Meu carrinho</small>
-              <strong>
-                {cartCount
-                  ? `${cartCount} ${cartCount === 1 ? "item" : "itens"}`
-                  : "Está vazio"}
-              </strong>
+              <strong>{money.format(cartTotal)}</strong>
             </span>
           </button>
         </div>
@@ -1386,6 +1396,31 @@ function StorePage({
               )}
             </section>
           ) : null)}
+
+        {!isBannerDestination && !query && !supplierFilter && !departmentFilter && !sectionFilter && catalogMode === 'featured' && featuredProducts.length > 0 && (
+          <section className="container featured-products" aria-label="Produtos em destaque">
+            <div className="product-grid">
+              {featuredProducts.map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  addToCart={addToCart}
+                  changeQuantity={changeQuantity}
+                  setQuantity={setQuantity}
+                  toggleFavorite={toggleFavorite}
+                  favorite={favoriteIds.has(product.id)}
+                  quantity={cart.find((item) => item.id === product.id && !item.isGift)?.quantity ?? 0}
+                  authenticated={Boolean(customer)}
+                  canOrder={Boolean(customer?.canOrder)}
+                  commercialBlocked={Boolean(customer?.commercialBlocked)}
+                  checkingStock={stockCheckingIds.has(product.id)}
+                  campaignQuantities={campaignQuantities}
+                  onInvalid={setToast}
+                />
+              ))}
+            </div>
+          </section>
+        )}
 
         <section
           className={`container products-section ${selectedDepartment || isBannerDestination ? "has-taxonomy" : "catalog-home"}`}

@@ -2,6 +2,7 @@ export type Category = string
 
 export type Product = {
   id: number
+  featuredPosition?: number | null
   code: number
   supplierId: number
   name: string

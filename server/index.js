@@ -2393,6 +2393,7 @@ app.get('/api/products', async (request, response, next) => {
     const limit = Math.min(Math.max(Number(request.query.limit) || 180, 1), 5000)
     const params = []
     const conditions = ['p.active = TRUE']
+    if (request.query.featured === '1') conditions.push('fp.position IS NOT NULL')
     const customerExternalId = Number(request.customer?.external_id) || null
     if (search) {
       params.push(`%${search}%`)
@@ -2444,7 +2445,7 @@ app.get('/api/products', async (request, response, next) => {
     const orderBy = `p.orders_last_30_days DESC, ${hasImage} DESC, p.name`
 
     const result = await pool.query(
-      `SELECT p.id, p.external_id, p.supplier_id, p.brand, p.name, p.package, p.master_package,
+      `SELECT p.id, p.external_id, p.supplier_id, p.brand, p.name, p.package, p.master_package, fp.position AS featured_position,
               p.units_per_box, p.sales_multiple, p.sales_multiple_branch_1, p.sales_multiple_branch_3, p.min_boxes, p.unit_price, p.list_unit_price,
               p.retail_unit_price, p.network_unit_price,
               p.category, p.department_code, p.department, p.section_code, p.section, p.image_path,
@@ -2452,9 +2453,10 @@ app.get('/api/products', async (request, response, next) => {
               p.manufacturer_code, p.ncm_code,
               p.price_date, p.orders_last_30_days${priceColumns}
        FROM products p
+       LEFT JOIN site_featured_products fp ON fp.product_id = p.id
        LEFT JOIN region_prices rp ON rp.product_id = p.id AND rp.region = $${regionParam}
        WHERE ${conditions.join(' AND ')}
-       ORDER BY ${orderBy}
+       ORDER BY ${request.query.featured === '1' ? 'fp.position' : orderBy}
        LIMIT $${params.length}`,
       params,
     )
@@ -2470,6 +2472,7 @@ app.get('/api/products', async (request, response, next) => {
         const customerPrice = request.customer ? lowestPlanPrice(row, priceTables) : null
         return {
         id: row.id,
+        featuredPosition: row.featured_position == null ? null : Number(row.featured_position),
         code: row.external_id,
         supplierId: row.supplier_id,
         brand: row.brand,
@@ -3350,6 +3353,42 @@ app.put('/api/staff/categories/:id/products', requireStaff, async (request, resp
   } finally {
     client.release()
   }
+})
+
+app.get('/api/staff/featured-products', requireMarketingAccess, async (_request, response, next) => {
+  try {
+    const result = await pool.query('SELECT fp.product_id FROM site_featured_products fp JOIN products p ON p.id=fp.product_id AND p.active=TRUE ORDER BY fp.position')
+    return response.json({ productIds: result.rows.map((row) => Number(row.product_id)) })
+  } catch (error) { return next(error) }
+})
+
+app.put('/api/staff/featured-products', requireMarketingAccess, async (request, response, next) => {
+  const productIds = request.body?.productIds
+  if (!Array.isArray(productIds) || productIds.length > 5 || new Set(productIds).size !== productIds.length ||
+      !productIds.every((id) => Number.isSafeInteger(id) && id > 0)) {
+    return response.status(400).json({ message: 'Selecione até cinco produtos distintos.' })
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    if (process.env.DATABASE_URL) await client.query('SELECT pg_advisory_xact_lock(74321855)')
+    if (productIds.length) {
+      const found = await client.query('SELECT id FROM products WHERE active=TRUE AND id=ANY($1::integer[])', [productIds])
+      if (found.rows.length !== productIds.length) {
+        await client.query('ROLLBACK')
+        return response.status(400).json({ message: 'Um dos produtos selecionados não está disponível no catálogo.' })
+      }
+    }
+    await client.query('DELETE FROM site_featured_products')
+    for (let index = 0; index < productIds.length; index++) {
+      await client.query('INSERT INTO site_featured_products(position,product_id) VALUES ($1,$2)', [index + 1, productIds[index]])
+    }
+    await client.query('COMMIT')
+    return response.json({ productIds })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    return next(error)
+  } finally { client.release() }
 })
 
 app.get('/api/staff/catalog-products', requireMarketingAccess, async (request, response, next) => {

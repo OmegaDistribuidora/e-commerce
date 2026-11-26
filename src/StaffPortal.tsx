@@ -2,6 +2,7 @@ import PhotoManager from "./PhotoManager";
 import InstitutionalEditor from "./InstitutionalEditor";
 import CouponManager from "./CouponManager";
 import CampaignManager from "./CampaignManager";
+import FeaturedProductsManager from "./FeaturedProductsManager";
 import { ImageOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -25,6 +26,7 @@ import {
   Plus,
   Save,
   Search,
+  Star,
   ShieldCheck,
   Tag,
   Trash2,
@@ -60,6 +62,7 @@ type Tab =
   | "coupons"
   | "banners"
   | "photos"
+  | "featured"
   | "institutional"
   | "categories"
   | "users"
@@ -944,6 +947,9 @@ export default function StaffPortal() {
           >
             <Camera /> Fotos
           </button>
+          <button className={tab === "featured" ? "active" : ""} onClick={() => changeTab("featured")}>
+            <Star /> Produtos em destaque
+          </button>
           <button
             className={tab === "banners" ? "active" : ""}
             onClick={() => changeTab("banners")}
@@ -991,6 +997,7 @@ export default function StaffPortal() {
                     coupons: "Cupons de desconto",
                     categories: "Categorias de produtos",
                     photos: "Fotos",
+                    featured: "Produtos em destaque",
                     banners: "Banners da loja",
                     institutional: "Conteúdo institucional",
                     users: "Usuários internos",
@@ -1323,6 +1330,7 @@ export default function StaffPortal() {
           </section>
         )}
         {tab === "campaigns" && <CampaignManager campaigns={campaigns} onChange={setCampaigns} products={catalogProducts} suppliers={suppliers} departments={catalogDepartments} />}
+        {tab === "featured" && <FeaturedProductsManager products={catalogProducts} />}
         {tab === "coupons" && user.role !== "MARKETING" && (
           <CouponManager products={catalogProducts} suppliers={suppliers} departments={catalogDepartments} />
         )}

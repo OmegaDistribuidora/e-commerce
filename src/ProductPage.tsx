@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { authenticatedFetch } from './api'
 import DepartmentDrawer from './DepartmentDrawer'
-import { campaignQuantitiesForCart, productPriceForQuantity, unitMoney } from './data'
+import { campaignQuantitiesForCart, cartTotalValue, money, productPriceForQuantity, unitMoney } from './data'
 import { formatCatalogName } from './catalog'
 import { supabase } from './supabase'
 import { PageSkeleton } from './Skeleton'
@@ -125,6 +125,7 @@ export default function ProductPage({ code }: { code: number }) {
   if (!product || error) return <main className="product-page-state"><ImageOff /><h1>Produto indisponível</h1><p>{error}</p><a href="/"><ArrowLeft /> Voltar para a loja</a></main>
 
   const cartCount = cart.length
+  const cartTotal = cartTotalValue(cart)
   const campaignQuantities = campaignQuantitiesForCart(cart)
   const campaignPrice = productPriceForQuantity(product, quantity, campaignQuantities)
   const nextOffer = [...(product.campaignOffers || [])].sort((a, b) => b.discountPercent - a.discountPercent)[0]
@@ -138,7 +139,7 @@ export default function ProductPage({ code }: { code: number }) {
         <form className="search-box" onSubmit={submitSearch}><Search size={21} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Busque produtos, marcas ou código" aria-label="Buscar produtos" /><button aria-label="Buscar"><Search size={18} /></button></form>
         <a className="account-button" href={staffUser ? '/gestao' : customer ? '/pedidos' : '/conta'}><CircleUserRound /><span><small>{staffUser ? 'Painel interno' : customer ? 'Meus pedidos' : 'Área do cliente'}</small><strong>{staffUser ? `${staffUser.name} · ${staffUser.role}` : customer ? `Bem-vindo(a), ${customer.tradeName || customer.legalName}` : 'Entrar ou cadastrar'}</strong></span></a>
         {(customer || staffUser) && <button className="logout-button" onClick={logout} aria-label="Sair da conta"><LogOut size={19} /><span>Sair</span></button>}
-        <a className="cart-button" href="/?carrinho=1" aria-label={`Abrir carrinho com ${cartCount} ${cartCount === 1 ? 'item' : 'itens'}`}><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{cartCount ? `${cartCount} ${cartCount === 1 ? 'item' : 'itens'}` : 'Está vazio'}</strong></span></a>
+        <a className="cart-button" href="/?carrinho=1" aria-label={`Abrir carrinho com ${cartCount} ${cartCount === 1 ? 'item' : 'itens'}, valor ${money.format(cartTotal)}`}><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{money.format(cartTotal)}</strong></span></a>
       </div>
       <nav className="main-nav" aria-label="Departamentos e seções"><div className="container nav-inner department-nav"><button className="categories-button" onClick={() => setDepartmentsOpen(true)}><Menu size={19} /> Departamentos</button>{[...departments].sort((a, b) => b.productCount - a.productCount).slice(0, 6).map((department) => <div className="department-nav-item" key={department.code || department.name}><a className="product-department-link" href={`/?departamento=${encodeURIComponent(department.name)}#produtos`}>{formatCatalogName(department.name)}</a><div className="department-dropdown"><a className="department-all" href={`/?departamento=${encodeURIComponent(department.name)}#produtos`}>Ver todos em {formatCatalogName(department.name)}</a><div>{department.sections.map((section) => <a key={`${department.name}-${section.code || section.name}`} href={`/?departamento=${encodeURIComponent(department.name)}&secao=${encodeURIComponent(section.name)}#produtos`}>{formatCatalogName(section.name)}<small>{section.productCount}</small></a>)}</div></div></div>)}<a className="nav-campaigns" href="/campanhas">Clube de Ofertas</a><div className="partners-nav-item"><a href="/#parceiros">Parceiros</a>{partners.length > 0 && <div className="partners-dropdown">{partners.map((partner) => <a key={partner.supplierId} href={`/?fornecedor=${partner.supplierId}#produtos`}><img src={partner.logo} alt="" /><span>{partner.name}</span></a>)}</div>}</div><a className="nav-support" href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a></div></nav>
       {departmentsOpen && <DepartmentDrawer departments={departments} onClose={() => setDepartmentsOpen(false)} />}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { CircleUserRound, LogOut, MapPin, Menu, Search, ShoppingCart } from 'lucide-react'
 import { authenticatedFetch } from './api'
+import { cartTotalValue, money } from './data'
 import DepartmentDrawer from './DepartmentDrawer'
 import { supabase } from './supabase'
 import type { Customer, StaffUser } from './types'
@@ -13,6 +14,7 @@ export default function PublicSiteHeader({ active }: { active?: 'about' | 'partn
   const [staffUser, setStaffUser] = useState<StaffUser | null>(null)
   const [ready, setReady] = useState(false)
   const [cartCount, setCartCount] = useState(0)
+  const [cartTotal, setCartTotal] = useState(0)
 
   useEffect(() => {
     authenticatedFetch('/api/auth/me').then(async (response) => response.ok ? response.json() : null).then(async (account) => {
@@ -21,7 +23,9 @@ export default function PublicSiteHeader({ active }: { active?: 'about' | 'partn
       if (account?.accountType === 'customer' && account.customer?.canOrder) {
         const response = await authenticatedFetch('/api/customer/cart')
         const data = await response.json().catch(() => ({ items: [] }))
-        setCartCount(response.ok && Array.isArray(data.items) ? data.items.length : 0)
+        const items = response.ok && Array.isArray(data.items) ? data.items : []
+        setCartCount(items.length)
+        setCartTotal(cartTotalValue(items))
       }
     }).catch(() => undefined).finally(() => setReady(true))
   }, [])
@@ -50,7 +54,7 @@ export default function PublicSiteHeader({ active }: { active?: 'about' | 'partn
         <form className="search-box" onSubmit={submitSearch}><Search size={21} /><input name="search" placeholder="Busque produtos, marcas ou código" /><button aria-label="Buscar"><Search size={18} /></button></form>
         <a className="account-button" href={staffUser ? '/gestao' : customer ? '/pedidos' : '/conta'}><CircleUserRound /><span><small>{staffUser ? 'Painel interno' : customer ? 'Meus pedidos' : 'Área do cliente'}</small><strong>{staffUser ? `${staffUser.name} · ${staffUser.role}` : customer ? `Bem-vindo(a), ${customer.tradeName || customer.legalName}` : 'Entrar ou cadastrar'}</strong></span></a>
         {(customer || staffUser) && <button className="logout-button" onClick={logout}><LogOut size={19} /><span>Sair</span></button>}
-        <a className="cart-button" href="/?carrinho=1"><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{cartCount ? `${cartCount} ${cartCount === 1 ? 'item' : 'itens'}` : 'Está vazio'}</strong></span></a>
+        <a className="cart-button" href="/?carrinho=1"><span className="cart-icon"><ShoppingCart />{cartCount > 0 && <b>{cartCount}</b>}</span><span><small>Meu carrinho</small><strong>{money.format(cartTotal)}</strong></span></a>
       </div>
       <nav className="main-nav"><div className="container nav-inner content-page-nav"><button className="categories-button" onClick={() => setDepartmentsOpen(true)}><Menu size={19} /> Departamentos</button><a href="/#produtos">Produtos</a><a className="nav-campaigns" href="/campanhas">Clube de Ofertas</a><a className={active === 'partners' ? 'active' : ''} href="/parceiros">Parceiros</a><a className={active === 'about' ? 'active' : ''} href="/sobre">Sobre a Ômega</a><a className="nav-support" href={whatsappUrl} target="_blank" rel="noreferrer">Atendimento</a></div></nav>
       {departmentsOpen && <DepartmentDrawer onClose={() => setDepartmentsOpen(false)} />}

@@ -37,6 +37,11 @@ export function campaignQuantitiesForCart(items: Array<Product & { quantity: num
   return totals
 }
 
+export function cartTotalValue(items: Array<Product & { quantity: number }>) {
+  const campaignQuantities = campaignQuantitiesForCart(items)
+  return items.reduce((sum, item) => sum + (productPriceForQuantity(item, item.quantity, campaignQuantities).unitPrice ?? 0) * item.quantity, 0)
+}
+
 export function productPriceForQuantity(
   product: Product,
   quantity: number,
