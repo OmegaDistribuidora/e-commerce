@@ -45,6 +45,10 @@ function paymentLabel(value: string) {
 export default function OrdersPage() {
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState('');
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
   const [favorites, setFavorites] = useState<Product[]>([]);
   const [tab, setTab] = useState<CustomerTab>("orders");
   const [loading, setLoading] = useState(true);
@@ -69,10 +73,30 @@ export default function OrdersPage() {
         setCustomer(auth.customer);
         setOrders(orderData.orders);
         setFavorites(favoriteData.favorites || []);
+        void loadHistory(0);
       })
       .catch((requestError) => setError(requestError.message))
       .finally(() => setLoading(false));
   }, []);
+
+  async function loadHistory(offset: number) {
+    setHistoryLoading(true);
+    setHistoryError('');
+    try {
+      const response = await authenticatedFetch(`/api/orders/history?offset=${offset}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Não foi possível consultar o histórico.');
+      setOrders((current) => {
+        const existing = new Set(current.map((order) => order.winthorOrderNumber).filter(Boolean));
+        return [...current, ...data.orders.filter((order: Order) => !existing.has(order.winthorOrderNumber))]
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      });
+      setHistoryOffset(data.nextOffset);
+      setHistoryHasMore(Boolean(data.hasMore));
+    } catch (reason) {
+      setHistoryError(reason instanceof Error ? reason.message : 'Não foi possível consultar o histórico.');
+    } finally { setHistoryLoading(false); }
+  }
 
   async function cancelOrder(order: Order) {
     if (
@@ -360,6 +384,7 @@ export default function OrdersPage() {
                                       {item.units === 1
                                         ? "unidade"
                                         : "unidades"}
+                                      {' · '}{unitMoney.format(item.unitPrice)} por unidade
                                     </small>
                                   </span>
                                 </span>
@@ -420,6 +445,11 @@ export default function OrdersPage() {
                     )}
                   </div>
                 ))}
+              {tab === 'orders' && <div className="customer-history-actions">
+                {historyLoading && <ContentSkeleton cards={1} />}
+                {historyError && <div className="staff-alert error">{historyError} <button type="button" onClick={() => void loadHistory(historyOffset)}>Tentar novamente</button></div>}
+                {historyHasMore && !historyLoading && <button type="button" className="secondary-button" onClick={() => void loadHistory(historyOffset)}>Ver pedidos anteriores</button>}
+              </div>}
               {tab === "favorites" &&
                 (favorites.length ? (
                   <div className="customer-favorites-grid">

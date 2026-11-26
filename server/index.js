@@ -270,6 +270,31 @@ async function fetchWinthorOrderStatuses(orderNumbers) {
   return statuses
 }
 
+const orderHistoryCache = new Map()
+const orderHistoryCacheMs = 60 * 60 * 1000
+async function fetchWinthorOrderHistory(customerCode, offset, limit = 50) {
+  const config = omegaApiConfig()
+  if (!config) throw new OmegaApiError('O histórico de pedidos está temporariamente indisponível.', 503)
+  const key = `${customerCode}:${offset}:${limit}`
+  const cached = orderHistoryCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+  let response
+  try {
+    response = await fetch(`${config.url}/v1/winthor/clientes/pedidos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': config.key, 'X-Client-Name': 'omega-ecommerce' },
+      body: JSON.stringify({ codigo: customerCode, offset, limit }),
+      signal: AbortSignal.timeout(20_000),
+    })
+  } catch { throw new OmegaApiError('Não foi possível consultar o histórico de pedidos agora.', 503) }
+  if (!response.ok) throw new OmegaApiError('Não foi possível consultar o histórico de pedidos agora.', 503)
+  const value = await response.json()
+  if (!Array.isArray(value.pedidos) || typeof value.hasMore !== 'boolean') throw new OmegaApiError('O histórico de pedidos retornou dados inválidos.', 502)
+  if (orderHistoryCache.size >= 300) orderHistoryCache.delete(orderHistoryCache.keys().next().value)
+  orderHistoryCache.set(key, { value, expiresAt: Date.now() + orderHistoryCacheMs })
+  return value
+}
+
 // Datas do WinThor chegam no horário local (Brasília, sem horário de verão) e sem fuso.
 function winthorLocalTime(value) {
   const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2})?$/.exec(String(value || ''))
@@ -427,7 +452,8 @@ async function refreshStaleOrderStatuses(orders) {
         [order.id, winthorStatus.status, winthorStatus.code, winthorStatus.label, checkedAt, winthorOrderNumber,
           winthorStatus.deliveryDate, winthorStatus.releasedAt, winthorStatus.invoicedAt],
         )
-        if (isForwardStage(previousStatus, winthorStatus.status)) await queueOrderStage(statusClient, order.id, winthorStatus.status)
+        if (winthorStatus.status === 'cancelled' && previousStatus !== 'cancelled') await queueOrderStage(statusClient, order.id, 'cancelled')
+        else if (isForwardStage(previousStatus, winthorStatus.status)) await queueOrderStage(statusClient, order.id, winthorStatus.status)
         await statusClient.query('COMMIT')
       } catch (error) {
         await statusClient.query('ROLLBACK')
@@ -791,21 +817,34 @@ async function priceCartItems(database, pricing, plan, items, customerExternalId
   return { lines, total: money2(lines.reduce((sum, line) => sum + line.lineTotal, 0)) }
 }
 
-async function applyCoupon(database, couponCode, lines) {
+async function applyCoupon(database, couponCode, lines, customerId, { lock = false } = {}) {
   const code = String(couponCode || '').trim().toUpperCase()
   const subtotal = money2(lines.reduce((sum, line) => sum + line.lineTotal, 0))
   if (!code) return { subtotal, total: subtotal, coupon: null }
   const result = await database.query(
-    `SELECT c.id,c.code,c.description,c.discount_type,c.discount_value,c.scope_type
+    `SELECT c.id,c.code,c.description,c.discount_type,c.discount_value,c.scope_type,c.max_uses,c.max_uses_per_customer
      FROM coupons c
      WHERE UPPER(c.code)=UPPER($1) AND c.active=TRUE
        AND (c.starts_at IS NULL OR c.starts_at<=CURRENT_TIMESTAMP)
        AND (c.ends_at IS NULL OR c.ends_at>CURRENT_TIMESTAMP)
-     LIMIT 1`,
+     LIMIT 1${lock ? ' FOR UPDATE OF c' : ''}`,
     [code],
   )
   const coupon = result.rows[0]
   if (!coupon) throw new RequestError('Cupom inválido, inativo ou fora do período de utilização.')
+  if (coupon.max_uses !== null || coupon.max_uses_per_customer !== null) {
+    const uses = await database.query(
+      `SELECT COUNT(*)::integer AS total,
+              COUNT(*) FILTER (WHERE o.customer_id=$2)::integer AS customer_total
+       FROM order_coupons oc JOIN orders o ON o.id=oc.order_id
+       WHERE oc.coupon_id=$1 AND o.status<>'cancelled'`,
+      [coupon.id, customerId],
+    )
+    if ((coupon.max_uses !== null && Number(uses.rows[0].total) >= Number(coupon.max_uses))
+      || (coupon.max_uses_per_customer !== null && Number(uses.rows[0].customer_total) >= Number(coupon.max_uses_per_customer))) {
+      throw new RequestError('Este cupom expirou ou atingiu o limite de utilização.', 409)
+    }
+  }
   const targetResult = coupon.scope_type === 'order' ? { rows: [] } : await database.query('SELECT target_value FROM coupon_targets WHERE coupon_id=$1', [coupon.id])
   const targets = new Set(targetResult.rows.map((row) => Number(row.target_value)))
   const eligibleLines = lines.filter((line) => {
@@ -916,13 +955,24 @@ async function activeCampaignOffers(database, productIds, customerExternalId = n
 async function cancelOrder(orderId, { customerId = null, cancelledBy }) {
   const ownerClause = customerId ? ' AND customer_id=$3' : ''
   const params = customerId ? [orderId, cancelledBy, customerId] : [orderId, cancelledBy]
-  const result = await pool.query(
-    `UPDATE orders SET status='cancelled', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=$2, updated_at=CURRENT_TIMESTAMP
-     WHERE id=$1${ownerClause} AND status='analysis' AND winthor_order_number IS NULL
-     RETURNING id`,
-    params,
-  )
-  if (result.rows.length) return
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const result = await client.query(
+      `UPDATE orders SET status='cancelled', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=$2, updated_at=CURRENT_TIMESTAMP
+       WHERE id=$1${ownerClause} AND status='analysis' AND winthor_order_number IS NULL
+       RETURNING id`, params,
+    )
+    if (result.rows.length) {
+      await queueOrderStage(client, orderId, 'cancelled')
+      await client.query('COMMIT')
+      return
+    }
+    await client.query('ROLLBACK')
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally { client.release() }
   const current = await pool.query(
     `SELECT status, winthor_order_number FROM orders WHERE id=$1${customerId ? ' AND customer_id=$2' : ''}`,
     customerId ? [orderId, customerId] : [orderId],
@@ -2052,7 +2102,7 @@ app.post('/api/customer/quote', async (request, response, next) => {
     for (const plan of pricing.plans) {
       try {
         const priced = await priceCartItems(pool, pricing, plan, parsed.data.items, request.customer.external_id, request.customer.city)
-        quotes.push({ plan, ...priced, ...(await applyCoupon(pool, parsed.data.couponCode, priced.lines)) })
+        quotes.push({ plan, ...priced, ...(await applyCoupon(pool, parsed.data.couponCode, priced.lines, request.customer.id)) })
       } catch (error) {
         if (!(error instanceof RequestError)) throw error
         quotes.push({ plan, error })
@@ -2829,6 +2879,54 @@ app.get('/api/orders', async (request, response, next) => {
   }
 })
 
+app.get('/api/orders/history', async (request, response, next) => {
+  if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para consultar seus pedidos.' })
+  if (!Number.isSafeInteger(Number(request.customer.external_id)) || Number(request.customer.external_id) < 1) {
+    return response.json({ orders: [], hasMore: false, nextOffset: 0 })
+  }
+  const offset = Number(request.query.offset || 0)
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000) return response.status(400).json({ message: 'Página inválida.' })
+  try {
+    const history = await fetchWinthorOrderHistory(Number(request.customer.external_id), offset)
+    const source = history.pedidos
+    const numbers = source.map((order) => Number(order.numped)).filter(Number.isSafeInteger)
+    const linked = numbers.length ? await pool.query(
+      'SELECT winthor_order_number FROM orders WHERE customer_id=$1 AND winthor_order_number=ANY($2::bigint[])',
+      [request.customer.id, numbers],
+    ) : { rows: [] }
+    const linkedNumbers = new Set(linked.rows.map((row) => Number(row.winthor_order_number)))
+    const codes = [...new Set(source.flatMap((order) => order.itens || []).map((item) => Number(item.codigo)).filter(Number.isSafeInteger))]
+    const catalog = codes.length ? await pool.query(
+      `SELECT id,external_id,image_path,image_data IS NOT NULL AS image_uploaded,image_hidden,image_updated_at
+       FROM products WHERE active=TRUE AND external_id=ANY($1::integer[])`, [codes],
+    ) : { rows: [] }
+    const images = new Map(catalog.rows.map((product) => [Number(product.external_id), product]))
+    const orders = source.filter((order) => !linkedNumbers.has(Number(order.numped))).map((order) => {
+      const number = Number(order.numped)
+      const createdAt = winthorLocalTime(order.registradoEm) || new Date(0).toISOString()
+      return {
+        id: -number, number: String(number), status: customerOrderStatuses.has(order.status) ? order.status : 'analysis',
+        winthorOrderNumber: number, winthorStatusCode: String(order.posicao || ''), winthorStatusLabel: String(order.statusReal || ''),
+        statusUpdatedAt: null, deliveryDate: deliveryForecast(order.previsaoEntrega),
+        releasedAt: winthorLocalTime(order.liberadoEm), invoicedAt: winthorLocalTime(order.faturadoEm),
+        enteredAt: null, enteredBy: '', paymentPlan: String(order.planoPagamento || ''), total: Number(order.total || 0),
+        coupon: null, notes: '', createdAt, updatedAt: createdAt, cancelledAt: winthorLocalTime(order.canceladoEm),
+        cancelledBy: '', canCancel: false, origin: 'winthor',
+        customer: { id: Number(request.customer.id), legalName: request.customer.legal_name, tradeName: request.customer.trade_name,
+          document: request.customer.document, email: request.customer.email, phone: request.customer.phone },
+        items: (order.itens || []).map((item, index) => {
+          const product = images.get(Number(item.codigo))
+          return { id: -(number * 1000 + index + 1), productId: product ? Number(product.id) : 0,
+            code: Number(item.codigo), name: String(item.nome || `Produto ${item.codigo}`),
+            image: product ? productImageUrl(product) : null, boxes: 0, units: Number(item.quantidade),
+            unitsPerBox: 0, unitPrice: Number(item.precoUnitario), lineTotal: Number(item.total) }
+        }),
+      }
+    })
+    return response.json({ orders, hasMore: history.hasMore, nextOffset: offset + source.length })
+  } catch (error) { return next(error) }
+})
+
 app.post('/api/orders/:id/cancel', async (request, response, next) => {
   if (!request.customer) return response.status(401).json({ message: 'Entre na sua conta para cancelar o pedido.' })
   const orderId = Number(request.params.id)
@@ -3384,6 +3482,8 @@ function couponJson(row) {
   return {
     id: Number(row.id), code: row.code, description: row.description,
     discountType: row.discount_type, discountValue: Number(row.discount_value),
+    maxUses: row.max_uses == null ? null : Number(row.max_uses),
+    maxUsesPerCustomer: row.max_uses_per_customer == null ? null : Number(row.max_uses_per_customer),
     scopeType: row.scope_type, targetValues: (row.target_values || row.targets || []).map(Number),
     active: Boolean(row.active), startsAt: row.starts_at || null, endsAt: row.ends_at || null,
     createdAt: row.created_at, updatedAt: row.updated_at,
@@ -3417,14 +3517,14 @@ async function saveCoupon(request, response, next) {
       const validTargets = await client.query(`SELECT DISTINCT ${column} AS value FROM products WHERE active=TRUE AND ${column}=ANY($1::integer[])`, [postgresIntegerArray(uniqueTargets)])
       if (validTargets.rows.length !== uniqueTargets.length) throw new RequestError('Um ou mais itens selecionados não estão disponíveis no catálogo ativo.')
     }
-    const values = [content.code, content.description, content.discountType, content.discountValue, content.scopeType, content.active, content.startsAt || null, content.endsAt || null]
+    const values = [content.code, content.description, content.discountType, content.discountValue, content.scopeType, content.active, content.startsAt || null, content.endsAt || null, content.maxUses, content.maxUsesPerCustomer]
     const saved = couponId === null
       ? await client.query(
-        `INSERT INTO coupons (code,description,discount_type,discount_value,scope_type,active,starts_at,ends_at,created_by_staff_user_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [...values, request.staff.id])
+        `INSERT INTO coupons (code,description,discount_type,discount_value,scope_type,active,starts_at,ends_at,max_uses,max_uses_per_customer,created_by_staff_user_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`, [...values, request.staff.id])
       : await client.query(
-        `UPDATE coupons SET code=$1,description=$2,discount_type=$3,discount_value=$4,scope_type=$5,active=$6,starts_at=$7,ends_at=$8,updated_at=CURRENT_TIMESTAMP
-         WHERE id=$9 RETURNING *`, [...values, couponId])
+        `UPDATE coupons SET code=$1,description=$2,discount_type=$3,discount_value=$4,scope_type=$5,active=$6,starts_at=$7,ends_at=$8,max_uses=$9,max_uses_per_customer=$10,updated_at=CURRENT_TIMESTAMP
+         WHERE id=$11 RETURNING *`, [...values, couponId])
     if (!saved.rows.length) throw new RequestError('Cupom não encontrado.', 404)
     const id = Number(saved.rows[0].id)
     await client.query('DELETE FROM coupon_targets WHERE coupon_id=$1', [id])
@@ -3652,7 +3752,7 @@ app.post('/api/orders', async (request, response, next) => {
       return response.status(400).json({ message: 'O plano de pagamento selecionado não está liberado para este cliente.' })
     }
     const priced = await priceCartItems(client, pricing, selectedPlan, parsed.data.items, request.customer.external_id, request.customer.city)
-    const { subtotal, total, coupon } = await applyCoupon(client, parsed.data.couponCode, priced.lines)
+    const { subtotal, total, coupon } = await applyCoupon(client, parsed.data.couponCode, priced.lines, request.customer.id, { lock: true })
     const { lines } = priced
 
     if (subtotal < 200) {

@@ -54,6 +54,8 @@ export type Coupon = {
   description: string
   discountType: 'fixed' | 'percent'
   discountValue: number
+  maxUses: number | null
+  maxUsesPerCustomer: number | null
   scopeType: 'order' | 'products' | 'suppliers' | 'sections'
   targetValues: number[]
   active: boolean

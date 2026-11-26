@@ -134,6 +134,8 @@ export const couponSchema = z.object({
   scopeType: z.enum(['order', 'products', 'suppliers', 'sections']),
   targetValues: z.array(z.coerce.number().int().positive()).max(5000).default([]),
   active: z.boolean().default(true),
+  maxUses: z.number().int().positive().max(100000000).nullable().default(null),
+  maxUsesPerCustomer: z.number().int().positive().max(100000000).nullable().default(1),
   startsAt: z.string().datetime({ offset: true }).nullable().optional(),
   endsAt: z.string().datetime({ offset: true }).nullable().optional(),
 }).superRefine((value, context) => {

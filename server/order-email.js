@@ -1,17 +1,18 @@
 import { pool } from './db.js'
 
-const stages = ['analysis', 'released', 'sent', 'delivered']
+const stages = ['analysis', 'released', 'sent', 'delivered', 'cancelled']
 const stageContent = {
   analysis: ['Pedido recebido', 'Recebemos seu pedido e nossa equipe já está analisando os detalhes.'],
   released: ['Pedido liberado', 'Seu pedido foi liberado e está seguindo para preparação.'],
   sent: ['Pedido enviado', 'Seu pedido foi enviado e está a caminho.'],
   delivered: ['Pedido entregue', 'Seu pedido foi entregue. Agradecemos por comprar com a Ômega Distribuidora!'],
+  cancelled: ['Pedido cancelado', 'Seu pedido foi cancelado. Se precisar de ajuda, nossa equipe está à disposição.'],
 }
 const currency = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value || 0))
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character])
 
 export function isForwardStage(previous, next) {
-  return stages.includes(previous) && stages.indexOf(next) > stages.indexOf(previous)
+  return next !== 'cancelled' && stages.includes(previous) && stages.indexOf(next) > stages.indexOf(previous)
 }
 
 export async function queueOrderStage(database, orderId, stage) {

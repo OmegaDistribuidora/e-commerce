@@ -74,6 +74,8 @@ export async function initializeDatabase() {
     UNIQUE(order_id, stage)
   )`)
   await pool.query('CREATE INDEX IF NOT EXISTS idx_order_email_pending ON order_email_outbox(next_attempt_at) WHERE sent_at IS NULL')
+  await pool.query('ALTER TABLE order_email_outbox DROP CONSTRAINT IF EXISTS order_email_outbox_stage_check')
+  await pool.query("ALTER TABLE order_email_outbox ADD CONSTRAINT order_email_outbox_stage_check CHECK (stage IN ('analysis','released','sent','delivered','cancelled'))")
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_supabase_user ON customers(supabase_user_id)')
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_supabase_user ON staff_users(supabase_user_id)')
   await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP')
@@ -185,6 +187,11 @@ export async function initializeDatabase() {
     discount_amount NUMERIC(14,2) NOT NULL
   )`)
     await pool.query('CREATE INDEX IF NOT EXISTS idx_coupons_active_dates ON coupons(active,starts_at,ends_at)')
+    await pool.query('ALTER TABLE coupons ADD COLUMN IF NOT EXISTS max_uses INTEGER')
+    await pool.query('ALTER TABLE coupons ADD COLUMN IF NOT EXISTS max_uses_per_customer INTEGER DEFAULT 1')
+    await pool.query('ALTER TABLE coupons DROP CONSTRAINT IF EXISTS coupons_use_limits_check')
+    await pool.query('ALTER TABLE coupons ADD CONSTRAINT coupons_use_limits_check CHECK ((max_uses IS NULL OR max_uses > 0) AND (max_uses_per_customer IS NULL OR max_uses_per_customer > 0))')
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_order_coupons_coupon_id ON order_coupons(coupon_id)')
   }
   if (process.env.DATABASE_URL) {
     await pool.query(`CREATE TABLE IF NOT EXISTS customer_favorites (
