@@ -833,11 +833,10 @@ footer { background: #061f48; color: #ccdaf0; padding: 52px 0 22px; }
 .product-share { margin: -10px 0 24px; }
 .product-share-label { display: block; margin-bottom: 10px; color: #64748b; font-size: 12px; font-weight: 700; }
 .product-share-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
-.product-share-actions > a, .product-share-actions > button { width: 40px; height: 40px; padding: 0; border: 1px solid #dce6f1; border-radius: 50%; background: #fff; display: grid; place-items: center; color: var(--blue); cursor: pointer; transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
+.product-share-actions > a, .product-share-actions > button { width: 40px; height: 40px; padding: 0; border: 1px solid #cbdcf0; border-radius: 50%; background: #fff; display: grid; place-items: center; color: #074d9d; cursor: pointer; transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
 .product-share-actions > a:hover, .product-share-actions > button:hover { transform: translateY(-2px); border-color: #9bb9db; box-shadow: 0 5px 14px rgba(3, 42, 92, .11); }
 .product-share-actions > a:focus-visible, .product-share-actions > button:focus-visible { outline: 3px solid var(--orange); outline-offset: 3px; }
-.product-share-actions img { width: 29px; height: 29px; border-radius: 50%; object-fit: cover; display: block; }
-.product-share-actions svg { width: 19px; height: 19px; stroke-width: 2; }
+.product-share-actions svg { width: 22px; height: 22px; }
 .product-share-feedback { display: flex; align-items: center; gap: 4px; min-height: 22px; margin-top: 5px; color: #26735d; font-size: 11px; font-weight: 700; }
 .product-detail-price { margin-bottom: 18px; display: flex; align-items: baseline; gap: 8px; }
 .product-detail-price del { color: #8592a4; font-size: 15px; }
