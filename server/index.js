@@ -822,7 +822,7 @@ async function applyCoupon(database, couponCode, lines, customerId, { lock = fal
   const subtotal = money2(lines.reduce((sum, line) => sum + line.lineTotal, 0))
   if (!code) return { subtotal, total: subtotal, coupon: null }
   const result = await database.query(
-    `SELECT c.id,c.code,c.description,c.discount_type,c.discount_value,c.scope_type,c.max_uses,c.max_uses_per_customer
+    `SELECT c.id,c.code,c.description,c.discount_type,c.discount_value,c.scope_type,c.max_uses,c.max_uses_per_customer,c.first_order_only
      FROM coupons c
      WHERE UPPER(c.code)=UPPER($1) AND c.active=TRUE
        AND (c.starts_at IS NULL OR c.starts_at<=CURRENT_TIMESTAMP)
@@ -832,6 +832,13 @@ async function applyCoupon(database, couponCode, lines, customerId, { lock = fal
   )
   const coupon = result.rows[0]
   if (!coupon) throw new RequestError('Cupom inválido, inativo ou fora do período de utilização.')
+  if (coupon.first_order_only) {
+    const priorOrder = await database.query(
+      `SELECT 1 FROM orders WHERE customer_id=$1 AND status<>'cancelled' LIMIT 1`,
+      [customerId],
+    )
+    if (priorOrder.rows.length) throw new RequestError('Este cupom é válido apenas para a primeira compra no e-commerce.', 409)
+  }
   if (coupon.max_uses !== null || coupon.max_uses_per_customer !== null) {
     const uses = await database.query(
       `SELECT COUNT(*)::integer AS total,
@@ -3523,6 +3530,7 @@ function couponJson(row) {
     discountType: row.discount_type, discountValue: Number(row.discount_value),
     maxUses: row.max_uses == null ? null : Number(row.max_uses),
     maxUsesPerCustomer: row.max_uses_per_customer == null ? null : Number(row.max_uses_per_customer),
+    firstOrderOnly: Boolean(row.first_order_only),
     scopeType: row.scope_type, targetValues: (row.target_values || row.targets || []).map(Number),
     active: Boolean(row.active), startsAt: row.starts_at || null, endsAt: row.ends_at || null,
     createdAt: row.created_at, updatedAt: row.updated_at,
@@ -3556,14 +3564,14 @@ async function saveCoupon(request, response, next) {
       const validTargets = await client.query(`SELECT DISTINCT ${column} AS value FROM products WHERE active=TRUE AND ${column}=ANY($1::integer[])`, [postgresIntegerArray(uniqueTargets)])
       if (validTargets.rows.length !== uniqueTargets.length) throw new RequestError('Um ou mais itens selecionados não estão disponíveis no catálogo ativo.')
     }
-    const values = [content.code, content.description, content.discountType, content.discountValue, content.scopeType, content.active, content.startsAt || null, content.endsAt || null, content.maxUses, content.maxUsesPerCustomer]
+    const values = [content.code, content.description, content.discountType, content.discountValue, content.scopeType, content.active, content.startsAt || null, content.endsAt || null, content.maxUses, content.maxUsesPerCustomer, content.firstOrderOnly]
     const saved = couponId === null
       ? await client.query(
-        `INSERT INTO coupons (code,description,discount_type,discount_value,scope_type,active,starts_at,ends_at,max_uses,max_uses_per_customer,created_by_staff_user_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`, [...values, request.staff.id])
+        `INSERT INTO coupons (code,description,discount_type,discount_value,scope_type,active,starts_at,ends_at,max_uses,max_uses_per_customer,first_order_only,created_by_staff_user_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`, [...values, request.staff.id])
       : await client.query(
-        `UPDATE coupons SET code=$1,description=$2,discount_type=$3,discount_value=$4,scope_type=$5,active=$6,starts_at=$7,ends_at=$8,max_uses=$9,max_uses_per_customer=$10,updated_at=CURRENT_TIMESTAMP
-         WHERE id=$11 RETURNING *`, [...values, couponId])
+        `UPDATE coupons SET code=$1,description=$2,discount_type=$3,discount_value=$4,scope_type=$5,active=$6,starts_at=$7,ends_at=$8,max_uses=$9,max_uses_per_customer=$10,first_order_only=$11,updated_at=CURRENT_TIMESTAMP
+         WHERE id=$12 RETURNING *`, [...values, couponId])
     if (!saved.rows.length) throw new RequestError('Cupom não encontrado.', 404)
     const id = Number(saved.rows[0].id)
     await client.query('DELETE FROM coupon_targets WHERE coupon_id=$1', [id])

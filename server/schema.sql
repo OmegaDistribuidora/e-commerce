@@ -201,6 +201,7 @@ CREATE TABLE IF NOT EXISTS coupons (
   active BOOLEAN NOT NULL DEFAULT TRUE,
   max_uses INTEGER CHECK (max_uses IS NULL OR max_uses > 0),
   max_uses_per_customer INTEGER DEFAULT 1 CHECK (max_uses_per_customer IS NULL OR max_uses_per_customer > 0),
+  first_order_only BOOLEAN NOT NULL DEFAULT FALSE,
   starts_at TIMESTAMPTZ,
   ends_at TIMESTAMPTZ,
   created_by_staff_user_id BIGINT REFERENCES staff_users(id),

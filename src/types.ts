@@ -57,6 +57,7 @@ export type Coupon = {
   discountValue: number
   maxUses: number | null
   maxUsesPerCustomer: number | null
+  firstOrderOnly: boolean
   scopeType: 'order' | 'products' | 'suppliers' | 'sections'
   targetValues: number[]
   active: boolean

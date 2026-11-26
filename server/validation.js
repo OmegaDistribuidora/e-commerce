@@ -136,6 +136,7 @@ export const couponSchema = z.object({
   active: z.boolean().default(true),
   maxUses: z.number().int().positive().max(100000000).nullable().default(null),
   maxUsesPerCustomer: z.number().int().positive().max(100000000).nullable().default(1),
+  firstOrderOnly: z.boolean().default(false),
   startsAt: z.string().datetime({ offset: true }).nullable().optional(),
   endsAt: z.string().datetime({ offset: true }).nullable().optional(),
 }).superRefine((value, context) => {

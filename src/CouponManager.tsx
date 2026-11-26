@@ -5,7 +5,7 @@ import { formatCatalogName } from './catalog'
 import type { CatalogDepartment, CatalogSupplier, Coupon, StaffCatalogProduct } from './types'
 
 type Props = { products: StaffCatalogProduct[]; suppliers: CatalogSupplier[]; departments: CatalogDepartment[] }
-const emptyCoupon = (): Coupon => ({ id: 0, code: '', description: '', discountType: 'fixed', discountValue: 0, scopeType: 'order', targetValues: [], maxUses: null, maxUsesPerCustomer: 1, active: true, startsAt: null, endsAt: null })
+const emptyCoupon = (): Coupon => ({ id: 0, code: '', description: '', discountType: 'fixed', discountValue: 0, scopeType: 'order', targetValues: [], maxUses: null, maxUsesPerCustomer: 1, firstOrderOnly: false, active: true, startsAt: null, endsAt: null })
 const localValue = (value: string | null) => value ? new Date(value).toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).replace(' ', 'T').slice(0, 16) : ''
 const isoValue = (value: string) => value ? new Date(`${value}:00-03:00`).toISOString() : null
 const decimalDisplay = (value: number) => value ? value.toFixed(2).replace('.', ',') : ''
@@ -99,6 +99,7 @@ export default function CouponManager({ products, suppliers, departments }: Prop
         <div><label className="checkbox-line"><input type="checkbox" checked={editing.maxUses !== null} onChange={(event) => setEditing({ ...editing, maxUses: event.target.checked ? 200 : null })} /> Limitar usos no total</label>{editing.maxUses !== null && <label>Máximo de pedidos<input type="number" min="1" max="100000000" value={editing.maxUses} onChange={(event) => setEditing({ ...editing, maxUses: Number(event.target.value) || 1 })} required /></label>}</div>
         <div><label className="checkbox-line"><input type="checkbox" checked={editing.maxUsesPerCustomer !== null} onChange={(event) => setEditing({ ...editing, maxUsesPerCustomer: event.target.checked ? 1 : null })} /> Limitar usos por cliente</label>{editing.maxUsesPerCustomer !== null && <label>Máximo por cliente<input type="number" min="1" max="100000000" value={editing.maxUsesPerCustomer} onChange={(event) => setEditing({ ...editing, maxUsesPerCustomer: Number(event.target.value) || 1 })} required /></label>}</div>
       </div>
+      <div className="coupon-first-order"><label className="checkbox-line"><input type="checkbox" checked={editing.firstOrderOnly} onChange={(event) => setEditing({ ...editing, firstOrderOnly: event.target.checked })} /> Somente na primeira compra no e-commerce</label><small>Pedidos em andamento ou concluídos impedem o uso. Pedidos cancelados não contam.</small></div>
       <div className="form-row"><label>Início opcional<input type="datetime-local" value={localValue(editing.startsAt)} onChange={(event) => setEditing({ ...editing, startsAt: isoValue(event.target.value) })} /></label><label>Encerramento opcional<input type="datetime-local" value={localValue(editing.endsAt)} onChange={(event) => setEditing({ ...editing, endsAt: isoValue(event.target.value) })} /></label></div>
       <label className="checkbox-line"><input type="checkbox" checked={editing.active} onChange={(event) => setEditing({ ...editing, active: event.target.checked })} /> Cupom ativo</label>
       {error && <div className="staff-alert error">{error}</div>}

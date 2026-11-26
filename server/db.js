@@ -189,6 +189,7 @@ export async function initializeDatabase() {
     await pool.query('CREATE INDEX IF NOT EXISTS idx_coupons_active_dates ON coupons(active,starts_at,ends_at)')
     await pool.query('ALTER TABLE coupons ADD COLUMN IF NOT EXISTS max_uses INTEGER')
     await pool.query('ALTER TABLE coupons ADD COLUMN IF NOT EXISTS max_uses_per_customer INTEGER DEFAULT 1')
+    await pool.query('ALTER TABLE coupons ADD COLUMN IF NOT EXISTS first_order_only BOOLEAN NOT NULL DEFAULT FALSE')
     await pool.query('ALTER TABLE coupons DROP CONSTRAINT IF EXISTS coupons_use_limits_check')
     await pool.query('ALTER TABLE coupons ADD CONSTRAINT coupons_use_limits_check CHECK ((max_uses IS NULL OR max_uses > 0) AND (max_uses_per_customer IS NULL OR max_uses_per_customer > 0))')
     await pool.query('CREATE INDEX IF NOT EXISTS idx_order_coupons_coupon_id ON order_coupons(coupon_id)')
